@@ -84,3 +84,6 @@ open-sse.old/
 temp/
 
 .playwright-mcp/
+
+.graphifyignore
+graphify-out/*
