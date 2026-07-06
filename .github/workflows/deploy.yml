@@ -19,9 +19,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
-    # Chỉ chạy khi có secrets được cấu hình.
-    # Lưu ý: context `secrets` không khả dụng ở job-level `if`, nên tham chiếu
-    # qua env (đã được bind từ secrets ở trên).
+    # Only run when production secrets are configured. The `secrets` context is
+    # not available in a job-level `if`, so bind it into env first and check that.
     if: env.N5_HOST != '' && env.N5_USER != '' && env.N5_SSH_KEY != ''
 
     steps:
