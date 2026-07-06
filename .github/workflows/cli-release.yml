@@ -56,9 +56,14 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install dependencies
+      - name: Install root dependencies
         # package-lock.json is gitignored in this repo, so use install (not ci).
         run: npm install
+
+      - name: Install CLI build dependencies
+        # buildMitm.js requires esbuild (a cli/ devDependency), so cli/ needs
+        # its own node_modules before the pack script runs there.
+        run: npm --prefix cli install
 
       - name: Build + pack CLI tarball
         run: npm run cli:pack
