@@ -13,13 +13,16 @@ on:
 env:
   N5_HOST: ${{ secrets.N5_HOST }}
   N5_USER: ${{ secrets.N5_USER }}
+  N5_SSH_KEY: ${{ secrets.N5_SSH_KEY }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
-    # Chỉ chạy khi có secrets được cấu hình
-    if: env.N5_HOST != '' && env.N5_USER != '' && secrets.N5_SSH_KEY != ''
+    # Chỉ chạy khi có secrets được cấu hình.
+    # Lưu ý: context `secrets` không khả dụng ở job-level `if`, nên tham chiếu
+    # qua env (đã được bind từ secrets ở trên).
+    if: env.N5_HOST != '' && env.N5_USER != '' && env.N5_SSH_KEY != ''
 
     steps:
       - name: Determine image tag
