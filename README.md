@@ -74,8 +74,21 @@ Result: Never stop coding, minimal cost + 20-40% token savings via RTK
 
 **1. Install globally:**
 
+> This fork is **distributed via GitHub Releases**, not the npm registry.
+> Pick the one-liner for your platform (Node.js >= 18 required):
+
 ```bash
-npm install -g 9router
+# macOS / Linux / WSL
+curl -fsSL https://github.com/vibecoder11200/9router/raw/master/install.sh | bash
+
+# Windows (PowerShell)
+powershell -c "irm https://github.com/vibecoder11200/9router/raw/master/install.ps1 | iex"
+
+# …or install the latest release tarball directly:
+npm install -g https://github.com/vibecoder11200/9router/releases/latest/download/9router.tgz
+```
+
+```bash
 9router
 ```
 
