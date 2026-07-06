@@ -1,0 +1,97 @@
+name: Build and Release CLI
+
+# Builds the prebuilt CLI tarball (Linux; the Next standalone build does not
+# run on Windows) and attaches it to the GitHub Release for the pushed tag.
+# Distribution is GitHub Releases only — we do not publish to npm.
+#
+# Two assets are uploaded per release:
+#   - 9router-<version>.tgz   (versioned, original `npm pack` output)
+#   - 9router.tgz             (stable alias, so install/update commands can
+#                             always target .../releases/latest/download/9router.tgz)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Reuse the same fork-feature gate as docker-publish.yml: refuse to build a
+  # tag that points at a bare-upstream commit (missing gemini-web/ds2api).
+  verify-release-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tagged commit contains fork-defining local features
+        run: |
+          set -e
+          ok=1
+          for f in open-sse/providers/registry/gemini-web.js open-sse/providers/registry/ds2api.js; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Tag '${{ github.ref_name }}' (${{ github.sha }}) is missing $f — looks like a bare-upstream commit, not a fork release. Aborting before any tarball is built."
+              ok=0
+            else
+              echo "OK: $f present at tag ${{ github.ref_name }}"
+            fi
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::Refusing to build: tag does not point to a fork release commit."
+            exit 1
+          fi
+          echo "Verified: tag ${{ github.ref_name }} -> ${{ github.sha }} is a fork release (local features present)."
+
+  build-and-release:
+    needs: verify-release-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build + pack CLI tarball
+        run: npm run cli:pack
+        # `cli:pack` runs `pack:cli` in cli/, which builds the standalone app
+        # and runs `npm pack --pack-destination ../..`, dropping the tarball
+        # at the repo root as 9router-<version>.tgz.
+
+      - name: Create stable alias 9router.tgz
+        id: asset
+        run: |
+          set -e
+          TARBALL=$(ls 9router-*.tgz | head -n1)
+          if [ -z "$TARBALL" ]; then
+            echo "::error::No 9router-*.tgz found after pack."
+            exit 1
+          fi
+          cp "$TARBALL" 9router.tgz
+          echo "versioned=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "Found: $TARBALL"
+
+      - name: Attach tarballs to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="${{ github.ref_name }}"
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG exists — uploading assets."
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" \
+              9router.tgz "${{ steps.asset.outputs.versioned }}" --clobber
+          else
+            echo "Creating release $TAG."
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+              9router.tgz "${{ steps.asset.outputs.versioned }}" \
+              --title "$TAG" --generate-notes --verify-tag
+          fi

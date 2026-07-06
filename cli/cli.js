@@ -57,7 +57,14 @@ try { ensureTrayRuntime({ silent: true }); } catch {}
 
 // Configuration constants
 const APP_NAME = pkg.name; // Use from package.json
-const INSTALL_CMD_LATEST = `npm i -g ${APP_NAME}@latest --prefer-online`;
+// Distribution is GitHub Releases on the fork (we do not publish to npm).
+// The CI release workflow attaches a stable-alias `9router.tgz` to each release,
+// so the install/update command can always point at the "latest" download URL.
+const GH_OWNER = "vibecoder11200";
+const GH_REPO = "9router";
+const RELEASES_LATEST_API = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest`;
+const STABLE_TARBALL_URL = `https://github.com/${GH_OWNER}/${GH_REPO}/releases/latest/download/9router.tgz`;
+const INSTALL_CMD_LATEST = `npm i -g ${STABLE_TARBALL_URL}`;
 
 const DEFAULT_PORT = 20128;
 const DEFAULT_HOST = "0.0.0.0";
@@ -443,14 +450,23 @@ function checkForUpdate() {
       resolve(version);
     };
 
-    const req = https.get(`https://registry.npmjs.org/${pkg.name}/latest`, { timeout: 3000 }, (res) => {
+    // Pull the latest release tag from GitHub (fork), not the npm registry,
+    // since this project is distributed via GitHub Releases tarballs, not npm.
+    const req = https.get(RELEASES_LATEST_API, {
+      timeout: 3000,
+      headers: {
+        "User-Agent": "9router-cli",
+        "Accept": "application/vnd.github+json",
+      },
+    }, (res) => {
       let data = "";
       res.on("data", chunk => data += chunk);
       res.on("end", () => {
         try {
-          const latest = JSON.parse(data);
-          if (latest.version && compareVersions(latest.version, pkg.version) > 0) {
-            done(latest.version);
+          const release = JSON.parse(data);
+          const tag = String(release.tag_name || "").replace(/^v/i, "").trim();
+          if (tag && compareVersions(tag, pkg.version) > 0) {
+            done(tag);
           } else {
             done(null);
           }
