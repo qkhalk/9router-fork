@@ -55,10 +55,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        # package-lock.json is gitignored in this repo, so use install (not ci).
+        run: npm install
 
       - name: Build + pack CLI tarball
         run: npm run cli:pack
