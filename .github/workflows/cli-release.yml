@@ -60,13 +60,16 @@ jobs:
         # package-lock.json is gitignored in this repo, so use install (not ci).
         run: npm install
 
-      - name: Install CLI build dependencies
-        # buildMitm.js requires esbuild (a cli/ devDependency), so cli/ needs
-        # its own node_modules before the pack script runs there.
-        run: npm --prefix cli install
-
-      - name: Build + pack CLI tarball
-        run: npm run cli:pack
+      - name: Install + build + pack CLI tarball
+        # Run inside cli/ so npm packs the CLI package (not the root app).
+        # buildMitm.js needs esbuild (cli devDependency), so cli/ gets its own
+        # npm install. Pack to GITHUB_WORKSPACE (repo root) via absolute path —
+        # `pack:cli`'s `--pack-destination ../..` resolves outside the repo.
+        working-directory: cli
+        run: |
+          npm install
+          npm run build
+          npm pack --pack-destination "$GITHUB_WORKSPACE"
         # `cli:pack` runs `pack:cli` in cli/, which builds the standalone app
         # and runs `npm pack --pack-destination ../..`, dropping the tarball
         # at the repo root as 9router-<version>.tgz.
