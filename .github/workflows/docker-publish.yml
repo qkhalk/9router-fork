@@ -96,6 +96,11 @@ jobs:
   trigger-deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
+    # The repository_dispatch API requires Contents write access; without it
+    # the default GITHUB_TOKEN (read-only) fails with "Resource not accessible
+    # by integration".
+    permissions:
+      contents: write
     steps:
       - name: Repository Dispatch
         uses: peter-evans/repository-dispatch@v3
