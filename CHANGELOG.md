@@ -1,3 +1,11 @@
+# Unreleased
+
+## Features
+- **External tunnel URL** — register a tunnel the app does not manage itself (e.g. a `cloudflared` systemd service, or any reverse proxy) under **Endpoint → External tunnel URL**. Combined with *Allow dashboard access via tunnel*, this lets local-only actions — installing/starting/stopping the DeepSeek Web engine, Tailscale & tunnel controls, Headroom, MITM tooling — run over that tunnel after login. See `gitbook/content/en/deployment/cloud.md` → *Cloudflare Tunnel (external / systemd)*.
+
+## Fixes
+- **"Local only: CLI token required" over a tunnel** — local-only routes (DeepSeek Web install/start/stop, etc.) were blocked when the dashboard was reached through a tunnel, because `isLocalRequest()` deliberately returns `false` for proxied requests and the browser cannot present a CLI token. The guard now admits these routes over a recognized tunnel when the user has opted into *Allow dashboard access via tunnel* **and** is authenticated. Strict secret-handling routes (`reset-password`, `cowork-settings`) stay loopback-only even with tunnel access enabled, since they expose host secrets / the internal CLI token. Shared tunnel-host detection (`isKnownTunnelHost`) now also recognizes `externalTunnelUrl` in both the guard and the login route.
+
 # v0.5.12 (2026-06-26)
 
 ## Features

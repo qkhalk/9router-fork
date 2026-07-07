@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdirSync } from "node:fs";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 // CLI bundling needs workspace root so tracing includes hoisted node_modules (slim ~50MB).
@@ -8,6 +9,23 @@ const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
   ? join(projectRoot, "..")
   : projectRoot;
 const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
+
+// On Windows, @vercel/nft (Next's always-on file tracing) statically follows every
+// os.homedir() / %APPDATA% config read in the API routes and globs the user's home tree.
+// That walk trips legacy junctions (~/My Documents, ~/AppData/Local/Application Data) which
+// throw EPERM and abort the build. Redirect the build process's "home" to a scratch folder so
+// the trace walks that (junction-free) instead. Runtime reads the real env; this is build-only.
+// No-op on Linux/macOS, so Docker builds are unaffected.
+if (process.platform === "win32") {
+  const scratch = join(projectRoot, ".build-home");
+  const fwd = (p) => p.replace(/\\/g, "/");
+  mkdirSync(join(scratch, "AppData", "Roaming"), { recursive: true });
+  mkdirSync(join(scratch, "AppData", "Local"), { recursive: true });
+  process.env.USERPROFILE = fwd(scratch);
+  process.env.HOME = fwd(scratch);
+  process.env.APPDATA = fwd(join(scratch, "AppData", "Roaming"));
+  process.env.LOCALAPPDATA = fwd(join(scratch, "AppData", "Local"));
+}
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
