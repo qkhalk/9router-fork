@@ -11,6 +11,10 @@ const DEFAULT_SETTINGS = {
   tunnelProvider: "cloudflare",
   tailscaleEnabled: false,
   tailscaleUrl: "",
+  // Tunnel the app does not manage itself (e.g. cloudflared run via systemd).
+  // Lets the guard/login recognize such hosts so local-only routes can be gated
+  // by tunnelDashboardAccess the same way as app-managed tunnels.
+  externalTunnelUrl: "",
   stickyRoundRobinLimit: 3,
   providerStrategies: {},
   comboStrategy: "fallback",

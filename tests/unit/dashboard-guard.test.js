@@ -256,6 +256,107 @@ describe("dashboard guard local-only access", () => {
 
     expect(response).toBe(mocks.nextResponse);
   });
+
+  // --- Tunnel access (incl. cloudflared via systemd → externalTunnelUrl) ---
+
+  it("allows local-only route over tunnel when tunnelDashboardAccess=true and authenticated", async () => {
+    mocks.getSettings.mockResolvedValue({
+      requireLogin: true,
+      tunnelDashboardAccess: true,
+      tunnelUrl: "https://tunnel.example.com",
+    });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+
+    const response = await proxy(request("/api/ds2api/install", {
+      host: "tunnel.example.com",
+      origin: "https://tunnel.example.com",
+    }));
+
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("rejects local-only route over tunnel when authenticated but tunnelDashboardAccess disabled", async () => {
+    mocks.getSettings.mockResolvedValue({
+      requireLogin: true,
+      tunnelDashboardAccess: false,
+      tunnelUrl: "https://tunnel.example.com",
+    });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+
+    const response = await proxy(request("/api/ds2api/install", {
+      host: "tunnel.example.com",
+      origin: "https://tunnel.example.com",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only: CLI token required");
+  });
+
+  it("rejects local-only route over tunnel when tunnelDashboardAccess=true but not authenticated", async () => {
+    mocks.getSettings.mockResolvedValue({
+      requireLogin: true,
+      tunnelDashboardAccess: true,
+      tunnelUrl: "https://tunnel.example.com",
+    });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(false);
+
+    const response = await proxy(request("/api/ds2api/install", {
+      host: "tunnel.example.com",
+      origin: "https://tunnel.example.com",
+    }));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("recognizes externalTunnelUrl as a tunnel host (cloudflared via systemd)", async () => {
+    mocks.getSettings.mockResolvedValue({
+      requireLogin: true,
+      tunnelDashboardAccess: true,
+      // App-managed tunnelUrl empty — tunnel runs outside the app.
+      tunnelUrl: "",
+      externalTunnelUrl: "https://ai.1k.io.vn",
+    });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+
+    const response = await proxy(request("/api/ds2api/install", {
+      host: "ai.1k.io.vn",
+      origin: "https://ai.1k.io.vn",
+    }));
+
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("rejects strict local-only route (reset-password) over tunnel even when authenticated + access enabled", async () => {
+    mocks.getSettings.mockResolvedValue({
+      requireLogin: true,
+      tunnelDashboardAccess: true,
+      tunnelUrl: "https://tunnel.example.com",
+    });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+
+    const response = await proxy(request("/api/auth/reset-password", {
+      host: "tunnel.example.com",
+      origin: "https://tunnel.example.com",
+    }));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("rejects strict local-only route (cowork-settings) over tunnel — leaks CLI token", async () => {
+    mocks.getSettings.mockResolvedValue({
+      requireLogin: true,
+      tunnelDashboardAccess: true,
+      tunnelUrl: "https://tunnel.example.com",
+    });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+
+    const response = await proxy(request("/api/cli-tools/cowork-settings", {
+      host: "tunnel.example.com",
+      origin: "https://tunnel.example.com",
+    }));
+
+    expect(response.status).toBe(403);
+  });
 });
 
 describe("dashboard guard helpers", () => {
