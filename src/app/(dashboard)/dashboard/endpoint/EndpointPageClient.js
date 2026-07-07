@@ -29,6 +29,10 @@ export default function APIPageClient({ machineId }) {
   const [requireLogin, setRequireLogin] = useState(true);
   const [hasPassword, setHasPassword] = useState(true);
  const [tunnelDashboardAccess, setTunnelDashboardAccess] = useState(false);
+ // External tunnel (e.g. cloudflared run via systemd) the app does not manage itself.
+ const [externalTunnelUrl, setExternalTunnelUrl] = useState("");
+ const [externalTunnelInput, setExternalTunnelInput] = useState("");
+ const [externalTunnelSaving, setExternalTunnelSaving] = useState(false);
 
  // Cloudflare Tunnel state
   const [tunnelChecking, setTunnelChecking] = useState(true);
@@ -204,6 +208,8 @@ export default function APIPageClient({ machineId }) {
         setRequireLogin(data.requireLogin !== false);
         setHasPassword(data.hasPassword || false);
         setTunnelDashboardAccess(data.tunnelDashboardAccess || false);
+        setExternalTunnelUrl(data.externalTunnelUrl || "");
+        setExternalTunnelInput(data.externalTunnelUrl || "");
       }
       if (statusRes.ok) {
         const data = await statusRes.json();
@@ -237,6 +243,38 @@ export default function APIPageClient({ machineId }) {
       if (res.ok) setTunnelDashboardAccess(value);
     } catch (error) {
       console.log("Error updating tunnelDashboardAccess:", error);
+    }
+  };
+
+  // Save the external tunnel URL (cloudflared/Tailscale run outside the app).
+  // Empty string clears it. Invalid input is rejected client-side.
+  const handleSaveExternalTunnel = async () => {
+    const trimmed = externalTunnelInput.trim();
+    if (trimmed) {
+      try {
+        const u = new URL(trimmed);
+        if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("protocol");
+      } catch {
+        alert("Enter a valid http(s) URL, e.g. https://ai.1k.io.vn");
+        return;
+      }
+    }
+    setExternalTunnelSaving(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ externalTunnelUrl: trimmed }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setExternalTunnelUrl(data.externalTunnelUrl || "");
+        setExternalTunnelInput(data.externalTunnelUrl || "");
+      }
+    } catch (error) {
+      console.log("Error updating externalTunnelUrl:", error);
+    } finally {
+      setExternalTunnelSaving(false);
     }
   };
 
@@ -909,7 +947,7 @@ export default function APIPageClient({ machineId }) {
         )}
 
         {/* Security warnings when tunnel or tailscale is active */}
-        {(tunnelEnabled || tsEnabled) && (
+        {(tunnelEnabled || tsEnabled || externalTunnelUrl) && (
           <div className="mt-4 flex flex-col gap-2">
             {!requireApiKey && (
               <SecurityWarning
@@ -934,7 +972,7 @@ export default function APIPageClient({ machineId }) {
         )}
 
         {/* Tunnel dashboard access option */}
-        {(tunnelEnabled || tsEnabled) && (
+        {(tunnelEnabled || tsEnabled || externalTunnelUrl) && (
           <div className="mt-4 pt-4 border-t border-border flex items-center gap-3">
             <Toggle
               checked={tunnelDashboardAccess}
@@ -942,10 +980,39 @@ export default function APIPageClient({ machineId }) {
             />
             <div className="flex items-center gap-1.5">
               <p className="font-medium text-sm">Allow dashboard access via tunnel</p>
-              <Tooltip text="When enabled, the dashboard can be accessed through your tunnel or Tailscale URL (login still required). When disabled, dashboard access via tunnel/Tailscale is completely blocked." />
+              <Tooltip text="When enabled, the dashboard can be accessed through your tunnel or Tailscale URL (login still required). When disabled, dashboard access via tunnel/Tailscale is completely blocked. Also gates local-only actions (e.g. installing the DeepSeek Web engine) over the tunnel." />
             </div>
           </div>
         )}
+
+        {/* External tunnel URL — for tunnels the app does not manage (cloudflared via systemd, etc.) */}
+        <div className="mt-4 pt-4 border-t border-border">
+          <div className="flex items-center gap-1.5 mb-2">
+            <p className="font-medium text-sm">External tunnel URL</p>
+            <Tooltip text="If you run your own tunnel outside 9Router (e.g. cloudflared as a systemd service, or a reverse proxy), enter its public URL here so the app recognizes requests from it. Combined with 'Allow dashboard access via tunnel', this lets you install/start/stop the DeepSeek Web engine and other local-only actions over that tunnel." />
+          </div>
+          <div className="flex gap-2">
+            <Input
+              type="text"
+              value={externalTunnelInput}
+              onChange={(e) => setExternalTunnelInput(e.target.value)}
+              placeholder="https://ai.1k.io.vn"
+              className="flex-1 font-mono text-sm"
+            />
+            <Button
+              size="sm"
+              onClick={handleSaveExternalTunnel}
+              disabled={externalTunnelSaving || externalTunnelInput.trim() === externalTunnelUrl}
+            >
+              {externalTunnelSaving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+          {externalTunnelUrl && (
+            <p className="text-xs text-text-muted mt-2">
+              Active: <span className="font-mono">{externalTunnelUrl}</span>
+            </p>
+          )}
+        </div>
       </Card>
 
       {/* API Keys */}

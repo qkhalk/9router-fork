@@ -17,6 +17,7 @@
 /.next/
 /.next-cli-build/
 /out/
+/.build-home/
 cli/.build-home/
 product
 # production
