@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSettings, validateApiKey } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { isKnownTunnelHost } from "@/lib/auth/tunnelAccess";
 
 const CLI_TOKEN_HEADER = "x-9r-cli-token";
 const CLI_TOKEN_SALT = "9r-cli-auth";
@@ -86,6 +87,16 @@ const LOCAL_ONLY_PATHS = [
   "/api/ds2api/stop",
 ];
 
+// Subset of LOCAL_ONLY_PATHS that stay loopback-only even when the user opts
+// into tunnel dashboard access. These routes read host secrets or leak the CLI
+// token in their response, so allowing them over a tunnel would hand a remote
+// attacker (who has stolen/guessed the dashboard password) the ability to reset
+// the password or harvest the machine-id token.
+const STRICT_LOCAL_ONLY = [
+  "/api/auth/reset-password",
+  "/api/cli-tools/cowork-settings",
+];
+
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 function isLoopbackHostname(h) {
@@ -141,10 +152,25 @@ async function canAccessPublicLlmApi(request) {
   return await hasValidApiKey(request);
 }
 
-async function canAccessLocalOnlyRoute(request) {
+async function canAccessLocalOnlyRoute(request, pathname) {
   if (await hasValidCliToken(request)) return true;
   // Browser on host: loopback Host + Origin (blocks tunnel/CSRF) + auth (JWT or requireLogin=false)
   if (isLocalRequest(request) && await isAuthenticated(request)) return true;
+
+  // Strict routes (host secrets / CLI-token leakage) never open over a tunnel,
+  // even when the user has opted into tunnel dashboard access.
+  if (STRICT_LOCAL_ONLY.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
+    return false;
+  }
+
+  // Tunnel access: user must have explicitly enabled "Allow dashboard access via
+  // tunnel", the request must come from a recognized tunnel host, and the user
+  // must be authenticated. Lets ds2api install/start/stop etc. work over a
+  // tunnel (incl. cloudflared run via systemd) without exposing host secrets.
+  const settings = await loadSettings();
+  if (settings && settings.tunnelDashboardAccess === true && isKnownTunnelHost(request, settings)) {
+    return await isAuthenticated(request);
+  }
   return false;
 }
 
@@ -187,7 +213,7 @@ export async function proxy(request) {
 
   // Local-only gate for spawn-capable / host-secret routes.
   if (LOCAL_ONLY_PATHS.some((p) => pathname.startsWith(p))) {
-    if (!(await canAccessLocalOnlyRoute(request))) {
+    if (!(await canAccessLocalOnlyRoute(request, pathname))) {
       return NextResponse.json({ error: "Local only: CLI token required" }, { status: 403 });
     }
   }
@@ -223,14 +249,10 @@ export async function proxy(request) {
         requireLogin = settings.requireLogin !== false;
         tunnelDashboardAccess = settings.tunnelDashboardAccess === true;
 
-        // Block tunnel/tailscale access if disabled (redirect to login)
-        if (!tunnelDashboardAccess) {
-          const host = (request.headers.get("host") || "").split(":")[0].toLowerCase();
-          const tunnelHost = settings.tunnelUrl ? new URL(settings.tunnelUrl).hostname.toLowerCase() : "";
-          const tailscaleHost = settings.tailscaleUrl ? new URL(settings.tailscaleUrl).hostname.toLowerCase() : "";
-          if ((tunnelHost && host === tunnelHost) || (tailscaleHost && host === tailscaleHost)) {
-            return NextResponse.redirect(new URL("/login", request.url));
-          }
+        // Block tunnel/tailscale access if disabled (redirect to login).
+        // Recognizes app-managed tunnels plus externalTunnelUrl (cloudflared via systemd etc.)
+        if (!tunnelDashboardAccess && isKnownTunnelHost(request, settings)) {
+          return NextResponse.redirect(new URL("/login", request.url));
         }
       }
     } catch {

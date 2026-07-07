@@ -309,6 +309,64 @@ sudo certbot renew --dry-run
 
 ---
 
+## ☁️ Cloudflare Tunnel (external / systemd)
+
+Cloudflare Tunnel (`cloudflared`) exposes your 9Router over HTTPS without opening any inbound port. 9Router can manage a tunnel for you from the **Endpoint** page, but if you run `cloudflared` yourself — as a systemd service, or in front of any reverse proxy — you need one extra setting so 9Router recognizes requests from it.
+
+### Step 1: Run cloudflared as a systemd service
+
+Create `/etc/cloudflared/config.yml` pointing at the local 9Router port (default `20128`):
+
+```yaml
+tunnel: <your-tunnel-id>
+credentials-file: /etc/cloudflared/<your-tunnel-id>.json
+
+ingress:
+  - hostname: ai.example.com
+    service: http://localhost:20128
+  - service: http_status:404
+```
+
+Install and start the service:
+
+```bash
+sudo cloudflared service install
+sudo systemctl enable --now cloudflared
+sudo systemctl status cloudflared
+```
+
+Note the public hostname (e.g. `https://ai.example.com`).
+
+### Step 2: Tell 9Router about the tunnel URL
+
+Because this tunnel runs **outside** 9Router, the app cannot auto-detect its URL.
+
+1. Open the dashboard locally (or via SSH tunnel) → **Endpoint**.
+2. Scroll to **External tunnel URL** and enter the public URL, e.g. `https://ai.example.com`.
+3. Click **Save**.
+4. Make sure **Allow dashboard access via tunnel** is **ON** (just above the field).
+
+### Step 3: Use the dashboard over the tunnel
+
+You can now open `https://ai.example.com/dashboard`, log in, and use the dashboard normally — including actions that are normally local-only:
+
+- Installing / starting / stopping the **DeepSeek Web** engine (`/dashboard/providers/ds2api`)
+- Tailscale and tunnel controls
+- Headroom / MITM tooling
+
+> **Why this is needed:** spawning child processes or reading host secrets is restricted to localhost by default. The two settings above let these actions run over your tunnel **only after you log in**, so a stolen URL alone is not enough.
+
+### Security notes
+
+- **Login is always required** over the tunnel — set a strong password in **Profile**.
+- Two routes stay **loopback-only** even with tunnel access enabled, because they handle host secrets:
+  - `Reset password to default` (use the CLI instead)
+  - `Cowork settings` (leaks the internal CLI token)
+- If you ever want to lock the dashboard down again, turn **OFF** *Allow dashboard access via tunnel* — API access over the tunnel (with an API key) keeps working.
+
+---
+
+
 ## 🔒 Security Considerations
 
 ### 1. Change Default Credentials
