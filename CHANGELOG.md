@@ -6,6 +6,11 @@
 ## Fixes
 - **"Local only: CLI token required" over a tunnel** — local-only routes (DeepSeek Web install/start/stop, etc.) were blocked when the dashboard was reached through a tunnel, because `isLocalRequest()` deliberately returns `false` for proxied requests and the browser cannot present a CLI token. The guard now admits these routes over a recognized tunnel when the user has opted into *Allow dashboard access via tunnel* **and** is authenticated. Strict secret-handling routes (`reset-password`, `cowork-settings`) stay loopback-only even with tunnel access enabled, since they expose host secrets / the internal CLI token. Shared tunnel-host detection (`isKnownTunnelHost`) now also recognizes `externalTunnelUrl` in both the guard and the login route.
 
+# v0.5.21 (2026-07-08)
+
+## Features
+- **DeepSeek Web (ds2api): HTTP/HTTPS proxy support + proxy management** — the ds2api engine previously only supported `socks5`/`socks5h` proxies. It now supports `http` and `https` proxies (HTTP CONNECT tunneling, with TLS to the proxy for `https` and HTTP Basic auth). The DeepSeek Web provider page gains: a per-proxy **Test** button (inline ✓/✗ + response time), a **Batch import** modal (paste a proxy list — `protocol://user:pass@host:port`, `host:port:user:pass`, or `host:port` — with a default-type selector, dedupe, and created/skipped/failed counts), and a per-account proxy dropdown to assign or change the outbound proxy on existing accounts (not only at creation). The engine is now pulled from the `vibecoder11200/ds2api` fork (release `v4.6.1-httpproxy`, 6 platform binaries) that ships the proxy patch, so installs/updates no longer override it with the upstream socks5-only build.
+
 # v0.5.20 (2026-07-07)
 
 ## Features
