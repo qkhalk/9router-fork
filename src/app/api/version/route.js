@@ -1,20 +1,32 @@
 import https from "https";
 import pkg from "../../../../package.json" with { type: "json" };
 
-const NPM_PACKAGE_NAME = "9router";
+// This fork is distributed via GitHub Releases (not npm), so the latest version
+// is resolved from the GitHub Releases API, mirroring cli/cli.js checkForUpdate().
+const GH_OWNER = "vibecoder11200";
+const GH_REPO = "9router";
+const RELEASES_LATEST_API = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest`;
 
-// Fetch latest version from npm registry
+// Fetch latest version tag from GitHub Releases (fork). Returns null on any
+// failure so the dashboard gracefully shows "no update" instead of crashing.
 function fetchLatestVersion() {
   return new Promise((resolve) => {
     const req = https.get(
-      `https://registry.npmjs.org/${NPM_PACKAGE_NAME}/latest`,
-      { timeout: 4000 },
+      RELEASES_LATEST_API,
+      {
+        timeout: 4000,
+        headers: {
+          "User-Agent": "9router-dashboard",
+          "Accept": "application/vnd.github+json",
+        },
+      },
       (res) => {
         let data = "";
         res.on("data", (chunk) => (data += chunk));
         res.on("end", () => {
           try {
-            resolve(JSON.parse(data).version || null);
+            const tag = String(JSON.parse(data).tag_name || "").replace(/^v/i, "").trim();
+            resolve(tag || null);
           } catch {
             resolve(null);
           }
