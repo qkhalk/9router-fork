@@ -9,9 +9,9 @@
 [![GHCR](https://img.shields.io/badge/GHCR-vibecoder11200%2F9router-blue?logo=github)](https://github.com/vibecoder11200/9router/pkgs/container/9router)
 [![License](https://img.shields.io/github/license/vibecoder11200/9router?logo=github)](https://github.com/vibecoder11200/9router/blob/master/LICENSE)
 
-<a href="https://trendshift.io/repositories/22628" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22628" alt="decolua%2F9router | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/22628" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22628" alt="vibecoder11200%2F9router | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-[🌐 Website](https://9router.com) • [📖 Full Docs](https://github.com/decolua/9router)
+[🌐 Website](https://9router.com) • [📖 Full Docs](https://github.com/vibecoder11200/9router)
 
 ---
 
@@ -127,8 +127,8 @@ Any tool supporting OpenAI/Claude-compatible API works.
 
 Full docs, advanced setup, video tutorials & development guide:
 
-- **GitHub**: https://github.com/decolua/9router
-- **Full README**: https://github.com/decolua/9router/blob/main/app/README.md
+- **GitHub**: https://github.com/vibecoder11200/9router
+- **Full README**: https://github.com/vibecoder11200/9router/blob/main/app/README.md
 - **Website**: https://9router.com
 
 ---

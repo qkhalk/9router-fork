@@ -9,15 +9,20 @@ export const APP_CONFIG = {
 
 // GitHub configuration
 export const GITHUB_CONFIG = {
-  changelogUrl: "https://raw.githubusercontent.com/decolua/9router/refs/heads/master/CHANGELOG.md",
+  changelogUrl: "https://raw.githubusercontent.com/vibecoder11200/9router/refs/heads/master/CHANGELOG.md",
   donateUrl: "https://9router.com/api/donate",
 };
 
-// Updater configuration
+// Updater configuration.
+// This fork is distributed via GitHub Releases (NOT npm), so the install/update
+// command points at the stable-alias tarball `9router.tgz` attached to each
+// release. `npmPackageName` keeps its key name for appUpdater/updater compat but
+// now holds the tarball URL so even the one-click path installs the fork.
+const RELEASES_TARBALL = "https://github.com/vibecoder11200/9router/releases/latest/download/9router.tgz";
 export const UPDATER_CONFIG = {
-  npmPackageName: "9router",
-  installCmd: "npm i -g 9router",
-  installCmdLatest: "npm i -g 9router@latest --prefer-online",
+  npmPackageName: RELEASES_TARBALL,
+  installCmd: `npm i -g ${RELEASES_TARBALL}`,
+  installCmdLatest: `npm i -g ${RELEASES_TARBALL}`,
   shutdownCountdownSec: 3,
   exitDelayMs: 500,
   statusPort: 20129,
