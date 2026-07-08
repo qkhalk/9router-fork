@@ -59,7 +59,7 @@ export default function Sidebar({ onClose }) {
       .catch(() => {});
   }, []);
 
-  // Lazy check for new npm version on mount
+  // Lazy check for a new release on mount (GitHub Releases — see /api/version)
   useEffect(() => {
     fetch("/api/version")
       .then(res => res.json())
