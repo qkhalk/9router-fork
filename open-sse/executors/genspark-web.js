@@ -1083,4 +1083,17 @@ async function inspectFirstChunk(body, log) {
   return { stream };
 }
 
+export {
+  buildCookieHeader,
+  transformMessages,
+  buildChatRequestBody,
+  classifyFieldEvent,
+  classifyError,
+  buildImageRequestBody,
+  extractImageTaskIds,
+  TEXT_MODEL_LIST,
+  IMAGE_MODEL_LIST,
+  MIXTURE_MODEL_LIST,
+};
+
 export default GensparkWebExecutor;
