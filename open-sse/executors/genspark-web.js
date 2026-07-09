@@ -389,17 +389,8 @@ function buildStreamingResponse(responseBody, model, cid, created, modelName, is
                 choices: [{ index: 0, delta: { content: "\n</think>" }, finish_reason: null, logprobs: null }],
               })));
             }
-            // For non-search models, message_result.content is the same text we already streamed
-            // via deltas — emitting it again would duplicate. For o1+search, the deltas come via
-            // a different field and message_result.content holds the canonical answer, so emit it
-            // once. We detect that case by checking if extractContent produced any answer_delta
-            // before done — if not, emit the final message.
-            if (modelName === "o1" && isSearch && ev.message) {
-              controller.enqueue(encoder.encode(sseChunk({
-                id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
-                choices: [{ index: 0, delta: { content: ev.message }, finish_reason: null, logprobs: null }],
-              })));
-            }
+            // message_result.content typically repeats what we've already streamed via deltas.
+            // Avoid emitting it here to prevent duplicate assistant content in streamed responses.
             break;
           }
         }
