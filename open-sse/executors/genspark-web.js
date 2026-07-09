@@ -69,6 +69,8 @@ const IMAGE_MODEL_LIST = new Set([
 const MIXTURE_MODEL_LIST = ["gpt-5.1-low", "claude-sonnet-4-5", "gemini-3-pro-preview"];
 
 const CHAT_TYPE = "COPILOT_MOA_CHAT";
+const IMAGE_TYPE = "COPILOT_MOA_IMAGE";
+const IMAGE_TASK_STATUS_URL = `${GENSPARK_BASE}/api/ig_tasks_status`;
 
 // Field-name allowlist — everything else in message_field/message_field_delta is ignored.
 // Matches genspark2api handleMessageFieldDelta baseAllowed + reasoning fields.
@@ -473,6 +475,217 @@ async function buildNonStreamingResponse(responseBody, model, cid, created, mode
   }), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
+// ── Image generation flow (COPILOT_MOA_IMAGE) ─────────────────────────────────
+// Mirrors genspark2api/controller/chat.go ImageProcess + createImageRequestBody +
+// extractTaskIDs + pollTaskStatus. The flow is:
+//   1. POST /api/copilot/ask with type=COPILOT_MOA_IMAGE → NDJSON body (NOT SSE) containing
+//      project_start + a frame with task_id list inside content.generated_images.
+//   2. POST /api/ig_tasks_status SSE with {task_ids:[...]} → emits a TASKS_STATUS_COMPLETE
+//      frame whose final_status[taskID].image_urls[0] holds the generated image URL.
+//   3. Format the resulting URL(s) as Markdown image links inside a chat completion so
+//      downstream OpenAI-compatible clients render them inline.
+
+/**
+ * Build the COPILOT_MOA_IMAGE request body. The image prompt is taken from the last user
+ * message (matching genspark2api OpenAIChatCompletionRequest.GetUserContent behaviour).
+ * If the user supplied an array of message parts, the text part is used as the prompt.
+ */
+function buildImageRequestBody(imageModel, prompt) {
+  // dall-e-3 alias → Genspark's internal "dalle-3" id (kept for OpenAI-compat clients).
+  const upstreamModel = imageModel === "dall-e-3" ? "dalle-3" : imageModel;
+
+  const modelConfigs = [{
+    model: upstreamModel,
+    aspect_ratio: "auto",
+    use_personalized_models: false,
+    fashion_profile_id: null,
+    hd: false,
+    reflection_enabled: false,
+    style: "auto",
+  }];
+
+  const messages = [{
+    role: "user",
+    content: prompt,
+  }];
+
+  return {
+    type: IMAGE_TYPE,
+    current_query_string: `type=${IMAGE_TYPE}`,
+    messages,
+    user_s_input: prompt,
+    action_params: {},
+    extra_data: {
+      model_configs: modelConfigs,
+      llm_model: "gpt-4o",
+      imageModelMap: {},
+      writingContent: null,
+    },
+  };
+}
+
+/**
+ * Extract the project_id and the list of image task_ids from a COPILOT_MOA_IMAGE response body.
+ *
+ * The response is a stream of `data: <json>` lines (NDJSON-with-prefix, NOT SSE in the strict
+ * sense — Genspark emits them without empty-line separators). Each line is one of:
+ *   - {"id":"<project_id>", "type":"project_start", ...}
+ *   - {"content":"{\"generated_images\":[{\"task_id\":\"...\"}]}", "type":"message_field", ...}
+ *
+ * We split on newlines, look for project_start to grab the project_id, and look for task_id
+ * occurrences to collect the generated_images task ids.
+ *
+ * Returns [projectId, taskIds[]].
+ */
+function extractImageTaskIds(responseBody) {
+  let projectId = "";
+  const taskIds = [];
+  const lines = responseBody.split("\n");
+  for (const line of lines) {
+    if (!line.startsWith("data:")) continue;
+    const jsonStr = line.slice(5).trim();
+    if (!jsonStr) continue;
+    try {
+      const outer = JSON.parse(jsonStr);
+      if (outer.type === "project_start" && outer.id) {
+        projectId = String(outer.id);
+        continue;
+      }
+      // task_id appears inside a nested JSON string in the `content` field.
+      if (typeof outer.content === "string" && outer.content.includes("task_id")) {
+        try {
+          const inner = JSON.parse(outer.content);
+          const imgs = Array.isArray(inner?.generated_images) ? inner.generated_images : [];
+          for (const img of imgs) {
+            if (img?.task_id) taskIds.push(String(img.task_id));
+          }
+        } catch {
+          // content wasn't JSON — skip.
+        }
+      }
+    } catch {
+      // line wasn't JSON — skip.
+    }
+  }
+  return [projectId, taskIds];
+}
+
+/**
+ * Poll /api/ig_tasks_status (SSE) until TASKS_STATUS_COMPLETE arrives, then collect the
+ * image_urls for each requested task id. Matches genspark2api pollTaskStatus.
+ *
+ * Returns an array of image URL strings (one per successful task). Tasks that didn't reach
+ * SUCCESS status are skipped silently — genspark2api does the same.
+ */
+async function pollImageTaskStatus(taskIds, cookieHeader, signal, log) {
+  const imageUrls = [];
+  const requestBody = JSON.stringify({ task_ids: taskIds });
+
+  let response;
+  try {
+    response = await fetch(IMAGE_TASK_STATUS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "*/*",
+        "Origin": GENSPARK_BASE,
+        "Referer": `${GENSPARK_BASE}/`,
+        "Cookie": cookieHeader,
+        "User-Agent": GENSPARK_USER_AGENT,
+      },
+      body: requestBody,
+      signal,
+    });
+  } catch (err) {
+    log?.error?.("GENSPARK-WEB", `Image status poll fetch failed: ${err.message || String(err)}`);
+    return imageUrls;
+  }
+
+  if (!response.body) return imageUrls;
+
+  for await (const event of readGensparkSseEvents(response.body, signal)) {
+    if (!event || typeof event !== "object") continue;
+    if (event.type !== "TASKS_STATUS_COMPLETE") continue;
+    const finalStatus = event.final_status;
+    if (!finalStatus || typeof finalStatus !== "object") continue;
+    for (const taskId of taskIds) {
+      const task = finalStatus[taskId];
+      if (!task || typeof task !== "object") continue;
+      if (task.status !== "SUCCESS") continue;
+      const urls = Array.isArray(task.image_urls) ? task.image_urls : [];
+      if (urls.length > 0 && typeof urls[0] === "string") {
+        imageUrls.push(urls[0]);
+      }
+    }
+  }
+  return imageUrls;
+}
+
+/**
+ * Build the OpenAI chat completion response (streaming or non-streaming) that wraps the
+ * generated image URLs as Markdown image links. This matches genspark2api ChatForOpenAI's
+ * image-model branch: the image URLs are returned as a Markdown image inside the assistant
+ * message content so any OpenAI-compatible client renders them inline.
+ */
+function buildImageChatResponse(imageUrls, prompt, model, stream) {
+  const cid = `chatcmpl-genspark-img-${crypto.randomUUID().slice(0, 12)}`;
+  const created = Math.floor(Date.now() / 1000);
+  const markdown = imageUrls.map((u) => `![Image](${u})`).join("\n");
+
+  if (stream) {
+    const encoder = new TextEncoder();
+    const sseStream = new ReadableStream({
+      start(controller) {
+        try {
+          // Initial role chunk.
+          controller.enqueue(encoder.encode(sseChunk({
+            id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
+            choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null, logprobs: null }],
+          })));
+          // Single content delta with all image URLs as Markdown.
+          if (markdown) {
+            controller.enqueue(encoder.encode(sseChunk({
+              id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
+              choices: [{ index: 0, delta: { content: markdown }, finish_reason: null, logprobs: null }],
+            })));
+          }
+          // Terminal chunk.
+          controller.enqueue(encoder.encode(sseChunk({
+            id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
+            choices: [{ index: 0, delta: {}, finish_reason: "stop", logprobs: null }],
+          })));
+          controller.enqueue(encoder.encode(SSE_DONE));
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(sseStream, { status: 200, headers: { ...SSE_HEADERS_NO_BUFFER } });
+  }
+
+  // Non-streaming: return the chat.completion JSON with the markdown content.
+  const promptTokens = Math.ceil(prompt.length / 4);
+  const completionTokens = Math.ceil(markdown.length / 4);
+  return new Response(JSON.stringify({
+    id: cid,
+    object: "chat.completion",
+    created,
+    model,
+    system_fingerprint: null,
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: markdown },
+      finish_reason: "stop",
+      logprobs: null,
+    }],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    },
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+}
+
 // ── Executor ──────────────────────────────────────────────────────────────────
 
 export class GensparkWebExecutor extends BaseExecutor {
@@ -502,16 +715,10 @@ export class GensparkWebExecutor extends BaseExecutor {
 
     // Detect search mode: any text model with a "-search" suffix.
     const isSearch = typeof model === "string" && model.endsWith("-search");
-    // Image model? → not yet implemented in this commit; reject with a clear hint.
     const baseModel = isSearch ? model.replace(/-search$/, "") : model;
+    // Image model? → route to the COPILOT_MOA_IMAGE flow (image generation with task polling).
     if (IMAGE_MODEL_LIST.has(baseModel)) {
-      const errResp = new Response(JSON.stringify({
-        error: {
-          message: `Image generation via Genspark (${model}) is not yet wired into the chat executor. Use a text model instead. Image support is tracked as a follow-up commit.`,
-          type: "invalid_request",
-        },
-      }), { status: 400, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
+      return await this.executeImage({ model, baseModel, body, stream, cookieHeader, signal, log });
     }
 
     // Hide reasoning? Read from provider-specific data or default to showing it.
@@ -607,6 +814,175 @@ export class GensparkWebExecutor extends BaseExecutor {
         inspected.stream, model, cid, created, baseModel, isSearch, hideReasoning, signal,
       );
     }
+    return { response: finalResponse, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
+  }
+
+  /**
+   * Image generation flow. Mirrors genspark2api/controller/chat.go ImageProcess:
+   *   1. Extract the prompt from the last user message (string or array text part).
+   *   2. POST /api/copilot/ask with type=COPILOT_MOA_IMAGE → NDJSON body with task_ids.
+   *   3. Parse the body to extract task_ids.
+   *   4. Poll /api/ig_tasks_status until TASKS_STATUS_COMPLETE.
+   *   5. Build an OpenAI chat completion (stream or non-stream) with the image URLs as
+   *      Markdown image links in the assistant message content.
+   *
+   * Error handling mirrors the chat flow: Genspark returns 200 with an error body for
+   * rate-limit / free-limit / not-login / Cloudflare cases, so we read the body and
+   * classify before treating it as a successful image-task response.
+   */
+  async executeImage({ model, baseModel, body, stream, cookieHeader, signal, log }) {
+    // Extract the prompt from the last user message. Accept both string content and
+    // array content (OpenAI multipart format) — concatenate the text parts.
+    const messages = body?.messages || [];
+    let prompt = "";
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (!msg || msg.role !== "user") continue;
+      const content = msg.content;
+      if (typeof content === "string") {
+        prompt = content;
+      } else if (Array.isArray(content)) {
+        prompt = content
+          .filter((c) => c && typeof c === "object" && c.type === "text")
+          .map((c) => String(c.text || ""))
+          .join("\n");
+      }
+      if (prompt) break;
+    }
+    if (!prompt.trim()) {
+      const errResp = new Response(JSON.stringify({
+        error: {
+          message: `Image generation requested with model ${model} but no prompt text was found in the messages array.`,
+          type: "invalid_request",
+        },
+      }), { status: 400, headers: { "Content-Type": "application/json" } });
+      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
+    }
+
+    const requestBody = buildImageRequestBody(baseModel, prompt);
+    const headers = {
+      "Content-Type": "application/json",
+      // Image endpoint uses */* Accept (not text/event-stream) — matches genspark2api makeImageRequest.
+      "Accept": "*/*",
+      "Origin": GENSPARK_BASE,
+      "Referer": `${GENSPARK_BASE}/`,
+      "Cookie": cookieHeader,
+      "User-Agent": GENSPARK_USER_AGENT,
+    };
+
+    log?.info?.("GENSPARK-WEB", `Image gen ${model} (prompt_len=${prompt.length})`);
+
+    let response;
+    try {
+      response = await fetch(GENSPARK_ASK_API, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(requestBody),
+        signal,
+      });
+    } catch (err) {
+      log?.error?.("GENSPARK-WEB", `Image fetch failed: ${err.message || String(err)}`);
+      const errResp = new Response(JSON.stringify({
+        error: {
+          message: `Genspark image connection failed: ${err.message || String(err)}`,
+          type: "upstream_error",
+        },
+      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
+    }
+
+    if (!response.ok) {
+      const status = response.status;
+      let errMsg = `Genspark image API returned HTTP ${status}`;
+      if (status === 401 || status === 403) {
+        errMsg = "Genspark auth failed — session_id cookie may be expired or invalid.";
+      } else if (status === 429) {
+        errMsg = "Genspark rate limited. Wait a moment and retry, or rotate session_id cookies.";
+      }
+      log?.warn?.("GENSPARK-WEB", errMsg);
+      const errResp = new Response(JSON.stringify({
+        error: { message: errMsg, type: "upstream_error", code: `HTTP_${status}` },
+      }), { status, headers: { "Content-Type": "application/json" } });
+      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
+    }
+
+    // Read the full body — image endpoint returns a non-streaming NDJSON blob, not an SSE stream.
+    let bodyText;
+    try {
+      bodyText = await response.text();
+    } catch (err) {
+      const errResp = new Response(JSON.stringify({
+        error: { message: `Failed to read image response: ${err.message || String(err)}`, type: "upstream_error" },
+      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
+    }
+
+    // Classify known error signatures (rate-limit, free-limit, not-login, Cloudflare, server-error).
+    // These come through as 200 with an error payload — same pattern as the chat flow.
+    const errKind = classifyError(bodyText);
+    if (errKind) {
+      let errMsg;
+      switch (errKind) {
+        case "rate_limit":
+          errMsg = "Genspark rate limit exceeded. Rotate session_id cookies or wait a moment.";
+          break;
+        case "free_limit":
+          errMsg = "Genspark free usage limit reached for this session_id. Switch to a Plus session or another cookie.";
+          break;
+        case "not_login":
+          errMsg = "Genspark session is not logged in. The session_id cookie is invalid or expired.";
+          break;
+        case "cloudflare":
+          errMsg = "Genspark is behind a Cloudflare challenge. Configure an outbound proxy (PROXY_URL) or retry from a different IP.";
+          break;
+        case "server_error":
+          errMsg = "Genspark internal server error. Try again later.";
+          break;
+        case "service_unavailable":
+          errMsg = "Genspark service is overloaded. Try again later.";
+          break;
+        default:
+          errMsg = `Genspark upstream error (${errKind}).`;
+      }
+      log?.warn?.("GENSPARK-WEB", `${errKind}: ${errMsg}`);
+      const errResp = new Response(JSON.stringify({
+        error: { message: errMsg, type: "upstream_error", code: errKind.toUpperCase() },
+      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
+    }
+
+    // Extract task_ids from the response body.
+    const [projectId, taskIds] = extractImageTaskIds(bodyText);
+    if (taskIds.length === 0) {
+      log?.error?.("GENSPARK-WEB", `No image task_ids in response body (len=${bodyText.length}). First 200 chars: ${bodyText.slice(0, 200)}`);
+      const errResp = new Response(JSON.stringify({
+        error: {
+          message: "Genspark image API returned no task_ids. The session may be rate-limited or the prompt may have been rejected.",
+          type: "upstream_error",
+          code: "NO_TASK_IDS",
+        },
+      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
+    }
+
+    log?.debug?.("GENSPARK-WEB", `Image tasks: ${taskIds.length} (project=${projectId})`);
+
+    // Poll for completion.
+    const imageUrls = await pollImageTaskStatus(taskIds, cookieHeader, signal, log);
+    if (imageUrls.length === 0) {
+      const errResp = new Response(JSON.stringify({
+        error: {
+          message: "Genspark image generation produced no image URLs. The tasks may have failed or timed out.",
+          type: "upstream_error",
+          code: "NO_IMAGE_URLS",
+        },
+      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
+    }
+
+    log?.info?.("GENSPARK-WEB", `Image gen complete: ${imageUrls.length} image(s)`);
+
+    const finalResponse = buildImageChatResponse(imageUrls, prompt, model, stream);
     return { response: finalResponse, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
   }
 }
