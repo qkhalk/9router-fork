@@ -75,7 +75,6 @@ import p72 from "./perplexity.js";
 import p73 from "./perplexity-agent.js";
 import p74 from "./playht.js";
 import p75 from "./qoder.js";
-import p76 from "./qwen.js";
 import p77 from "./recraft.js";
 import p78 from "./runwayml.js";
 import p79 from "./sdwebui.js";
@@ -116,11 +115,15 @@ import p113 from "./morph.js";
 // import p114 from "./devin-cli.js";
 // import p104 from "./windsurf.js";
 import p115 from "./poolside.js";
-// Fork custom providers (appended after upstream p0–p115; renumbered to avoid clashing with
-// upstream's codebuddy-intl which now occupies p100)
-import p116 from "./gemini-web.js";
-import p117 from "./ds2api.js";
-import p118 from "./genspark-web.js";
+import p116 from "./tokenrouter.js";
+import p117 from "./selfhosted-stt.js";
+import p118 from "./selfhosted-tts.js";
+import p119 from "./selfhosted-embedding.js";
+// Fork custom providers (appended after upstream p0–p119; renumbered from p116-118 to
+// p120-122 to avoid clashing with upstream's new p116-119 tokenrouter/selfhosted-* slots)
+import p120 from "./gemini-web.js";
+import p121 from "./ds2api.js";
+import p122 from "./genspark-web.js";
 
 export default [
   p0,
@@ -199,7 +202,6 @@ export default [
   p73,
   p74,
   p75,
-  p76,
   p77,
   p78,
   p79,
@@ -238,8 +240,12 @@ export default [
   // p114, // devin-cli — hidden, spawns local agent with shell/fs access
   // p104, // windsurf — hidden, no tool calling
   p115,
-  // Fork custom providers
   p116,
   p117,
   p118,
+  p119,
+  // Fork custom providers
+  p120,
+  p121,
+  p122,
 ];

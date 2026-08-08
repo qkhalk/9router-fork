@@ -44,3 +44,13 @@ tests/unit/tunnel-pid-ownership.test.js :: cloudflared PID ownership does not le
 tests/unit/windsurf-executor.test.js :: WindsurfExecutor class constructor wires config from PROVIDERS.windsurf
 tests/unit/windsurf-executor.test.js :: WindsurfExecutor class buildUrl returns the GetChatMessage endpoint
 tests/unit/windsurf-executor.test.js :: WindsurfExecutor class PROVIDERS.windsurf baseUrl is the chat endpoint (registry in sync)
+
+# v0.5.50 migration — 3 NEW failing tests, all upstream-shipped snapshot bugs:
+#   - golden-url-header (3): the buildHeaders snapshot shipped by upstream v0.5.50 is
+#     out of sync with the code. Verified failing on a CLEAN upstream/master checkout
+#     (4 fails there too: cline, clinepass, kimi + 1). The header VALUES are correct
+#     (HTTP-Referer, X-Msh-Device-Id present); only the committed snapshot drifted.
+#     Not caused by this merge.
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) > cline → headers (apiKey / oauth)
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) > clinepass → headers (apiKey / oauth)
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) > kimi → headers (apiKey / oauth)
