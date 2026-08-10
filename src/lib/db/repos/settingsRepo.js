@@ -77,8 +77,10 @@ const DEFAULT_SETTINGS = {
   xrayModelFilterLimit: 50,
   xrayModelFilterAll: false,
   xrayModelFilterPrune: false,
-  xrayModelFilterConcurrency: 4,
+  xrayModelFilterConcurrency: 2,
   xrayModelFilterTimeoutMs: 20000,
+  xrayModelFilterPauseOnTraffic: true,
+  xrayModelFilterQuietMs: 15000,
 };
 
 async function readRaw() {

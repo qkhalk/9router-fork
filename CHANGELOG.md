@@ -1,3 +1,14 @@
+# v0.6.8 (2026-08-11)
+
+## Fixes
+- **V2Ray Proxy**: make Model Proxy Filter safer while live model requests are
+  running. The filter now supports an opt-in pause mode that waits for live
+  traffic to go quiet before starting more probes, while still allowing users
+  to disable that behavior and run continuous parallel checks.
+- **V2Ray Proxy**: reduce model filter probe output to `max_tokens: 1`, change
+  the recommended/default thread count to 2, and avoid pruning the currently
+  running Xray config.
+
 # v0.6.7 (2026-08-11)
 
 ## Fixes

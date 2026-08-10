@@ -53,6 +53,7 @@ import { getProviderCredentials } from "@/sse/services/auth.js";
 import { checkAndRefreshToken } from "@/sse/services/tokenRefresh.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
+import { waitForLiveTrafficQuiet } from "./modelFilterTraffic.js";
 
 // Fixed pool id so re-runs update the same row rather than creating dupes.
 const MANAGED_POOL_ID = "v2go-xray-managed";
@@ -95,7 +96,9 @@ const modelFilterState = {
   all: false,
   limit: 50,
   prune: false,
-  concurrency: 4,
+  concurrency: 2,
+  pauseOnTraffic: true,
+  quietMs: 15000,
   tested: 0,
   passed: 0,
   failed: 0,
@@ -513,7 +516,7 @@ export async function testSingleConfigWithModel(configId, { model: modelStr, tim
     const result = await handleChatCore({
       body: {
         model: `${modelInfo.provider}/${modelInfo.model}`,
-        max_tokens: 16,
+        max_tokens: 1,
         stream: false,
         messages: [{ role: "user", content: "hi" }],
       },
@@ -522,7 +525,7 @@ export async function testSingleConfigWithModel(configId, { model: modelStr, tim
       log: silentProbeLog,
       clientRawRequest: {
         endpoint: "/api/xray/configs/model-test",
-        body: { model: modelStr, max_tokens: 16, stream: false, messages: [{ role: "user", content: "hi" }] },
+        body: { model: modelStr, max_tokens: 1, stream: false, messages: [{ role: "user", content: "hi" }] },
         headers: { accept: "application/json", "content-type": "application/json", "x-9r-internal": "xray-model-filter" },
       },
       connectionId: baseCredentials.connectionId,
@@ -581,27 +584,43 @@ function normalizeModelFilterLimit({ limit = 50, all = false } = {}) {
   return { all: false, limit: Math.max(1, Math.min(Number(limit) || 50, 500)) };
 }
 
-function normalizeModelFilterConcurrency(concurrency = 4) {
-  return Math.max(1, Math.min(Number(concurrency) || 4, 16));
+function normalizeModelFilterConcurrency(concurrency = 2) {
+  return Math.max(1, Math.min(Number(concurrency) || 2, 16));
 }
 
-export async function filterConfigsByModel({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 4, onProgress = null } = {}) {
+export async function filterConfigsByModel({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 2, pauseOnTraffic = true, quietMs = 15000, onProgress = null } = {}) {
   const configs = await getXrayConfigs({ isActive: true });
+  const settings = await getSettings();
+  const runningActiveConfigId = getManagedPid()
+    ? (state.activeConfigId || settings.xraySelectedConfigId || null)
+    : null;
   const normalized = normalizeModelFilterLimit({ limit, all });
   const selected = normalized.all ? configs : configs.slice(0, normalized.limit);
   const workerCount = Math.min(normalizeModelFilterConcurrency(concurrency), selected.length || 1);
   const results = [];
   let cursor = 0;
 
+  const maybePruneConfig = async (config, result) => {
+    if (!prune || result.ok) return result;
+    if (runningActiveConfigId && config.id === runningActiveConfigId) {
+      return { ...result, pruned: false, pruneSkipped: "active_config_running" };
+    }
+    await deleteXrayConfig(config.id);
+    return { ...result, pruned: true };
+  };
+
   const testConfig = async (config) => {
+    if (pauseOnTraffic) {
+      await waitForLiveTrafficQuiet({ quietMs, maxWaitMs: 10 * 60 * 1000 });
+    }
     try {
       const probe = await testSingleConfigWithModel(config.id, { model, timeoutMs });
-      const result = { configId: config.id, name: config.name, host: config.host, country: config.country, ...probe };
+      let result = { configId: config.id, name: config.name, host: config.host, country: config.country, ...probe };
+      result = await maybePruneConfig(config, result);
       results.push(result);
-      if (prune && !probe.ok) await deleteXrayConfig(config.id);
       onProgress?.(result);
     } catch (error) {
-      const failed = {
+      let failed = {
         configId: config.id,
         name: config.name,
         host: config.host,
@@ -611,9 +630,9 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
         status: null,
         error: error.message,
       };
-      results.push(failed);
       await updateXrayTestResult(config.id, { ok: false }).catch(() => {});
-      if (prune) await deleteXrayConfig(config.id);
+      failed = await maybePruneConfig(config, failed);
+      results.push(failed);
       onProgress?.(failed);
     }
   };
@@ -635,12 +654,13 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     tested: results.length,
     passed: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok).length,
-    pruned: prune ? results.filter((r) => !r.ok).length : 0,
+    pruned: results.filter((r) => r.pruned === true).length,
+    pruneSkipped: results.filter((r) => r.pruneSkipped).length,
     results,
   };
 }
 
-export async function runModelFilterJob({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 4, source = "manual" } = {}) {
+export async function runModelFilterJob({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 2, pauseOnTraffic = true, quietMs = 15000, source = "manual" } = {}) {
   if (modelFilterRunning) {
     return { skipped: true, reason: "already_running", ...getModelFilterStatus() };
   }
@@ -658,6 +678,8 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
       limit: normalized.all ? "all" : normalized.limit,
       prune: prune === true,
       concurrency: normalizedConcurrency,
+      pauseOnTraffic: pauseOnTraffic === true,
+      quietMs,
       tested: 0,
       passed: 0,
       failed: 0,
@@ -673,11 +695,13 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
         prune,
         timeoutMs,
         concurrency: normalizedConcurrency,
+        pauseOnTraffic,
+        quietMs,
         onProgress: (result) => {
           modelFilterState.tested += 1;
           if (result.ok) modelFilterState.passed += 1;
           else modelFilterState.failed += 1;
-          if (prune && !result.ok) modelFilterState.pruned += 1;
+          if (result.pruned === true) modelFilterState.pruned += 1;
         },
       });
       Object.assign(modelFilterState, {
@@ -716,7 +740,9 @@ export async function runModelFilterFromSettings(source = "auto-sync") {
     limit: settings.xrayModelFilterLimit,
     all: settings.xrayModelFilterAll === true,
     prune: settings.xrayModelFilterPrune === true,
-    concurrency: Number(settings.xrayModelFilterConcurrency) || 4,
+    concurrency: Number(settings.xrayModelFilterConcurrency) || 2,
+    pauseOnTraffic: settings.xrayModelFilterPauseOnTraffic !== false,
+    quietMs: Number(settings.xrayModelFilterQuietMs) || 15000,
     timeoutMs: Number(settings.xrayModelFilterTimeoutMs) || 20000,
     source,
   });
