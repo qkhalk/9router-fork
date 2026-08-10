@@ -255,7 +255,7 @@ export default function APIPageClient({ machineId }) {
         const u = new URL(trimmed);
         if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("protocol");
       } catch {
-        alert("Enter a valid http(s) URL, e.g. https://ai.1k.io.vn");
+        alert("Enter a valid http(s) URL, e.g. https://ai.domain.com");
         return;
       }
     }
@@ -1011,7 +1011,7 @@ export default function APIPageClient({ machineId }) {
               type="text"
               value={externalTunnelInput}
               onChange={(e) => setExternalTunnelInput(e.target.value)}
-              placeholder="https://ai.1k.io.vn"
+              placeholder="https://ai.domain.com"
               className="flex-1 font-mono text-sm"
             />
             <Button
