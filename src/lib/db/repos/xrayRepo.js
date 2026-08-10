@@ -204,8 +204,12 @@ export async function getSelectedXrayConfig() {
   const row = db.get(`SELECT * FROM xrayConfigs WHERE isSelected = 1 LIMIT 1`);
   if (row) return rowToConfig(row);
   // No explicit selection — fall back to the healthiest active config.
+  // Sort so tested configs (lastLatencyMs > 0) come first, then by latency asc;
+  // untested (null) and failed (-1) configs sink to the bottom.
   return rowToConfig(
-    db.get(`SELECT * FROM xrayConfigs WHERE isActive = 1 ORDER BY (lastLatencyMs > 0 DESC), lastLatencyMs ASC LIMIT 1`)
+    db.get(`SELECT * FROM xrayConfigs WHERE isActive = 1
+            ORDER BY CASE WHEN lastLatencyMs IS NOT NULL AND lastLatencyMs > 0 THEN 0 ELSE 1 END,
+                     lastLatencyMs ASC LIMIT 1`)
   );
 }
 
