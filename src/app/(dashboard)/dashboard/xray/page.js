@@ -45,6 +45,13 @@ export default function XrayProxyPage() {
   const [logs, setLogs] = useState({ runtime: "", install: "" });
   const [settings, setSettings] = useState({});
   const [confirmState, setConfirmState] = useState(null);
+  const [modelFilter, setModelFilter] = useState({
+    model: "oc/deepseek-v4-flash-free",
+    limit: 50,
+    prune: false,
+  });
+  const [modelFilterBusy, setModelFilterBusy] = useState(false);
+  const [modelFilterResult, setModelFilterResult] = useState(null);
   const notify = useNotificationStore();
   const pollRef = useRef(null);
 
@@ -231,6 +238,54 @@ export default function XrayProxyPage() {
     } catch (e) {
       notify.error(`Health check failed: ${e.message}`);
     }
+  };
+
+  const runModelFilter = async () => {
+    const model = modelFilter.model.trim();
+    if (!model) {
+      notify.error("Model is required");
+      return;
+    }
+
+    const execute = async () => {
+      setModelFilterBusy(true);
+      setModelFilterResult(null);
+      try {
+        notify.info(`Testing Xray servers with ${model}...`);
+        const res = await fetch("/api/xray/configs/model-filter", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            limit: Number(modelFilter.limit) || 50,
+            prune: modelFilter.prune === true,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        setModelFilterResult(data);
+        notify.success(`Model filter done: ${data.passed}/${data.tested} usable${data.pruned ? ` · removed ${data.pruned}` : ""}`);
+        await fetchConfigs();
+        await fetchStatus();
+      } catch (e) {
+        notify.error(`Model filter failed: ${e.message}`);
+      } finally {
+        setModelFilterBusy(false);
+      }
+    };
+
+    if (modelFilter.prune) {
+      setConfirmState({
+        message: `Test up to ${modelFilter.limit || 50} V2Ray servers with "${model}" and permanently delete every failing config?`,
+        onConfirm: async () => {
+          setConfirmState(null);
+          await execute();
+        },
+      });
+      return;
+    }
+
+    await execute();
   };
 
   const handleSaveSetting = async (key, value) => {
@@ -459,6 +514,89 @@ export default function XrayProxyPage() {
             />
           </label>
         </div>
+      </Card>
+
+      {/* Model-aware filtering */}
+      <Card className="p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="font-semibold">Model Proxy Filter</h2>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+              Test Xray IPs against a real routed model request, then optionally delete failing configs.
+            </p>
+          </div>
+          {modelFilterResult && (
+            <Badge variant={modelFilterResult.failed === 0 ? "success" : "warning"}>
+              {modelFilterResult.passed}/{modelFilterResult.tested} usable
+            </Badge>
+          )}
+        </div>
+
+        <div className="grid md:grid-cols-[1fr_120px_auto_auto] gap-2 items-end">
+          <div>
+            <label className="text-xs text-zinc-500 block mb-1">Model</label>
+            <Input
+              value={modelFilter.model}
+              onChange={(e) => setModelFilter((s) => ({ ...s, model: e.target.value }))}
+              placeholder="oc/deepseek-v4-flash-free"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-500 block mb-1">Limit</label>
+            <Input
+              type="number"
+              min="1"
+              max="500"
+              value={modelFilter.limit}
+              onChange={(e) => setModelFilter((s) => ({ ...s, limit: e.target.value }))}
+            />
+          </div>
+          <label className="text-sm flex items-center gap-2 h-10">
+            <input
+              type="checkbox"
+              checked={modelFilter.prune}
+              onChange={(e) => setModelFilter((s) => ({ ...s, prune: e.target.checked }))}
+            />
+            Delete failures
+          </label>
+          <Button onClick={runModelFilter} disabled={modelFilterBusy || busy || !status.binaryInstalled}>
+            {modelFilterBusy ? "Testing..." : "Run Filter"}
+          </Button>
+        </div>
+
+        {modelFilterResult?.results?.length > 0 && (
+          <div className="overflow-x-auto border rounded-lg">
+            <table className="w-full text-xs">
+              <thead className="text-left text-zinc-500 dark:text-zinc-400 border-b">
+                <tr>
+                  <th className="py-2 px-3">Server</th>
+                  <th className="py-2 px-3">Country</th>
+                  <th className="py-2 px-3">Status</th>
+                  <th className="py-2 px-3">Latency</th>
+                  <th className="py-2 px-3">Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {modelFilterResult.results.slice(0, 25).map((r) => (
+                  <tr key={r.configId} className="border-b last:border-0">
+                    <td className="py-2 px-3 max-w-xs truncate">{r.name || r.host || r.configId}</td>
+                    <td className="py-2 px-3">{r.country || "—"}</td>
+                    <td className="py-2 px-3">
+                      <Badge variant={r.ok ? "success" : "error"}>{r.ok ? "usable" : "failed"}</Badge>
+                    </td>
+                    <td className="py-2 px-3">{latencyText(r.latencyMs)}</td>
+                    <td className="py-2 px-3 max-w-sm truncate">{r.error || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {modelFilterResult.results.length > 25 && (
+              <div className="text-center py-2 text-xs text-zinc-500">
+                Showing first 25 of {modelFilterResult.results.length} results.
+              </div>
+            )}
+          </div>
+        )}
       </Card>
 
       {/* Server list */}

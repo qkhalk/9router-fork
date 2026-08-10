@@ -40,6 +40,7 @@ import {
   updateXrayTestResult,
   getXrayConfigs,
   getXraySyncState,
+  deleteXrayConfig,
 } from "../db/repos/xrayRepo.js";
 import {
   getProxyPoolById,
@@ -47,6 +48,12 @@ import {
   updateProxyPool,
 } from "../db/repos/proxyPoolsRepo.js";
 import { getSettings, updateSettings } from "../db/repos/settingsRepo.js";
+import { getModelInfo } from "@/sse/services/model.js";
+import { getProviderCredentials } from "@/sse/services/auth.js";
+import { checkAndRefreshToken } from "@/sse/services/tokenRefresh.js";
+import { handleChatCore } from "open-sse/handlers/chatCore.js";
+import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
+import * as log from "@/sse/utils/logger.js";
 
 // Fixed pool id so re-runs update the same row rather than creating dupes.
 const MANAGED_POOL_ID = "v2go-xray-managed";
@@ -116,7 +123,7 @@ async function syncManagedPool(active, socksPort, configId) {
     proxyUrl,
     type: "socks5",
     isActive: active,
-    strictProxy: false,
+    strictProxy: true,
     testStatus: active ? "unknown" : "offline",
     _v2goManaged: true,
     _v2goConfigId: configId || null,
@@ -346,6 +353,211 @@ export async function testSingleConfig(configId) {
     if (tempHandle) tempHandle.kill();
     try { fs.unlinkSync(tempConfigPath); } catch {}
   }
+}
+
+async function spawnTempConfig(config, timeoutMs = 8000) {
+  if (!isXrayInstalled()) {
+    const e = new Error("Xray binary is not installed");
+    e.code = "NOT_INSTALLED";
+    throw e;
+  }
+  const v = validateLink(config.link);
+  if (!v.ok) {
+    const e = new Error(`Config not usable: ${v.error}`);
+    e.code = "BAD_CONFIG";
+    throw e;
+  }
+
+  const tempSocks = 51808 + Math.floor(Math.random() * 1000);
+  const tempHttp = tempSocks + 1;
+  const tempConfigPath = getXrayConfigPath() + `.model-test-${config.id}.json`;
+  const tempConfig = buildClientConfig(v.outbound, { socksPort: tempSocks, httpPort: tempHttp });
+  fs.writeFileSync(tempConfigPath, JSON.stringify(tempConfig, null, 2));
+
+  const tempHandle = await spawnTempXray({ configPath: tempConfigPath });
+  let ready = false;
+  for (let i = 0; i < 15; i++) {
+    if (await isSocksPortOpen(tempSocks)) { ready = true; break; }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  if (!ready) {
+    tempHandle.kill();
+    try { fs.unlinkSync(tempConfigPath); } catch {}
+    const e = new Error("SOCKS port did not open for temp model test");
+    e.code = "STARTUP_FAILED";
+    throw e;
+  }
+
+  return {
+    socksPort: tempSocks,
+    cleanup() {
+      tempHandle.kill();
+      try { fs.unlinkSync(tempConfigPath); } catch {}
+    },
+    timeoutMs,
+  };
+}
+
+function summarizeProbeBody(text) {
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text);
+    return parsed?.error?.message || parsed?.message || parsed?.error || text.slice(0, 240);
+  } catch {
+    return text.slice(0, 240);
+  }
+}
+
+/**
+ * Test whether a single Xray config can actually reach a routed model/provider.
+ * This uses the same chatCore/executor path as normal requests, but injects a
+ * temporary strict SOCKS proxy so failure cannot silently fall back to direct.
+ */
+export async function testSingleConfigWithModel(configId, { model: modelStr, timeoutMs = 20000 } = {}) {
+  if (!modelStr || typeof modelStr !== "string") {
+    const e = new Error("model is required");
+    e.code = "BAD_REQUEST";
+    throw e;
+  }
+
+  const config = await getXrayConfigById(configId);
+  if (!config) {
+    const e = new Error(`Config ${configId} not found`);
+    e.code = "NOT_FOUND";
+    throw e;
+  }
+
+  const modelInfo = await getModelInfo(modelStr);
+  if (!modelInfo?.provider || !modelInfo?.model) {
+    const e = new Error(`Invalid model: ${modelStr}`);
+    e.code = "BAD_MODEL";
+    throw e;
+  }
+
+  const temp = await spawnTempConfig(config, timeoutMs);
+  const startedAt = Date.now();
+  try {
+    const baseCredentials = await getProviderCredentials(modelInfo.provider, new Set(), modelInfo.model);
+    if (!baseCredentials || baseCredentials.allRateLimited) {
+      const e = new Error(`No active credentials for provider: ${modelInfo.provider}`);
+      e.code = "NO_CREDENTIALS";
+      throw e;
+    }
+
+    const refreshed = await checkAndRefreshToken(modelInfo.provider, baseCredentials);
+    const credentials = {
+      ...refreshed,
+      providerSpecificData: {
+        ...(refreshed.providerSpecificData || {}),
+        connectionProxyEnabled: true,
+        connectionProxyUrl: `socks5://127.0.0.1:${temp.socksPort}`,
+        connectionNoProxy: "",
+        connectionProxyPoolId: "xray-model-filter",
+        strictProxy: true,
+      },
+    };
+    const settings = await getSettings();
+    const result = await handleChatCore({
+      body: {
+        model: `${modelInfo.provider}/${modelInfo.model}`,
+        max_tokens: 16,
+        stream: false,
+        messages: [{ role: "user", content: "hi" }],
+      },
+      modelInfo,
+      credentials,
+      log,
+      clientRawRequest: {
+        endpoint: "/api/xray/configs/model-test",
+        body: { model: modelStr, max_tokens: 16, stream: false, messages: [{ role: "user", content: "hi" }] },
+        headers: { accept: "application/json", "content-type": "application/json", "x-9r-internal": "xray-model-filter" },
+      },
+      connectionId: baseCredentials.connectionId,
+      userAgent: "9router-xray-model-filter/1.0",
+      apiKey: null,
+      ccFilterNaming: false,
+      rtkEnabled: false,
+      headroomEnabled: false,
+      headroomUrl: settings.headroomUrl || DEFAULT_HEADROOM_URL,
+      headroomCompressUserMessages: false,
+      cavemanEnabled: false,
+      cavemanLevel: "full",
+      ponytailEnabled: false,
+      ponytailLevel: "full",
+      pxpipeEnabled: false,
+      pxpipeMinChars: settings.pxpipeMinChars,
+      pxpipeTimeoutMs: settings.pxpipeTimeoutMs,
+      pxpipeTransform: null,
+      providerThinking: null,
+      sourceFormatOverride: "openai",
+    });
+
+    const latencyMs = Date.now() - startedAt;
+    if (!result.success) {
+      await updateXrayTestResult(config.id, { ok: false });
+      return { ok: false, latencyMs, status: result.status || 502, error: result.error || "Model probe failed" };
+    }
+
+    const rawText = await result.response.text().catch(() => "");
+    if (!result.response.ok) {
+      await updateXrayTestResult(config.id, { ok: false });
+      return {
+        ok: false,
+        latencyMs,
+        status: result.response.status,
+        error: summarizeProbeBody(rawText) || `HTTP ${result.response.status}`,
+      };
+    }
+
+    const health = await testProxy(temp.socksPort, Math.min(timeoutMs, 8000));
+    await updateXrayTestResult(config.id, health.ok ? health : { ok: true, latencyMs });
+    return {
+      ok: true,
+      latencyMs,
+      status: result.response.status,
+      exitIp: health.exitIp || "",
+      error: null,
+    };
+  } finally {
+    temp.cleanup();
+  }
+}
+
+export async function filterConfigsByModel({ model, limit = 50, prune = false, timeoutMs = 20000 } = {}) {
+  const configs = await getXrayConfigs({ isActive: true });
+  const selected = configs.slice(0, Math.max(1, Math.min(Number(limit) || 50, 500)));
+  const results = [];
+
+  for (const config of selected) {
+    try {
+      const probe = await testSingleConfigWithModel(config.id, { model, timeoutMs });
+      results.push({ configId: config.id, name: config.name, host: config.host, country: config.country, ...probe });
+      if (prune && !probe.ok) await deleteXrayConfig(config.id);
+    } catch (error) {
+      const failed = {
+        configId: config.id,
+        name: config.name,
+        host: config.host,
+        country: config.country,
+        ok: false,
+        latencyMs: -1,
+        status: null,
+        error: error.message,
+      };
+      results.push(failed);
+      await updateXrayTestResult(config.id, { ok: false }).catch(() => {});
+      if (prune) await deleteXrayConfig(config.id);
+    }
+  }
+
+  return {
+    model,
+    tested: results.length,
+    passed: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+    pruned: prune ? results.filter((r) => !r.ok).length : 0,
+    results,
+  };
 }
 
 /**

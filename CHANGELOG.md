@@ -1,3 +1,20 @@
+# v0.6.5 (2026-08-11)
+
+## Features
+- **V2Ray Proxy**: add a model-aware proxy filter on `/dashboard/xray`. The new
+  **Model Proxy Filter** card tests synced v2go/Xray configs against a real
+  routed chat request such as `oc/deepseek-v4-flash-free`, reports usable vs
+  failed IPs, and can permanently delete failing configs when requested.
+- **V2Ray Proxy**: test model reachability through isolated temporary Xray
+  processes with strict SOCKS routing, so the probe uses the same provider,
+  model, executor, and translator path as normal `/v1/chat/completions` traffic.
+
+## Fixes
+- **V2Ray Proxy**: make the auto-managed `V2Ray Proxy (v2go)` pool strict by
+  default. If the local SOCKS proxy fails, provider requests now fail through
+  the normal fallback/rotation path instead of silently bypassing the proxy and
+  falling back to direct outbound traffic.
+
 # v0.6.4 (2026-08-11)
 
 ## Fixes
