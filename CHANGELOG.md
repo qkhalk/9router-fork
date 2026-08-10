@@ -1,3 +1,14 @@
+# v0.6.1 (2026-08-10)
+
+## Fixes
+- **V2Ray Proxy**: fix invalid SQLite `ORDER BY` expression in
+  `getSelectedXrayConfig` fallback — `(lastLatencyMs > 0 DESC)` is not valid SQL
+  (DESC cannot modify a boolean expression). Some SQLite adapters tolerated it
+  (sql.js on Windows) but `node:sqlite`/`better-sqlite3` on Linux rejected it
+  with `near "DESC": syntax error`, breaking proxy start. Rewritten as a
+  standard `CASE WHEN ... THEN 0 ELSE 1 END` expression. Verified end-to-end on
+  both Windows and Ubuntu 24.04 Linux.
+
 # v0.6.0 (2026-08-10)
 
 ## Features
