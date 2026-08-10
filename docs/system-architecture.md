@@ -10,13 +10,22 @@
                 ┌──────────────────────────────────────────────────────────┐
    LLM clients  │  OpenAI / Claude / Gemini SDKs, AI IDEs, the 9router CLI  │
    (any shape)  └─────────────────────────┬────────────────────────────────┘
-                                           │  HTTPS (/v1, /v1/messages, /codex, …)
+                                           │  HTTPS (/v1, /v1/messages, /codex, /responses, …)
                                            ▼
         ┌──────────────────────────────────────────────────────────────┐
         │ Next.js custom server  (custom-server.js)                     │
         │  • strips spoofable x-forwarded-for / x-real-ip              │
         │  • injects x-9r-real-ip (socket IP) for rate-limiting        │
-        │  • rewrites: /v1/* /v1/v1/* /codex/* → /api/v1/*              │
+        │  • rewrites: /v1/* /v1/v1/* /v1beta/* /codex/* /responses    │
+        │    → /api/v1/*                                                │
+        └────────────────────────────────┬─────────────────────────────┘
+                                         │
+        ┌────────────────────────────────┴─────────────────────────────┐
+        │ src/dashboardGuard.js (proxy middleware)                      │
+        │  • PUBLIC_API (health/init/auth + /v1/* LLM endpoints w/ API  │
+        │    key auth)  • PROTECTED_API (settings/keys/providers/...)   │
+        │  • LOCAL_ONLY for process-spawning routes (xray/mitm/ds2api/  │
+        │    tunnel)  • CLI token (x-9r-cli-token) for local tools      │
         └────────────────────────────────┬─────────────────────────────┘
                                          │
         ┌────────────────────────────────┴─────────────────────────────┐
@@ -24,15 +33,17 @@
         └────────────────────────────────┬─────────────────────────────┘
                                          │
         ┌────────────────────────────────┴─────────────────────────────┐
-        │ src/sse/handlers/*  (gateway: auth, model resolution, combo)  │
+        │ src/sse/handlers/*  (gateway: auth, model resolution, combo,  │
+        │   capacity adapter)                                          │
         └────────────────────────────────┬─────────────────────────────┘
                                          │  handleChatCore / handleComboChat / handleFusionChat
         ┌────────────────────────────────┴─────────────────────────────┐
         │ open-sse engine                                                │
-        │  translate → RTK compress → select executor → call provider   │
-        │  → stream-transform response back to client format            │
+        │  detect caps → translate → token-saver chain → select executor │
+        │  → call provider → stream-transform response back to client   │
         └────────────────────────────────┬─────────────────────────────┘
-                                         │  outbound HTTPS (optional HTTP_PROXY/HTTPS_PROXY)
+                                         │  outbound HTTPS (optional HTTP_PROXY/HTTPS_PROXY,
+                                         │   per-connection proxy pool, or v2go SOCKS)
                                          ▼
                               Upstream LLM providers
 ```
@@ -60,35 +71,44 @@ Traceable from `src/app/api/v1/chat/completions/route.js`:
 3. **Auth gate.** `handleChat` reads `settings.requireApiKey`; if set, it
    validates the bearer key via `isValidApiKey()` (`src/sse/services/auth.js`)
    and returns `401` on failure.
-4. **Format detection.** `detectFormatByEndpoint()` (`open-sse/translator/
-   formats.js`) identifies the client format (OpenAI / Claude / Gemini /
-   Responses).
-5. **Model resolution.** `src/sse/services/model.js` resolves the `model`
+4. **Format detection.** `detectFormat()` + `detectFormatByEndpoint()`
+   (`open-sse/translator/formats.js`) identifies the client format (OpenAI /
+   Claude / Gemini / Responses / Antigravity / Kiro / Cursor / …).
+5. **Capability detection.** `detectRequiredCapabilities(body)` scans the
+   trailing user turn for modality blocks (`vision` / `pdf` / `audioInput` /
+   `videoInput`) — the HARD_CAPS used by the capacity adapter.
+6. **Model resolution.** `src/sse/services/model.js` resolves the `model`
    string: alias → combo → single provider model (`getModelInfo` /
    `getComboModels`). Model strings use `provider/model` or an alias.
-6. **Credential selection.** `getProviderCredentials()` selects an active
-   connection for the resolved provider (mutex-protected), refreshing OAuth
-   tokens via `checkAndRefreshToken()` when needed.
-7. **Combo vs single.**
-   - Single model → `handleChatCore()` (`open-sse/handlers/chatCore.js`).
-   - Combo → `handleComboChat()` (failover) or `handleFusionChat()` (fusion)
-     from `open-sse/services/combo.js`.
-8. **Inside `open-sse` `handleChatCore`:**
-   1. `handleBypassRequest()` short-circuits warmup/skip patterns.
-   2. **Pre-translate hooks** (fail-open, run in order before translation):
-      - **RTK compress** verbose `tool_result` content (`rtk/index.js`).
-      - **Headroom proxy** (`rtk/headroom.js`) — optional external `/v1/compress` proxy.
-      - **Caveman mode** (`rtk/caveman.js`) — injects caveman-speak system prompt (−65% output tokens).
-      - **Ponytail** (`rtk/ponytail.js`) — injects "lazy senior dev" system prompt (Lite/Full/Ultra).
-   3. **Capability concerns** strip unsupported modalities (vision/audio/pdf)
-      per model (`translator/concerns/`).
+7. **Credential selection.** `getProviderCredentials()` selects an active
+   connection for the resolved provider (mutex-protected, model-locked/excluded
+   connections filtered, `fill-first` or `round-robin` strategy), refreshing
+   OAuth tokens via `checkAndRefreshToken()` when needed and resolving any
+   per-connection proxy pool.
+8. **Combo vs single + capacity adapter.**
+   - Single model → `handleSingleModelChat()`; if the request needs a capability
+     the model lacks, it is routed through `handleComboChat()` with the capacity
+     adapter's pool prepended.
+   - Combo → `augmentModelsWithCapacityAdapter()` first (prepends capable pool
+     models only if no combo member satisfies the request), then
+     `handleComboChat()` (fallback / round-robin) or `handleFusionChat()`
+     (fusion) from `open-sse/services/combo.js`.
+9. **Inside `open-sse` `handleChatCore`:**
+   1. `handleBypassRequest()` short-circuits warmup/naming-skip patterns.
+   2. **Passthrough** detection (`isNativePassthrough`) skips translation.
+   3. **Capability concerns** strip unsupported modalities per model
+      (`translator/concerns/`); `prefetchRemoteImages`.
    4. **Translate request** to the provider's format (`translator/index.js`;
-      pivots through OpenAI if no direct route).
-   5. **Select executor** (`executors/index.js`) — `DefaultExecutor` or a
-      provider-specific one (cursor, kiro, gemini-web, vertex, …).
-   6. **Execute** (`executors/base.js`) — build URL/headers, call provider
+      direct route preferred, else pivot through OpenAI).
+   5. **Token-saver chain** (fail-open, order matters, opt-out via
+      `TOKEN_SAVER_HEADER: off`): RTK compress → Headroom proxy → Caveman
+      inject → Ponytail inject → PXPIPE image compress.
+   6. **Select executor** (`executors/index.js`) — `DefaultExecutor` or a
+      provider-specific one (cursor, kiro, gemini-web, vertex, qoder, …).
+   7. **Execute** (`executors/base.js`) — build URL/headers, call provider
       with retry, fallback URLs, and credential refresh; honor outbound proxy
-      env vars via `utils/proxyFetch.js`; validates target via `ssrfGuard.js`.
+      env vars and per-connection proxy via `utils/proxyFetch.js`; validate
+      target via `ssrfGuard.js`.
 9. **Response streaming.** `handlers/chatCore/streamingHandler.js` (or
    `nonStreamingHandler.js`) builds an SSE transform pipeline
    (`utils/stream.js`): converts provider SSE → client format, maps tool
@@ -96,10 +116,13 @@ Traceable from `src/app/api/v1/chat/completions/route.js`:
 10. **Usage logging.** Tokens/cost/status are written to `usageHistory` (and
     daily rollups to `usageDaily`); full payloads to `requestDetails` when
     request-detail capture is on.
-11. **Failure & fallback.** On 429/401/5xx, `handleChat` calls
-    `markAccountUnavailable(model)` and `open-sse/services/accountFallback.js`
-    applies backoff; the next active account is tried until success or all are
-    exhausted (`unavailableResponse`).
+11. **Failure & fallback.** On a retryable error (429/401/5xx + provider-specific
+    error strings via `checkFallbackError`), `handleSingleModelChat` first
+    rotates the **proxy group** entry (cooldown 60s rate-limit / 30s 5xx) and
+    retries the *same account*, then falls back to the next **account**:
+    `markAccountUnavailable(model)` with per-model `modelLock_*` + backoff;
+    `excludeConnectionIds` grows until all are exhausted (`unavailableResponse`).
+    Earliest `retryAfter` wins for the final 503.
 
 ### Responses API path
 
@@ -118,39 +141,51 @@ non-streaming Responses.
 `open-sse/index.js` (also imported for side effects — it wires HTTP proxy env
 vars).
 
-- **Handlers** = modality orchestrators (`chatCore`, `responsesHandler`,
-  `embeddingsCore`, `imageGenerationCore`, `ttsCore`, `sttCore`, `search`).
-- **Translators** = bidirectional format conversion (`formats/{openai,claude,
-  gemini,responsesApi}`, `request/`, `response/`, `schema/`, `concerns/`).
-- **Executors** = provider HTTP clients; `base.js` provides URL/header build,
-  retry, fallback-URL, credential-refresh; specialized executors add
-  provider protocols (protobuf for Cursor, EventStream for Kiro, RPC for
-  Gemini-Web, etc.). **24 executors total**, including `codebuddy-cn`
-  (Tencent CodeBuddy), `mimo-free` (Xiaomi Mimo free), `commandcode`,
-  web-based executors (`grok-web`, `perplexity-web`, `gemini-web`).
+- **Handlers** = modality orchestrators (`chatCore` + `chatCore/` sub-handlers,
+  `responsesHandler`, `embeddingsCore`, `imageGenerationCore`, `ttsCore`,
+  `sttCore`, `search`).
+- **Translators** = bidirectional format conversion across 14 source formats
+  (`openai`, `openai-responses`, `claude`, `gemini`, `gemini-cli`, `gemini-web`,
+  `vertex`, `codex`, `antigravity`, `kiro`, `cursor`, `ollama`, `commandcode`).
+  Direct routes (e.g. `claude↔kiro`, `antigravity↔openai`) are preferred; the
+  OpenAI format is the pivot fallback. Organized into `formats/`, `request/`,
+  `response/`, `schema/`, and modular `concerns/` (toolCall, thinking,
+  reasoning, message, chunk, usage, image, modality, …).
+- **Executors** = ~40 provider HTTP clients; `base.js` (`BaseExecutor`)
+  provides URL/header build, retry, fallback-URL, credential-refresh;
+  specialized executors add provider protocols (protobuf for Cursor, AWS
+  EventStream for Kiro, RPC for Gemini-Web, COSY signing for Qoder, etc.).
 - **Services** = cross-cutting: model/provider resolution, account fallback,
-  combos, OAuth credential management + token refresh, per-provider usage
-  parsers (`services/usage/`), and the Gemini-Web session/cookie/RPC/keepalive
-  cluster (8 files).
-- **RTK** = token-reduction layer that compresses tool output (git diff/status,
-  logs, grep/find/ls) before sending upstream. Includes `filters/` (11 files),
-  `headroom.js` (external compress proxy), `caveman.js` (caveman-speak injector,
-  −65% output tokens), `ponytail.js` ("lazy senior dev" injector, Lite/Full/Ultra).
+  **combos + capacity adapter**, OAuth credential management + centralized
+  token refresh (`tokenRefresh.js` with per-provider handlers), per-provider
+  usage parsers (`services/usage/` — incl. the Antigravity Gemini-3.x quota
+  tracker), and the Gemini-Web session/cookie/RPC/keepalive cluster (8 files).
+- **RTK / token saver** = fail-open pre-translate pipeline that compresses tool
+  output (git diff/status, logs, grep/find/ls) and injects token-frugal system
+  prompts. Chain order: RTK (`filters/`, 11 files) → Headroom
+  (`rtk/headroom.js`, external `/v1/compress` proxy) → Caveman (`caveman.js`,
+  −65% output tokens) → Ponytail (`ponytail.js`, "lazy senior dev") → PXPIPE
+  (image context compression sidecar). Each step reports effective savings and
+  is opt-out per-request via `TOKEN_SAVER_HEADER: off`.
 - **Transformer** = `responsesTransformer.js` (Chat Completions SSE → Codex
   Responses API SSE), `streamToJsonConverter.js` (Responses non-streaming).
-- **Config** = single source for timeouts, retry/backoff, error mapping, and
-  the provider/model registries (built from `providers/registry/` — 97 files).
+- **Config / registry** = single source for timeouts, retry/backoff, error
+  mapping, and the provider/model registries (built from
+  `providers/registry/` — 122 provider files; `pricing.js`,
+  `capabilities.js`, `schema.js`).
 
-### The pre-translate hook pipeline (chat)
+### The token-saver pipeline (chat)
 
 Before translation, `chatCore.js` runs a series of **fail-open** hooks that
 mutate the request body in-place. Each hook returns null on error, leaving
-the body untouched:
+the body untouched. Order matters; all are opt-out per-request via
+`TOKEN_SAVER_HEADER: off`:
 
 ```
 Body → RTK compress (tool_result) → Headroom (/v1/compress proxy)
      → Caveman (system inject, −65% output) → Ponytail (system inject,
-       Lite/Full/Ultra) → Translate → Execute
+       Lite/Full/Ultra) → PXPIPE (image context compress)
+     → Translate → Execute
 ```
 
 - **RTK** (`rtk/index.js` + `rtk/filters/`) compresses `tool_result` blocks
@@ -161,11 +196,38 @@ Body → RTK compress (tool_result) → Headroom (/v1/compress proxy)
   external Headroom proxy (`/v1/compress`). If the proxy is down or returns an
   error, 9Router fails open and sends the original request. The Headroom
   subprocess lifecycle is managed by `src/lib/headroom/process.js` with a
-  dashboard UI for start/stop/status (`/api/headroom/*`).
+  dashboard UI for start/stop/status (`/api/headroom/*`). It reports effective
+  payload savings (token delta + before/after body/message/tool bytes).
 - **Caveman** (`rtk/caveman.js`) injects a caveman-speak system prompt
   ("why use many token when few token do trick") in 3 levels — −65% output tokens.
 - **Ponytail** (`rtk/ponytail.js`) injects a "lazy senior dev" system prompt
   (Lite/Full/Ultra) that biases the LLM toward minimal, YAGNI-first code.
+- **PXPIPE** (`src/lib/pxpipe/`) is an optional image-context-compression
+  sidecar that shrinks base64 image payloads before dispatch.
+
+### Combos & capacity adapter
+
+A **combo** is a user-defined virtual model name (stored in the `combos` table)
+that fans out to an ordered list of real `provider/model` strings. Three
+strategies (per-combo or global default in `settings.comboStrategy`):
+
+- **fallback** — try models in order, fall through on `checkFallbackError`
+  retryable errors (with a small wait for transient 502/503/504).
+- **round-robin** — rotate the start index per request (in-memory
+  `comboRotationState`, sticky limit `comboStickyRoundRobinLimit`), then fallback.
+- **fusion** — fan the prompt to all panel models in parallel (non-streaming,
+  tools stripped), collect with quorum-grace, then a **judge model**
+  synthesizes one answer from anonymized "Source N" outputs.
+
+The **capacity adapter** (`open-sse/services/capacityAdapter.js`) is the
+vision/audio fallback pool. When a request needs a HARD_CAP (`vision`, `pdf`,
+`audioInput`, `videoInput`) that no combo member (or single target model)
+satisfies, capable pool models are **prepended** as priority candidates — never
+overriding a model that already has the capability. Default fallback model is
+`oc/mimo-v2.5-free`. When the chain falls into an adapter model,
+`withCapacityAdapterStripping` trims message history (drops the middle, keeps
+system + first 6 + trailing user turn) at 80% of the adapter's context window.
+Defaults: vision + audioInput enabled, pdf + videoInput disabled.
 
 
 ### DS2API sidecar provider
@@ -211,6 +273,55 @@ browser access, auto-generates strong admin/api keys, and does not advertise the
 port, but a host firewall is recommended on multi-user machines. (A loopback-only
 bind would require forking ds2api.)
 
+### V2Ray proxy (v2go) — managed Xray-core client
+
+The v2go integration (`src/lib/xray/`, new in v0.6.0) turns V2Ray share links
+into a local SOCKS5+HTTP proxy that 9router treats as a first-class proxy pool.
+The config catalog is seeded by syncing the upstream
+[v2go subscription](https://github.com/Danialsamadi/v2go) (~1,000+ working
+configs, refreshed hourly).
+
+- **Binary install** (`installer.js`): auto-downloads the official Xray-core
+  release (default `v26.3.27`, env `XRAY_VERSION`) per OS/arch into
+  `<DATA_DIR>/xray/`, extracts it, and writes MPL-2.0 attribution.
+- **Share-link parser** (`parser.js`): a documented line-for-line JS port of
+  v2go's Go converter. Supports `vless`, `vmess`, `ss`, `trojan`, `hysteria2`;
+  transports `tcp`/`ws`/`grpc`/`httpupgrade`/`xhttp`; security `none`/`tls`/`reality`.
+  `validateLink()` rejects REALITY + ws (Xray crashes on that combo).
+- **Config builder** (`configBuilder.js`): wraps an outbound into a complete
+  runnable client config with two local inbounds — SOCKS on `xraySocksPort`
+  (default **10808**) and HTTP on `xrayHttpPort` (default **10809**), both
+  bound to `127.0.0.1`.
+- **Process lifecycle** (`process.js`): one Xray process = one active outbound.
+  `startManagedXray` spawns a detached `xray run -c config.json` child (PID
+  file + log), gated by an 8s startup-survival check. `spawnTempXray` runs an
+  isolated ephemeral instance for per-config testing without clobbering the
+  active proxy. Windows uses `powershell.exe Stop-Process`; Unix uses
+  SIGTERM → SIGKILL.
+- **Manager** (`manager.js`): orchestration facade + in-memory state machine
+  (`stopped → starting → running → error`) that reconciles against the live PID
+  to survive Next.js HMR. Exposes start/stop/restart/switch/test/health-check.
+- **Sync** (`sync.js`): subscription fetcher + scheduler (initial sync 5s after
+  boot, then every `xraySyncIntervalMin`, default 60). Upserts into the
+  `xrayConfigs` table; stale configs (dropped from the latest sync) are marked
+  inactive.
+- **Proxy pool bridge**: the manager creates/syncs a managed proxy pool
+  (fixed id `v2go-xray-managed`, `proxyUrl: socks5://127.0.0.1:<socksPort>`,
+  flagged `_v2goManaged:true`) so provider connections can egress through the
+  V2Ray server like any other pool.
+- **Boot** (`src/shared/services/initializeApp.js`): always starts the sync
+  scheduler; if `settings.xrayEnabled && settings.xrayAutoStart` and the binary
+  is installed, auto-starts the service. `SIGINT/SIGTERM` cleanup stops it.
+- **Health probes** (`tester.js`): latency via `gstatic.com/generate_204`
+  through a `SocksProxyAgent`; exit-IP via `cloudflare.com/cdn-cgi/trace`;
+  raw TCP port probe.
+- **API** (`/api/xray/*`): status, start, stop, restart, switch, install, logs,
+  health-check, configs (filter by protocol/country/active/healthy),
+  `configs/[id]/test`. All lifecycle routes are **local-only** per the guard.
+- **Dashboard** (`/dashboard/xray`): binary install/version, SOCKS port, PID,
+  latency badge, server table with filters, per-row test/select, subscription
+  sync card, live log streamer.
+
 ### Web-based/session-based executors
 
 Three executors use session cookies instead of API keys:
@@ -255,13 +366,18 @@ locally instead of being re-pointed at `/v1`:
 4. Per-IDE handlers (`handlers/{kiro,copilot,antigravity,cursor}.js`) decode
    the intercepted request, map the requested model to a user-configured
    provider model via the `mitmAlias` KV, and forward through the same
-   `open-sse` pipeline.
-5. `manager.js` owns the child-process lifecycle, health checks, and DNS
-   teardown.
+   `open-sse` pipeline. (`cursor.js` is a stub returning 501.)
+5. `manager.js` owns the child-process lifecycle (auto-restart with backoff,
+   port-443 conflict detection), health checks, and DNS teardown. The bundled
+   `server.js` is copied to `<DATA_DIR>/runtime/mitm/server.js` at boot so the
+   MITM process doesn't lock `node_modules` during `npm i -g` updates.
 
-Intercepted domains (from `src/mitm/config.js`): Antigravity (cloudcode
-`*.googleapis.com`), Cursor (`api2.cursor.sh`), Kiro (`runtime.*.kiro.dev`),
-Copilot (`api.individual.githubcopilot.com`).
+Intercepted domains (from `src/shared/constants/mitmToolHosts.js`):
+Antigravity (`daily-cloudcode-pa.googleapis.com`,
+`cloudcode-pa.googleapis.com`), Cursor (`api2.cursor.sh`), Kiro
+(`runtime.*.kiro.dev`), Copilot (`api.individual.githubcopilot.com`). The
+Antigravity handler also rewrites the IDE `User-Agent`/`metadata.ideVersion`
+to `1.23.2` (`antigravityIdeVersion.js`).
 
 ## 5. Data & persistence
 
@@ -271,33 +387,64 @@ Copilot (`api.individual.githubcopilot.com`).
   `busy_timeout=5000`, `foreign_keys=ON`.
 - **Location:** `<DATA_DIR>/db/data.sqlite`. Default `DATA_DIR`:
   `~/.9router/` (Linux/macOS) or `%APPDATA%/9router/` (Windows).
-- **Schema (`SCHEMA_VERSION = 1`), 11 tables:**
-  - `_meta` — schema version/migration state.
-  - `settings` — single-row JSON (authMode, password hash, OIDC config, flags).
-  - `providerConnections` — provider credentials (API key or OAuth),
-    `authType`, priority, isActive; multi-account per provider.
-  - `providerNodes` — optional node/region config per connection.
-  - `proxyPools` — rotating outbound proxy definitions + test status.
-  - `apiKeys` — dashboard-issued endpoint API keys (with `machineId`).
-  - `combos` — multi-model groups (`kind`, `models`).
-  - `kv` — scoped key-value (`modelAliases`, `customModels`, `mitmAlias`,
-    `pricing`, …).
+- **Schema (`SCHEMA_VERSION = 2`), 13 tables:**
+  - `_meta` — schema version/migration state, `appVersion`, `totalRequestsLifetime`.
+  - `settings` — single-row JSON (auth, password hash, OIDC config, combo/capacity
+    strategy, xray/mitm/ds2api/headroom flags, quota visibility, …).
+  - `providerConnections` — provider credentials (`authType`: `oauth`/`apikey`/
+    `access_token`/`cookie`/`api_key`), priority, isActive; bulk metadata in a
+    `data` JSON column (tokens, refresh, `providerSpecificData`, model locks, …);
+    multi-account per provider.
+  - `providerNodes` — user-defined OpenAI/Anthropic-compatible/embedding
+    endpoints (prefix + baseUrl + models).
+  - `proxyPools` — outbound proxy pools + rotating groups + test status
+    (entries in a `data` JSON column); includes the v2go-managed pool.
+  - `apiKeys` — dashboard-issued endpoint API keys (bound to `machineId`).
+  - `combos` — multi-model groups (`name` UNIQUE, `kind`, `models` JSON array).
+  - `kv` — scoped key-value (`scope,key` PK); scopes: `modelAliases`,
+    `customModels`, `mitmAlias`, `pricing`, `disabledModels`.
   - `usageHistory` — per-request tokens/cost/status (indexed by time/provider/
-    model/connection).
-  - `usageDaily` — daily aggregates keyed by date.
-  - `requestDetails` — full request/response dumps for debugging.
-- **Migrations:** versioned files in `src/lib/db/migrations/`;
-  `migrate.js` also auto-imports legacy JSON (`db.json`, `usage.json`) on first
-  run; declarative `TABLES` sync adds non-destructive columns/indexes.
+    model/connection); `cost` REAL, `tokens`/`meta` JSON.
+  - `usageDaily` — daily aggregates keyed by `dateKey` (`data` JSON).
+  - `requestDetails` — full request/response dumps for debugging (`data` JSON).
+  - `xrayConfigs` — synced V2Ray share-link catalog (id, link, protocol,
+    country, host/port, latency, exit-IP, selected, active). **(v0.6.0)**
+  - `xraySyncState` — singleton subscription-sync state (source URL, last sync
+    count/error/runs). **(v0.6.0)**
+- **Migrations:** versioned files in `src/lib/db/migrations/`
+  (`001-initial.js`); `migrate.js` stamps `_meta.schemaVersion` and takes a
+  safety backup when `backupSchemaVersion < SCHEMA_VERSION`. `syncSchemaFromTables`
+  is an **additive auto-sync** (`CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD
+  COLUMN` for missing columns) — how schema-v2 tables/columns land without a
+  new migration file. Legacy JSON import (`db.json`/usage/disabled/details) is
+  a one-time, marker-file-guarded step with row-count assertions.
 
 ## 6. Auth & security model
 
 - **Dashboard access:** single admin. Password (bcrypt) or OIDC (PKCE,
   `src/lib/auth/oidc.js`). Sessions are JWT cookies set by
   `dashboardSession.js`. Login is rate-limited per real IP
-  (`loginLimiter.js`).
+  (`loginLimiter.js`). Default password is `INITIAL_PASSWORD` (fallback
+  `123456`) and remote logins with the default password are forced to change it.
 - **Endpoint access:** optional. When `settings.requireApiKey` is true,
-  `/api/v1/*` requires a valid bearer key from the `apiKeys` table.
+  `/api/v1/*` requires a valid bearer / `x-api-key` / `x-goog-api-key` /
+  `?key=` from the `apiKeys` table. A "Default Key" is auto-provisioned for
+  first-time users so `/v1` works out of the box.
+- **Access tiers (`src/dashboardGuard.js`):**
+  - `PUBLIC_API_PATHS` — health/init/auth/version + `require-login` setting.
+  - `PUBLIC_PREFIXES` — `/v1`, `/v1beta`, `/api/v1`, `/codex` (LLM endpoints,
+    API-key auth).
+  - `PROTECTED_API_PATHS` — settings/keys/providers/combos/models/usage/oauth/
+    pricing/tags/cli-tools/mcp/translator/tunnel/xray status+configs (dashboard
+    auth unless `requireLogin === false`).
+  - `LOCAL_ONLY_PATHS` — routes that spawn child processes or read host secrets
+    (xray lifecycle, MITM, ds2api install/start/stop, tunnel enable/disable,
+    cursor/kiro auto-import, headroom start/stop, `auth/reset-password`).
+    Allowed via CLI token, OR (loopback Host+Origin AND authenticated). Tunnel
+    access additionally requires `settings.tunnelDashboardAccess === true` and
+    a known tunnel host.
+  - **CLI token** (`x-9r-cli-token`): salted machine-id, trusted for local
+    CLI/spawn routes.
 - **IP integrity:** `custom-server.js` derives the client IP from the socket
   and strips client-supplied forwarding headers so rate limiting and audit
   can't be spoofed. Requests seen through a reverse proxy are flagged
@@ -307,7 +454,8 @@ Copilot (`api.individual.githubcopilot.com`).
   (10.x, 172.16-31.x, 192.168.x, 127.x, 169.254.x, ::1, and cloud metadata
   IPs like 169.254.169.254).
 - **Secrets:** env-driven (`.env.example`); `JWT_SECRET`, `INITIAL_PASSWORD`,
-  `API_KEY_SECRET`, `MACHINE_ID_SALT` are the security-critical ones.
+  `API_KEY_SECRET`, `MACHINE_ID_SALT` are the security-critical ones. The MITM
+  sudo password is encrypted at rest (AES-256-GCM keyed off `node-machine-id`).
 
 ## 7. Frontend architecture
 
@@ -315,10 +463,12 @@ Copilot (`api.individual.githubcopilot.com`).
   interactive surfaces are `*Client.js` client components.
 - Client state via Zustand (`src/store/`); server data via TTL-cached stores
   and direct `fetch('/api/...')`.
-- Real-time: SSE streams for live usage (`/api/usage/stream`) and the MCP
-  plugin bridge (`/api/mcp/[plugin]/sse`).
+- Real-time: SSE streams for live usage (`/api/usage/stream`), the MCP plugin
+  bridge (`/api/mcp/[plugin]/sse`), and the translator console log
+  (`/api/translator/console-logs/stream`).
 - Runtime i18n (`src/i18n/`) translates the DOM via MutationObserver across
-  31 locales; theme via `useTheme`.
+  **35 locales** (dictionaries in `public/i18n/literals/<locale>.json`); theme
+  via `useTheme`.
 
 ## 8. Deployment & runtime topology
 
@@ -332,11 +482,17 @@ Copilot (`api.individual.githubcopilot.com`).
   `cli/src/cli/api/client.js`.
 - **Local HTTPS:** `https-server.js` fronts an internal Next server (port
   19997) with self-signed certs on port 9997 for local dev.
-- **Tunnels:** Cloudflare (`src/lib/tunnel/cloudflare/manager.js`) and
-  Tailscale (`src/lib/tunnel/tailscale/manager.js`) expose the dashboard
-  beyond localhost.
-- **CI (`.github/workflows/`):** `ci.yml` (lint/type/build/audit),
-  `docker-publish.yml` (build+push on tag), `deploy.yml` (SSH deploy),
+- **Tunnels:** Cloudflare Quick Tunnel (`src/lib/tunnel/cloudflare/manager.js`)
+  and Tailscale Funnel (`src/lib/tunnel/tailscale/manager.js`) expose the
+  dashboard beyond localhost; an `externalTunnelUrl` setting covers tunnels the
+  app does not manage. The v2go SOCKS proxy is an **outbound** proxy for
+  provider egress, separate from these inbound tunnels.
+- **CI (`.github/workflows/`):** `ci.yml` (lint/type/build/audit/dep-check),
+  `cli-release.yml` (build + pack CLI tarball on tag `v*`, attaches
+  `9router-<ver>.tgz` + stable alias `9router.tgz` to the GitHub Release;
+  refuses to build if fork-defining files are missing), `docker-publish.yml`
+  (multi-arch build+push on tag, triggers `deploy.yml` via
+  `repository_dispatch`), `deploy.yml` (SSH deploy to production),
   `gitbook-pages.yml` (publish the separate `gitbook/` docs site).
 
 ## 9. Key extension points (quick reference)
@@ -344,9 +500,11 @@ Copilot (`api.individual.githubcopilot.com`).
 | Want to… | Touch |
 |---|---|
 | Add an OpenAI-compatible endpoint | `src/app/api/v1/<name>/route.js` + a handler in `src/sse/handlers/` |
-| Add an upstream provider | `open-sse/executors/<name>.js`, register in `executors/index.js`, add to `providers/registry/` + `config/{providers,providerModels}.js` |
-| Add a client format | `open-sse/translator/formats/<name>.js` + `request/`/`response/` |
+| Add an upstream provider | `open-sse/providers/registry/<name>.js` (the single source of truth — self-contained with `display`, `category`, `models`, `authModes`); add an executor in `open-sse/executors/` if the provider needs a non-default transport |
+| Add a client format | `open-sse/translator/formats/<name>.js` + `request/`/`response/` (direct routes preferred; OpenAI is the pivot fallback) |
 | Change timeouts/retry/backoff | `open-sse/config/runtimeConfig.js`, `config/errorConfig.js` |
-| Add a DB table/column | `src/lib/db/schema.js` (+ migration if destructive) |
-| Add an MITM-intercepted IDE | `src/mitm/handlers/<ide>.js` + target domain in `src/mitm/config.js` |
+| Add a DB table/column | `src/lib/db/schema.js` (`TABLES` object — additive auto-sync handles new tables/columns; bump `SCHEMA_VERSION` + write a versioned migration for destructive changes) |
+| Add an MITM-intercepted IDE | `src/mitm/handlers/<ide>.js` + target domain in `src/shared/constants/mitmToolHosts.js` |
 | Add dashboard UI | `src/app/(dashboard)/dashboard/<feature>/` + components in `src/shared/components/` |
+| Add a token-saver step | insert into the chain in `open-sse/handlers/chatCore.js` (order: RTK → Headroom → Caveman → Ponytail → PXPIPE) |
+| Change combo / capacity-adapter defaults | `src/lib/db/repos/settingsRepo.js` (`DEFAULT_SETTINGS`) |
