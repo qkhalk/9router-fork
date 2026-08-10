@@ -97,7 +97,34 @@ export async function syncSubscription(opts = {}) {
     incrementRuns: true,
   });
 
-  return { count, sourceUrl };
+  const autoFilter = await maybeRunModelFilterAfterSync(opts.filterSource || "sync");
+  return { count, sourceUrl, autoFilter };
+}
+
+async function maybeRunModelFilterAfterSync(source = "sync") {
+  try {
+    const settings = await getSettings();
+    if (settings.xrayModelFilterEnabled !== true) return { queued: false, reason: "disabled" };
+    import("./manager.js")
+      .then(({ runModelFilterFromSettings }) => runModelFilterFromSettings(source))
+      .then((result) => {
+        if (result?.skipped) {
+          console.log(`[XrayFilter] skipped after sync: ${result.reason || "unknown"}`);
+          return;
+        }
+        console.log(`[XrayFilter] done after sync: ${result.passed}/${result.tested} usable${result.pruned ? `, pruned=${result.pruned}` : ""}`);
+      })
+      .catch((error) => console.error("[XrayFilter] auto filter failed:", error.message));
+    return {
+      queued: true,
+      model: settings.xrayModelFilterModel,
+      all: settings.xrayModelFilterAll === true,
+      limit: settings.xrayModelFilterAll === true ? "all" : settings.xrayModelFilterLimit,
+      prune: settings.xrayModelFilterPrune === true,
+    };
+  } catch (error) {
+    return { queued: false, error: error.message };
+  }
 }
 
 // Look up the currently-selected config id; return it only if it survives the sync.
@@ -131,12 +158,12 @@ export async function startSyncScheduler(intervalMin) {
   // Do an initial sync shortly after boot so the catalog isn't empty for an
   // hour on first run, then settle into the configured interval.
   setTimeout(() => {
-    syncSubscription().catch((e) =>
+    syncSubscription({ filterSource: "initial-sync" }).catch((e) =>
       console.error("[XraySync] initial sync failed:", e.message)
     );
   }, 5000).unref();
   syncTimer = setInterval(() => {
-    syncSubscription().catch((e) =>
+    syncSubscription({ filterSource: "scheduled-sync" }).catch((e) =>
       console.error("[XraySync] scheduled sync failed:", e.message)
     );
   }, min * 60 * 1000);

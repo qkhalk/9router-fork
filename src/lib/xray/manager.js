@@ -71,6 +71,26 @@ const state = {
   lastHealth: null, // { latencyMs, exitIp }
 };
 
+const modelFilterState = {
+  status: "idle", // idle | running | done | error
+  startedAt: null,
+  finishedAt: null,
+  source: null,
+  model: null,
+  all: false,
+  limit: 50,
+  prune: false,
+  concurrency: 4,
+  tested: 0,
+  passed: 0,
+  failed: 0,
+  pruned: 0,
+  error: null,
+};
+
+let modelFilterRunning = null;
+const allocatedTempSocksPorts = new Set();
+
 function setStatus(status, extra = {}) {
   state.status = status;
   Object.assign(state, extra);
@@ -95,7 +115,12 @@ export function getStatus() {
     lastError: state.lastError,
     lastHealthAt: state.lastHealthAt,
     lastHealth: state.lastHealth,
+    modelFilter: getModelFilterStatus(),
   };
+}
+
+export function getModelFilterStatus() {
+  return { ...modelFilterState };
 }
 
 /**
@@ -368,13 +393,24 @@ async function spawnTempConfig(config, timeoutMs = 8000) {
     throw e;
   }
 
-  const tempSocks = 51808 + Math.floor(Math.random() * 1000);
+  let tempSocks = 51808 + Math.floor(Math.random() * 1000);
+  for (let i = 0; i < 1200 && allocatedTempSocksPorts.has(tempSocks); i++) {
+    tempSocks = 51808 + Math.floor(Math.random() * 1000);
+  }
+  allocatedTempSocksPorts.add(tempSocks);
   const tempHttp = tempSocks + 1;
   const tempConfigPath = getXrayConfigPath() + `.model-test-${config.id}.json`;
   const tempConfig = buildClientConfig(v.outbound, { socksPort: tempSocks, httpPort: tempHttp });
   fs.writeFileSync(tempConfigPath, JSON.stringify(tempConfig, null, 2));
 
-  const tempHandle = await spawnTempXray({ configPath: tempConfigPath });
+  let tempHandle;
+  try {
+    tempHandle = await spawnTempXray({ configPath: tempConfigPath });
+  } catch (error) {
+    allocatedTempSocksPorts.delete(tempSocks);
+    try { fs.unlinkSync(tempConfigPath); } catch {}
+    throw error;
+  }
   let ready = false;
   for (let i = 0; i < 15; i++) {
     if (await isSocksPortOpen(tempSocks)) { ready = true; break; }
@@ -382,6 +418,7 @@ async function spawnTempConfig(config, timeoutMs = 8000) {
   }
   if (!ready) {
     tempHandle.kill();
+    allocatedTempSocksPorts.delete(tempSocks);
     try { fs.unlinkSync(tempConfigPath); } catch {}
     const e = new Error("SOCKS port did not open for temp model test");
     e.code = "STARTUP_FAILED";
@@ -392,6 +429,7 @@ async function spawnTempConfig(config, timeoutMs = 8000) {
     socksPort: tempSocks,
     cleanup() {
       tempHandle.kill();
+      allocatedTempSocksPorts.delete(tempSocks);
       try { fs.unlinkSync(tempConfigPath); } catch {}
     },
     timeoutMs,
@@ -523,16 +561,30 @@ export async function testSingleConfigWithModel(configId, { model: modelStr, tim
   }
 }
 
-export async function filterConfigsByModel({ model, limit = 50, prune = false, timeoutMs = 20000 } = {}) {
-  const configs = await getXrayConfigs({ isActive: true });
-  const selected = configs.slice(0, Math.max(1, Math.min(Number(limit) || 50, 500)));
-  const results = [];
+function normalizeModelFilterLimit({ limit = 50, all = false } = {}) {
+  if (all === true || limit === "all") return { all: true, limit: null };
+  return { all: false, limit: Math.max(1, Math.min(Number(limit) || 50, 500)) };
+}
 
-  for (const config of selected) {
+function normalizeModelFilterConcurrency(concurrency = 4) {
+  return Math.max(1, Math.min(Number(concurrency) || 4, 16));
+}
+
+export async function filterConfigsByModel({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 4, onProgress = null } = {}) {
+  const configs = await getXrayConfigs({ isActive: true });
+  const normalized = normalizeModelFilterLimit({ limit, all });
+  const selected = normalized.all ? configs : configs.slice(0, normalized.limit);
+  const workerCount = Math.min(normalizeModelFilterConcurrency(concurrency), selected.length || 1);
+  const results = [];
+  let cursor = 0;
+
+  const testConfig = async (config) => {
     try {
       const probe = await testSingleConfigWithModel(config.id, { model, timeoutMs });
-      results.push({ configId: config.id, name: config.name, host: config.host, country: config.country, ...probe });
+      const result = { configId: config.id, name: config.name, host: config.host, country: config.country, ...probe };
+      results.push(result);
       if (prune && !probe.ok) await deleteXrayConfig(config.id);
+      onProgress?.(result);
     } catch (error) {
       const failed = {
         configId: config.id,
@@ -547,17 +599,112 @@ export async function filterConfigsByModel({ model, limit = 50, prune = false, t
       results.push(failed);
       await updateXrayTestResult(config.id, { ok: false }).catch(() => {});
       if (prune) await deleteXrayConfig(config.id);
+      onProgress?.(failed);
     }
-  }
+  };
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (cursor < selected.length) {
+      const index = cursor;
+      cursor += 1;
+      await testConfig(selected[index]);
+    }
+  });
+  await Promise.all(workers);
 
   return {
     model,
+    all: normalized.all,
+    limit: normalized.all ? "all" : normalized.limit,
+    concurrency: workerCount,
     tested: results.length,
     passed: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok).length,
     pruned: prune ? results.filter((r) => !r.ok).length : 0,
     results,
   };
+}
+
+export async function runModelFilterJob({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 4, source = "manual" } = {}) {
+  if (modelFilterRunning) {
+    return { skipped: true, reason: "already_running", ...getModelFilterStatus() };
+  }
+
+  const normalized = normalizeModelFilterLimit({ limit, all });
+  const normalizedConcurrency = normalizeModelFilterConcurrency(concurrency);
+  const job = (async () => {
+    Object.assign(modelFilterState, {
+      status: "running",
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      source,
+      model,
+      all: normalized.all,
+      limit: normalized.all ? "all" : normalized.limit,
+      prune: prune === true,
+      concurrency: normalizedConcurrency,
+      tested: 0,
+      passed: 0,
+      failed: 0,
+      pruned: 0,
+      error: null,
+    });
+
+    try {
+      const result = await filterConfigsByModel({
+        model,
+        limit: normalized.limit,
+        all: normalized.all,
+        prune,
+        timeoutMs,
+        concurrency: normalizedConcurrency,
+        onProgress: (result) => {
+          modelFilterState.tested += 1;
+          if (result.ok) modelFilterState.passed += 1;
+          else modelFilterState.failed += 1;
+          if (prune && !result.ok) modelFilterState.pruned += 1;
+        },
+      });
+      Object.assign(modelFilterState, {
+        status: "done",
+        finishedAt: new Date().toISOString(),
+        tested: result.tested,
+        passed: result.passed,
+        failed: result.failed,
+        pruned: result.pruned,
+        error: null,
+      });
+      return result;
+    } catch (error) {
+      Object.assign(modelFilterState, {
+        status: "error",
+        finishedAt: new Date().toISOString(),
+        error: error.message,
+      });
+      throw error;
+    } finally {
+      modelFilterRunning = null;
+    }
+  })();
+
+  modelFilterRunning = job;
+  return job;
+}
+
+export async function runModelFilterFromSettings(source = "auto-sync") {
+  const settings = await getSettings();
+  if (settings.xrayModelFilterEnabled !== true) return { skipped: true, reason: "disabled" };
+  const model = String(settings.xrayModelFilterModel || "").trim();
+  if (!model) return { skipped: true, reason: "missing_model" };
+  return runModelFilterJob({
+    model,
+    limit: settings.xrayModelFilterLimit,
+    all: settings.xrayModelFilterAll === true,
+    prune: settings.xrayModelFilterPrune === true,
+    concurrency: Number(settings.xrayModelFilterConcurrency) || 4,
+    timeoutMs: Number(settings.xrayModelFilterTimeoutMs) || 20000,
+    source,
+  });
 }
 
 /**

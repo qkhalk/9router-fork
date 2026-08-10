@@ -48,7 +48,9 @@ export default function XrayProxyPage() {
   const [modelFilter, setModelFilter] = useState({
     model: "oc/deepseek-v4-flash-free",
     limit: 50,
+    all: false,
     prune: false,
+    concurrency: 4,
   });
   const [modelFilterBusy, setModelFilterBusy] = useState(false);
   const [modelFilterResult, setModelFilterResult] = useState(null);
@@ -88,6 +90,20 @@ export default function XrayProxyPage() {
           xraySocksPort: data.xraySocksPort ?? prev.xraySocksPort,
           xrayHttpPort: data.xrayHttpPort ?? prev.xrayHttpPort,
           xraySubscriptionUrl: data.xraySubscriptionUrl || prev.xraySubscriptionUrl,
+          xrayModelFilterEnabled: data.xrayModelFilterEnabled === true,
+          xrayModelFilterModel: data.xrayModelFilterModel || "oc/deepseek-v4-flash-free",
+          xrayModelFilterLimit: data.xrayModelFilterLimit ?? 50,
+          xrayModelFilterAll: data.xrayModelFilterAll === true,
+          xrayModelFilterPrune: data.xrayModelFilterPrune === true,
+          xrayModelFilterConcurrency: data.xrayModelFilterConcurrency ?? 4,
+        }));
+        setModelFilter((prev) => ({
+          ...prev,
+          model: data.xrayModelFilterModel || prev.model || "oc/deepseek-v4-flash-free",
+          limit: data.xrayModelFilterLimit ?? prev.limit ?? 50,
+          all: data.xrayModelFilterAll === true,
+          prune: data.xrayModelFilterPrune === true,
+          concurrency: data.xrayModelFilterConcurrency ?? prev.concurrency ?? 4,
         }));
       }
     } catch (e) {
@@ -121,13 +137,13 @@ export default function XrayProxyPage() {
     fetchInitialData();
   }, [fetchStatus, fetchConfigs, fetchSettings]);
 
-  // Poll status while running so health/latency stay fresh.
+  // Poll status while running so health/latency/filter progress stay fresh.
   useEffect(() => {
-    if (status?.status === "running") {
+    if (status?.status === "running" || status?.modelFilter?.status === "running") {
       pollRef.current = setInterval(fetchStatus, 15000);
       return () => clearInterval(pollRef.current);
     }
-  }, [status?.status, fetchStatus]);
+  }, [status?.status, status?.modelFilter?.status, fetchStatus]);
 
   const api = async (path, method = "POST", body) => {
     setBusy(true);
@@ -216,7 +232,7 @@ export default function XrayProxyPage() {
     try {
       notify.info("Syncing subscription from v2go...");
       const result = await api("/api/xray/sync", "POST", {});
-      notify.success(`Synced ${result.count} configs`);
+      notify.success(`Synced ${result.count} configs${result.autoFilter?.queued ? " · model filter queued" : ""}`);
       await fetchStatus();
       await fetchConfigs();
     } catch (e) {
@@ -257,8 +273,10 @@ export default function XrayProxyPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model,
-            limit: Number(modelFilter.limit) || 50,
+            limit: modelFilter.all ? "all" : (Number(modelFilter.limit) || 50),
+            all: modelFilter.all === true,
             prune: modelFilter.prune === true,
+            concurrency: Number(modelFilter.concurrency) || 4,
           }),
         });
         const data = await res.json();
@@ -276,7 +294,7 @@ export default function XrayProxyPage() {
 
     if (modelFilter.prune) {
       setConfirmState({
-        message: `Test up to ${modelFilter.limit || 50} V2Ray servers with "${model}" and permanently delete every failing config?`,
+        message: `Test ${modelFilter.all ? "all active" : `up to ${modelFilter.limit || 50}`} V2Ray servers with "${model}" and permanently delete every failing config?`,
         onConfirm: async () => {
           setConfirmState(null);
           await execute();
@@ -311,6 +329,37 @@ export default function XrayProxyPage() {
     }
   };
 
+  const saveModelFilterSettings = async (extra = {}) => {
+    const { xrayModelFilterEnabled, ...filterExtra } = extra;
+    const next = { ...modelFilter, ...filterExtra };
+    const payload = {
+      xrayModelFilterEnabled: xrayModelFilterEnabled ?? settings.xrayModelFilterEnabled === true,
+      xrayModelFilterModel: next.model.trim(),
+      xrayModelFilterLimit: Math.max(1, Math.min(Number(next.limit) || 50, 500)),
+      xrayModelFilterAll: next.all === true,
+      xrayModelFilterPrune: next.prune === true,
+      xrayModelFilterConcurrency: Math.max(1, Math.min(Number(next.concurrency) || 4, 16)),
+    };
+    setSettings((s) => ({ ...s, ...payload }));
+    setModelFilter(next);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      notify.success("Model filter settings saved");
+      await fetchSettings();
+    } catch (e) {
+      notify.error(`Save failed: ${e.message}`);
+      await fetchSettings();
+    }
+  };
+
   const fetchLogs = useCallback(async () => {
     try {
       const res = await fetch("/api/xray/logs?lines=200", { cache: "no-store" });
@@ -341,6 +390,12 @@ export default function XrayProxyPage() {
   }
 
   const activeConfig = configs.find((c) => c.id === status.activeConfigId);
+  const runningModelFilter = status.modelFilter?.status === "running";
+  const visibleModelFilterResult = modelFilterResult || (
+    status.modelFilter?.status && status.modelFilter.status !== "idle"
+      ? status.modelFilter
+      : null
+  );
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -525,14 +580,29 @@ export default function XrayProxyPage() {
               Test Xray IPs against a real routed model request, then optionally delete failing configs.
             </p>
           </div>
-          {modelFilterResult && (
-            <Badge variant={modelFilterResult.failed === 0 ? "success" : "warning"}>
-              {modelFilterResult.passed}/{modelFilterResult.tested} usable
+          {visibleModelFilterResult && (
+            <Badge variant={visibleModelFilterResult.status === "running" ? "warning" : visibleModelFilterResult.failed === 0 ? "success" : "warning"}>
+              {visibleModelFilterResult.status === "running"
+                ? `${visibleModelFilterResult.tested || 0} tested...`
+                : `${visibleModelFilterResult.passed}/${visibleModelFilterResult.tested} usable`}
             </Badge>
           )}
         </div>
 
-        <div className="grid md:grid-cols-[1fr_120px_auto_auto] gap-2 items-end">
+        <div className="flex items-center justify-between rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm">
+          <div>
+            <div className="font-medium">Auto-filter after subscription sync</div>
+            <div className="text-xs text-zinc-500 dark:text-zinc-400">
+              Off by default. When enabled, each successful v2go sync runs this filter with the saved settings.
+            </div>
+          </div>
+          <Toggle
+            checked={settings.xrayModelFilterEnabled === true}
+            onChange={(v) => saveModelFilterSettings({ xrayModelFilterEnabled: v })}
+          />
+        </div>
+
+        <div className="grid md:grid-cols-[1fr_120px_120px_auto] gap-2 items-end">
           <div>
             <label className="text-xs text-zinc-500 block mb-1">Model</label>
             <Input
@@ -548,9 +618,34 @@ export default function XrayProxyPage() {
               min="1"
               max="500"
               value={modelFilter.limit}
+              disabled={modelFilter.all}
               onChange={(e) => setModelFilter((s) => ({ ...s, limit: e.target.value }))}
             />
           </div>
+          <div>
+            <label className="text-xs text-zinc-500 block mb-1">Threads</label>
+            <Input
+              type="number"
+              min="1"
+              max="16"
+              value={modelFilter.concurrency}
+              onChange={(e) => setModelFilter((s) => ({ ...s, concurrency: e.target.value }))}
+            />
+          </div>
+          <Button variant="ghost" onClick={() => saveModelFilterSettings()} disabled={busy}>
+            Save
+          </Button>
+        </div>
+
+        <div className="flex flex-wrap gap-4 text-sm">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={modelFilter.all}
+              onChange={(e) => setModelFilter((s) => ({ ...s, all: e.target.checked }))}
+            />
+            Check all active configs
+          </label>
           <label className="text-sm flex items-center gap-2 h-10">
             <input
               type="checkbox"
@@ -559,8 +654,21 @@ export default function XrayProxyPage() {
             />
             Delete failures
           </label>
-          <Button onClick={runModelFilter} disabled={modelFilterBusy || busy || !status.binaryInstalled}>
-            {modelFilterBusy ? "Testing..." : "Run Filter"}
+          <span className="text-xs text-zinc-500 self-center">
+            Recommended threads: 4. Higher values are faster but can hit provider rate limits or spawn too many Xray processes.
+          </span>
+        </div>
+
+        {runningModelFilter && (
+          <div className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 p-3">
+            Filtering {status.modelFilter.all ? "all active configs" : `up to ${status.modelFilter.limit}`} with {status.modelFilter.concurrency || 4} threads:
+            {" "}{status.modelFilter.tested || 0} tested, {status.modelFilter.passed || 0} usable, {status.modelFilter.failed || 0} failed.
+          </div>
+        )}
+
+        <div>
+          <Button onClick={runModelFilter} disabled={modelFilterBusy || runningModelFilter || busy || !status.binaryInstalled}>
+            {modelFilterBusy || runningModelFilter ? "Testing..." : "Run Filter Now"}
           </Button>
         </div>
 
