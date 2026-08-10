@@ -50,7 +50,9 @@ export default function XrayProxyPage() {
     limit: 50,
     all: false,
     prune: false,
-    concurrency: 4,
+    concurrency: 2,
+    pauseOnTraffic: true,
+    quietMs: 15000,
   });
   const [modelFilterBusy, setModelFilterBusy] = useState(false);
   const [modelFilterResult, setModelFilterResult] = useState(null);
@@ -95,7 +97,9 @@ export default function XrayProxyPage() {
           xrayModelFilterLimit: data.xrayModelFilterLimit ?? 50,
           xrayModelFilterAll: data.xrayModelFilterAll === true,
           xrayModelFilterPrune: data.xrayModelFilterPrune === true,
-          xrayModelFilterConcurrency: data.xrayModelFilterConcurrency ?? 4,
+          xrayModelFilterConcurrency: data.xrayModelFilterConcurrency ?? 2,
+          xrayModelFilterPauseOnTraffic: data.xrayModelFilterPauseOnTraffic !== false,
+          xrayModelFilterQuietMs: data.xrayModelFilterQuietMs ?? 15000,
         }));
         setModelFilter((prev) => ({
           ...prev,
@@ -103,7 +107,9 @@ export default function XrayProxyPage() {
           limit: data.xrayModelFilterLimit ?? prev.limit ?? 50,
           all: data.xrayModelFilterAll === true,
           prune: data.xrayModelFilterPrune === true,
-          concurrency: data.xrayModelFilterConcurrency ?? prev.concurrency ?? 4,
+          concurrency: data.xrayModelFilterConcurrency ?? prev.concurrency ?? 2,
+          pauseOnTraffic: data.xrayModelFilterPauseOnTraffic !== false,
+          quietMs: data.xrayModelFilterQuietMs ?? prev.quietMs ?? 15000,
         }));
       }
     } catch (e) {
@@ -276,7 +282,9 @@ export default function XrayProxyPage() {
             limit: modelFilter.all ? "all" : (Number(modelFilter.limit) || 50),
             all: modelFilter.all === true,
             prune: modelFilter.prune === true,
-            concurrency: Number(modelFilter.concurrency) || 4,
+            concurrency: Number(modelFilter.concurrency) || 2,
+            pauseOnTraffic: modelFilter.pauseOnTraffic === true,
+            quietMs: Number(modelFilter.quietMs) || 15000,
           }),
         });
         const data = await res.json();
@@ -338,7 +346,9 @@ export default function XrayProxyPage() {
       xrayModelFilterLimit: Math.max(1, Math.min(Number(next.limit) || 50, 500)),
       xrayModelFilterAll: next.all === true,
       xrayModelFilterPrune: next.prune === true,
-      xrayModelFilterConcurrency: Math.max(1, Math.min(Number(next.concurrency) || 4, 16)),
+      xrayModelFilterConcurrency: Math.max(1, Math.min(Number(next.concurrency) || 2, 16)),
+      xrayModelFilterPauseOnTraffic: next.pauseOnTraffic === true,
+      xrayModelFilterQuietMs: Math.max(3000, Math.min(Number(next.quietMs) || 15000, 120000)),
     };
     setSettings((s) => ({ ...s, ...payload }));
     setModelFilter(next);
@@ -654,15 +664,42 @@ export default function XrayProxyPage() {
             />
             Delete failures
           </label>
+          <label className="text-sm flex items-center gap-2 h-10">
+            <input
+              type="checkbox"
+              checked={modelFilter.pauseOnTraffic}
+              onChange={(e) => setModelFilter((s) => ({ ...s, pauseOnTraffic: e.target.checked }))}
+            />
+            Pause while live traffic is active
+          </label>
           <span className="text-xs text-zinc-500 self-center">
-            Recommended threads: 4. Higher values are faster but can hit provider rate limits or spawn too many Xray processes.
+            Recommended threads: 2. Turn pause off only when you want filtering to run continuously.
           </span>
         </div>
 
+        {modelFilter.pauseOnTraffic && (
+          <div className="grid md:grid-cols-[160px_1fr] gap-2 items-end text-sm">
+            <div>
+              <label className="text-xs text-zinc-500 block mb-1">Quiet window (ms)</label>
+              <Input
+                type="number"
+                min="3000"
+                max="120000"
+                value={modelFilter.quietMs}
+                onChange={(e) => setModelFilter((s) => ({ ...s, quietMs: e.target.value }))}
+              />
+            </div>
+            <div className="text-xs text-zinc-500 pb-2">
+              Filtering resumes after live model traffic has been quiet for this long.
+            </div>
+          </div>
+        )}
+
         {runningModelFilter && (
           <div className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 p-3">
-            Filtering {status.modelFilter.all ? "all active configs" : `up to ${status.modelFilter.limit}`} with {status.modelFilter.concurrency || 4} threads:
+            Filtering {status.modelFilter.all ? "all active configs" : `up to ${status.modelFilter.limit}`} with {status.modelFilter.concurrency || 2} threads:
             {" "}{status.modelFilter.tested || 0} tested, {status.modelFilter.passed || 0} usable, {status.modelFilter.failed || 0} failed.
+            {status.modelFilter.pauseOnTraffic ? " Pauses when live traffic is active." : ""}
           </div>
         )}
 

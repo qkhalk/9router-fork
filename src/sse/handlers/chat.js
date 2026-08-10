@@ -29,6 +29,7 @@ import {
 import { getProxyPoolById } from "@/models";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { beginLiveModelTraffic, wrapLiveModelResponse } from "@/lib/xray/modelFilterTraffic.js";
 
 /**
  * Handle chat completion request
@@ -86,10 +87,19 @@ export async function handleChat(request, clientRawRequest = null) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   }
 
+  const internalProbe = request?.headers?.get("x-9r-internal") === "xray-model-filter"
+    || clientRawRequest?.headers?.["x-9r-internal"] === "xray-model-filter";
+  const finishLiveTraffic = internalProbe ? null : beginLiveModelTraffic();
+  const completeLiveTraffic = (response) => finishLiveTraffic
+    ? wrapLiveModelResponse(response, finishLiveTraffic)
+    : response;
+
+  try {
+
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
-  if (bypassResponse) return bypassResponse.response || bypassResponse;
+  if (bypassResponse) return completeLiveTraffic(bypassResponse.response || bypassResponse);
 
   const requiredCapabilities = detectRequiredCapabilities(body);
 
@@ -105,7 +115,7 @@ export async function handleChat(request, clientRawRequest = null) {
 
     if (comboStrategy === "fusion") {
       log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
-      return handleFusionChat({
+      return completeLiveTraffic(await handleFusionChat({
         body,
         models: comboModels,
         handleSingleModel: (b, m, isPanel) => {
@@ -120,12 +130,12 @@ export async function handleChat(request, clientRawRequest = null) {
         comboName: modelStr,
         judgeModel: comboStrategies[modelStr]?.judgeModel,
         tuning: comboStrategies[modelStr]?.fusionTuning,
-      });
+      }));
     }
 
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
     log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-    return handleComboChat({
+    return completeLiveTraffic(await handleComboChat({
       body,
       models: augmentedModels,
       handleSingleModel: withCapacityAdapterStripping(
@@ -136,7 +146,7 @@ export async function handleChat(request, clientRawRequest = null) {
       comboName: modelStr,
       comboStrategy,
       comboStickyLimit
-    });
+    }));
   }
 
   // Single model request — may still switch to a capacity-adapter model if the
@@ -145,7 +155,7 @@ export async function handleChat(request, clientRawRequest = null) {
   if (soloAugmented.length > 1) {
     const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
     log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
-    return handleComboChat({
+    return completeLiveTraffic(await handleComboChat({
       body,
       models: soloAugmented,
       handleSingleModel: withCapacityAdapterStripping(
@@ -155,10 +165,14 @@ export async function handleChat(request, clientRawRequest = null) {
       log,
       comboName: modelStr,
       comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings)
-    });
+    }));
   }
 
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey);
+  return completeLiveTraffic(await handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey));
+  } catch (error) {
+    finishLiveTraffic?.();
+    throw error;
+  }
 }
 
 /**
