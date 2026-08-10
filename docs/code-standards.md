@@ -54,34 +54,67 @@
 - All persistence goes through `src/lib/db/` (the `@/lib/localDb` barrel).
   Never talk to SQLite drivers directly from feature code.
 - **Repository pattern**: one repo per entity in `src/lib/db/repos/`.
-- **Schema is declarative** in `src/lib/db/schema.js` (`TABLES` object). Add
-  columns by editing `TABLES` (the sync step adds them); for destructive
-  changes (drop/rename/type-change) write a versioned migration under
-  `src/lib/db/migrations/` and bump `SCHEMA_VERSION`.
-- Connection PRAGMAs are fixed in `PRAGMA_SQL` (WAL, `synchronous=NORMAL`,
+- **Schema is declarative** in `src/lib/db/schema.js` (`TABLES` object,
+  `SCHEMA_VERSION = 2`). Add columns by editing `TABLES` — the additive
+  `syncSchemaFromTables` step runs `CREATE TABLE IF NOT EXISTS` + diffs
+  `PRAGMA table_info` and `ALTER TABLE ADD COLUMN` for missing columns
+  (non-destructive only; a safety backup runs when `backupSchemaVersion <
+  SCHEMA_VERSION`). For destructive changes (drop/rename/type-change) write a
+  versioned migration under `src/lib/db/migrations/` and bump `SCHEMA_VERSION`.
+- **Connection PRAGMAs** are fixed in `PRAGMA_SQL` (WAL, `synchronous=NORMAL`,
   `mmap_size`, `busy_timeout=5000`, `foreign_keys=ON`).
+
+## Access control conventions (`src/dashboardGuard.js`)
+
+- Three request tiers: `PUBLIC_API` (health/init/auth + `/v1*` LLM endpoints
+  with API-key auth), `PROTECTED_API` (dashboard routes, JWT-gated unless
+  `requireLogin === false`), and `LOCAL_ONLY` (routes that spawn child
+  processes or read host secrets — xray lifecycle, MITM, ds2api install/start/
+  stop, tunnel enable/disable, cursor/kiro auto-import, headroom start/stop,
+  `auth/reset-password`).
+- **Local-only** routes accept: a CLI token (`x-9r-cli-token`, salted
+  machine-id), OR (loopback Host+Origin AND authenticated/requireLogin-off).
+  Tunnel access additionally requires `settings.tunnelDashboardAccess === true`
+  and a known tunnel host. `STRICT_LOCAL_ONLY` routes never open over a tunnel.
+- "Local" is anchored on the unspoofable TCP peer IP (`x-9r-real-ip` stamped by
+  `custom-server.js`), with `x-9r-via-proxy` marking reverse-proxy hops.
 
 ## The `open-sse` engine — extension points
 
-- **Add a provider**: drop an executor in `open-sse/executors/`, register it in
-  `executors/index.js`, and ensure the provider + its models are in the
-  registry (`providers/registry/`, `config/providers.js`,
-  `config/providerModels.js`).
+- **The provider registry is canonical.** `open-sse/providers/registry/*.js`
+  (122 files) is the single source of truth for provider metadata — each file
+  is self-contained (`alias`, `display`, `category`, `authModes`, `models`,
+  media configs, `thinkingConfig`). `src/lib/oauth/` and
+  `src/shared/constants/providers.js` both *derive* from it; do not redefine
+  provider metadata in those files. To add a provider, add a registry file and
+  (only if it needs a non-default transport) an executor in
+  `open-sse/executors/`.
 - **Add a format translator**: implement under `open-sse/translator/formats/`
-  (and `request/`/`response/`); direct routes are preferred, otherwise the
-  system pivots through the OpenAI format.
+  (and `request/`/`response/`); **direct routes are preferred** (e.g.
+  `claude↔kiro`), otherwise the system pivots through the OpenAI format.
+  Modular concerns (toolCall, thinking, modality, usage, …) live in
+  `translator/concerns/`.
 - **Configuration is data-driven**: timeouts, retry/backoff, and error mapping
   live in `config/runtimeConfig.js` and `config/errorConfig.js` — do not
   hardcode these values in handlers/executors.
 - **Streaming utilities** (`utils/stream.js`, `streamHandler.js`) are the
   canonical way to build SSE transform pipelines (tool-name mapping, usage
-  tracking, disconnect/stall detection).
-- **Pre-translate hooks** (`rtk/`) run in order before format translation: RTK
-  compression (tool_result), Headroom proxy compress, Caveman inject, Ponytail
-  inject. All are fail-open — errors return null, body untouched.
+  tracking, disconnect/stall detection). Two modes: `TRANSLATE` (format
+  conversion) and `PASSTHROUGH` (normalize only).
+- **Token-saver pipeline** (`rtk/` + `src/lib/pxpipe/`) runs in a fixed order
+  before format translation: RTK compress → Headroom proxy → Caveman inject →
+  Ponytail inject → PXPIPE image compress. All steps are **fail-open** and
+  opt-out per-request via `TOKEN_SAVER_HEADER: off`. Add new steps by inserting
+  into the chain in `open-sse/handlers/chatCore.js` (order matters).
+- **Combos & capacity adapter**: combos (`open-sse/services/combo.js`) and the
+  capacity adapter (`open-sse/services/capacityAdapter.js`) are configured via
+  the single-row `settings` table (`comboStrategy`, `comboStrategies`,
+  `capacityAdapter`). Defaults live in `settingsRepo.js#DEFAULT_SETTINGS`.
+  `resetComboRotation(name)` must be called when combo definition/strategy
+  changes.
 - **Web-based/session-based executors** (`grok-web`, `perplexity-web`,
-  `gemini-web`) use cookies not API keys. Each implements its own session
-  management; there is no shared base class for cookie-based auth.
+  `gemini-web`, `genspark-web`) use cookies not API keys. Each implements its
+  own session management; there is no shared base class for cookie-based auth.
 - **Responses API transformer** (`transformer/responsesTransformer.js`,
   `streamToJsonConverter.js`) converts Chat Completions SSE to Responses API
   format for clients that expect the Responses API shape.
@@ -117,7 +150,15 @@
   (where applicable), build, and `npm audit`.
 - **Build**: `next build --webpack` → standalone output (`output: "standalone"`).
   The `gitbook/` subapp and `logs`/`.next`/`cli` dirs are excluded from the
-  watcher and trace.
+  watcher and trace. The CLI is packed by `cli/scripts/build-cli.js` (separate
+  `.next-cli-build` dist, esbuild-bundled MITM, sql.js bundled but
+  better-sqlite3 installed at runtime). **Note**: the Next standalone build
+  only runs on Linux in CI (`cli-release.yml`) — do not try to build the CLI
+  tarball on Windows.
+- **Releases**: tag `v*` → `cli-release.yml` (CLI tarball to GitHub Releases) +
+  `docker-publish.yml` (multi-arch image to GHCR + Docker Hub). Both workflows
+  **refuse to build if fork-defining files are missing** (the fork-gate).
+  `docker-publish.yml` then triggers `deploy.yml` via `repository_dispatch`.
 - **Commits**: conventional-commit format (`feat:`, `fix:`, `docs:`, …) with
   no AI references, scoped where helpful (e.g. `fix(providers): ...`).
 - Keep changes small and scoped; prefer extending existing patterns over new
