@@ -53,10 +53,25 @@ import { getProviderCredentials } from "@/sse/services/auth.js";
 import { checkAndRefreshToken } from "@/sse/services/tokenRefresh.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
-import * as log from "@/sse/utils/logger.js";
 
 // Fixed pool id so re-runs update the same row rather than creating dupes.
 const MANAGED_POOL_ID = "v2go-xray-managed";
+
+const silentProbeLog = {
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+  line() {},
+  errorLine() {},
+  request() {},
+  response() {},
+  stream() {},
+  nextTag() { return ""; },
+  tagForSession() { return ""; },
+  fmtThink() { return null; },
+  maskKey(key) { return key ? "***" : ""; },
+};
 
 // In-memory runtime state. Persisted bits (selected config id, ports, version)
 // live in the settings blob + xrayConfigs table.
@@ -504,7 +519,7 @@ export async function testSingleConfigWithModel(configId, { model: modelStr, tim
       },
       modelInfo,
       credentials,
-      log,
+      log: silentProbeLog,
       clientRawRequest: {
         endpoint: "/api/xray/configs/model-test",
         body: { model: modelStr, max_tokens: 16, stream: false, messages: [{ role: "user", content: "hi" }] },

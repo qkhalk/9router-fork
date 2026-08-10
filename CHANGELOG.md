@@ -1,3 +1,11 @@
+# v0.6.7 (2026-08-11)
+
+## Fixes
+- **V2Ray Proxy**: silence internal Model Proxy Filter probe logs. Expected
+  failed proxy probes still mark configs as failed/prunable, but no longer
+  spam the main request log with `POST`, `DONE`, `[PROXY]`, or scary `ERROR
+  502` lines.
+
 # v0.6.6 (2026-08-11)
 
 ## Features
