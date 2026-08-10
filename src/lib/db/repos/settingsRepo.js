@@ -60,6 +60,18 @@ const DEFAULT_SETTINGS = {
   pxpipeAutoInstall: true,
   pxpipeMinChars: 25000,
   pxpipeTimeoutMs: 15000,
+  // v2go/xray proxy integration — managed local xray-core client that turns
+  // V2Ray share links into a SOCKS5/HTTP proxy 9router can route through.
+  xrayEnabled: false,
+  xrayAutoStart: false,
+  xraySocksPort: 10808,
+  xrayHttpPort: 10809,
+  xraySubscriptionUrl: "https://raw.githubusercontent.com/Danialsamadi/v2go/main/AllConfigsSub.txt",
+  xraySyncIntervalMin: 60,
+  xrayAutoRotate: false,
+  xrayHealthCheckIntervalMin: 10,
+  xrayVersion: "",
+  xraySelectedConfigId: "",
 };
 
 async function readRaw() {

@@ -18,5 +18,10 @@ export {
   getCustomModels, addCustomModel, deleteCustomModel,
   getMitmAlias, setMitmAliasAll,
   getPricing, getPricingForModel, updatePricing, resetPricing, resetAllPricing,
+  getXrayConfigs, getXrayConfigById, getXrayConfigByLink, getXrayFacets,
+  upsertXrayConfig, bulkUpsertXrayConfigs,
+  markStaleXrayConfigs, deleteStaleXrayConfigs, deleteXrayConfig, clearXrayConfigs,
+  setSelectedXrayConfig, getSelectedXrayConfig, updateXrayTestResult,
+  getXraySyncState, setXraySyncState,
   exportDb, importDb,
 } from "@/lib/db/index.js";
