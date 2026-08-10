@@ -61,6 +61,8 @@ export async function initializeApp() {
         try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
         try { killAllBridges(); } catch { /* best effort */ }
         killCloudflared();
+        // Stop the managed xray proxy so its PID/port are released cleanly.
+        try { import("@/lib/xray/manager.js").then(({ stopXrayService }) => stopXrayService().catch(() => {})); } catch {}
         process.exit();
       };
       process.on("SIGINT", cleanup);
@@ -128,6 +130,16 @@ async function runHeavyStartup() {
   import("@/sse/services/backgroundTokenRefresh.js")
     .then(({ startBackgroundTokenRefresh }) => startBackgroundTokenRefresh())
     .catch((e) => console.log("[BackgroundTokenRefresh] scheduler start failed:", e.message));
+
+  // v2go/xray proxy: always start the subscription sync scheduler (keeps the
+  // config catalog fresh even when the proxy itself is off), and auto-start
+  // the local xray client if the user enabled it.
+  import("@/lib/xray/sync.js")
+    .then(({ startSyncScheduler }) => startSyncScheduler())
+    .catch((e) => console.log("[XraySync] scheduler start failed:", e.message));
+  if (settings.xrayEnabled && settings.xrayAutoStart) {
+    autoStartXray();
+  }
 }
 
 function hasQuotaAutoPingEnabled(settings) {
@@ -188,6 +200,25 @@ async function autoStartDs2api() {
     console.log(`[InitApp] DS2API auto-started (pid ${result.pid}, injection: ${inj})`);
   } catch (err) {
     console.log("[InitApp] DS2API auto-start failed:", err.message);
+  }
+}
+
+// Auto-start the managed xray-core proxy client on boot when the user has
+// enabled both xrayEnabled and xrayAutoStart. Mirrors autoStartDs2api: only
+// acts when the binary is installed; never throws.
+async function autoStartXray() {
+  try {
+    const { isXrayInstalled } = await import("@/lib/xray/installer.js");
+    if (!isXrayInstalled()) {
+      console.log("[InitApp] Xray auto-start enabled but binary not installed, skipping");
+      return;
+    }
+    const { startXrayService } = await import("@/lib/xray/manager.js");
+    console.log("[InitApp] Xray was enabled, auto-starting...");
+    const result = await startXrayService();
+    console.log(`[InitApp] Xray auto-started (pid ${result.pid}, config ${result.configId})`);
+  } catch (err) {
+    console.log("[InitApp] Xray auto-start failed:", err.message);
   }
 }
 
