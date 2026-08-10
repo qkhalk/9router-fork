@@ -7,7 +7,7 @@ export async function POST(request) {
   try {
     let body = {};
     try { body = await request.json(); } catch { /* empty fine */ }
-    const result = await syncSubscription({ sourceUrl: body.sourceUrl });
+    const result = await syncSubscription({ sourceUrl: body.sourceUrl, filterSource: "manual-sync" });
     if (result.error) {
       return NextResponse.json({ error: result.error, ...result }, { status: 502 });
     }

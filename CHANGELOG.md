@@ -1,3 +1,10 @@
+# v0.6.6 (2026-08-11)
+
+## Features
+- **V2Ray Proxy**: extend Model Proxy Filter with an opt-in auto-filter toggle
+  after subscription sync, an option to check all active configs, and bounded
+  parallel checking with a recommended default of 4 threads.
+
 # v0.6.5 (2026-08-11)
 
 ## Features

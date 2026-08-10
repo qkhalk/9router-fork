@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { filterConfigsByModel } from "@/lib/xray/manager";
+import { runModelFilterJob } from "@/lib/xray/manager";
 
 export const dynamic = "force-dynamic";
 
@@ -9,11 +9,13 @@ export async function POST(request) {
     const model = typeof body.model === "string" ? body.model.trim() : "";
     if (!model) return NextResponse.json({ error: "model is required" }, { status: 400 });
 
-    const limit = Math.max(1, Math.min(Number(body.limit) || 50, 500));
+    const all = body.all === true || body.limit === "all";
+    const limit = all ? "all" : Math.max(1, Math.min(Number(body.limit) || 50, 500));
+    const concurrency = Math.max(1, Math.min(Number(body.concurrency) || 4, 16));
     const timeoutMs = Math.max(5000, Math.min(Number(body.timeoutMs) || 20000, 60000));
     const prune = body.prune === true;
 
-    const result = await filterConfigsByModel({ model, limit, prune, timeoutMs });
+    const result = await runModelFilterJob({ model, limit, all, prune, timeoutMs, concurrency, source: "manual" });
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     const status =

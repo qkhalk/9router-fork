@@ -72,6 +72,13 @@ const DEFAULT_SETTINGS = {
   xrayHealthCheckIntervalMin: 10,
   xrayVersion: "",
   xraySelectedConfigId: "",
+  xrayModelFilterEnabled: false,
+  xrayModelFilterModel: "oc/deepseek-v4-flash-free",
+  xrayModelFilterLimit: 50,
+  xrayModelFilterAll: false,
+  xrayModelFilterPrune: false,
+  xrayModelFilterConcurrency: 4,
+  xrayModelFilterTimeoutMs: 20000,
 };
 
 async function readRaw() {
