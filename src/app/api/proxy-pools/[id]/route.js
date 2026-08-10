@@ -146,6 +146,16 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ error: "Proxy pool not found" }, { status: 404 });
     }
 
+    // Protect the auto-managed v2go/xray pool — it is recreated by the xray
+    // manager on every start, so deleting it just causes confusion. Stop the
+    // xray proxy from the V2Ray Proxy page instead.
+    if (id === "v2go-xray-managed" || existing._v2goManaged === true) {
+      return NextResponse.json(
+        { error: "This pool is auto-managed by the V2Ray Proxy feature and cannot be deleted. Stop the proxy from the V2Ray Proxy page instead." },
+        { status: 403 }
+      );
+    }
+
     const connections = await getProviderConnections();
     const boundConnectionCount = countBoundConnections(connections, id);
 
