@@ -70,9 +70,9 @@ export {
 
 // v2go/xray proxy integration
 export {
-  getXrayConfigs, getXrayConfigById, getXrayConfigByLink, getXrayFacets,
+  getXrayConfigs, getXrayConfigById, getXrayConfigByLink, getXrayConfigCounts, getXrayFacets,
   upsertXrayConfig, bulkUpsertXrayConfigs,
-  markStaleXrayConfigs, deleteStaleXrayConfigs, deleteXrayConfig, clearXrayConfigs,
+  markStaleXrayConfigs, deleteStaleXrayConfigs, cleanupStaleXrayConfigs, deleteXrayConfig, clearXrayConfigs,
   setSelectedXrayConfig, getSelectedXrayConfig, updateXrayTestResult,
   getXraySyncState, setXraySyncState,
 } from "./repos/xrayRepo.js";

@@ -25,6 +25,7 @@ import { parseSubscription, linkToConfigEntry } from "./syncParse.js";
 import {
   bulkUpsertXrayConfigs,
   markStaleXrayConfigs,
+  cleanupStaleXrayConfigs,
   getXraySyncState,
   setXraySyncState,
 } from "../db/repos/xrayRepo.js";
@@ -82,6 +83,7 @@ export async function syncSubscription(opts = {}) {
 
   const count = await bulkUpsertXrayConfigs(entries);
   await markStaleXrayConfigs(keepIds);
+  const stalePruned = await cleanupStaleXrayConfigs(settings.xrayStaleRetentionDays);
 
   // Re-apply selection if the previously-selected config is still present.
   if (selected) {
@@ -98,7 +100,7 @@ export async function syncSubscription(opts = {}) {
   });
 
   const autoFilter = await maybeRunModelFilterAfterSync(opts.filterSource || "sync");
-  return { count, sourceUrl, autoFilter };
+  return { count, sourceUrl, stalePruned, autoFilter };
 }
 
 async function maybeRunModelFilterAfterSync(source = "sync") {

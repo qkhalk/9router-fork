@@ -3,10 +3,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   rows: [],
   run: vi.fn((sql, params) => {
-    if (!sql.includes("UPDATE xrayConfigs SET isActive = 0")) return;
-    const ids = new Set(params.slice(1));
-    for (const row of mocks.rows) {
-      if (ids.has(row.id)) row.isActive = 0;
+    if (sql.includes("UPDATE xrayConfigs SET isActive = 0")) {
+      const ids = new Set(params.slice(1));
+      for (const row of mocks.rows) {
+        if (ids.has(row.id)) row.isActive = 0;
+      }
+      return { changes: ids.size };
+    }
+    if (sql.includes("DELETE FROM xrayConfigs WHERE isActive = 0")) {
+      const before = mocks.rows.length;
+      mocks.rows = mocks.rows.filter((row) => row.isActive !== 0);
+      return { changes: before - mocks.rows.length };
     }
   }),
 }));
@@ -18,7 +25,7 @@ vi.mock("../../src/lib/db/driver.js", () => ({
   })),
 }));
 
-const { markStaleXrayConfigs } = await import("../../src/lib/db/repos/xrayRepo.js");
+const { markStaleXrayConfigs, cleanupStaleXrayConfigs } = await import("../../src/lib/db/repos/xrayRepo.js");
 
 describe("markStaleXrayConfigs", () => {
   beforeEach(() => {
@@ -44,5 +51,17 @@ describe("markStaleXrayConfigs", () => {
 
     expect(mocks.rows.filter((row) => row.isActive === 0).map((row) => row.id)).toEqual(["old-a", "old-b"]);
     expect(mocks.rows.filter((row) => keepIds.includes(row.id)).every((row) => row.isActive === 1)).toBe(true);
+  });
+
+  it("can immediately delete inactive configs when retention is zero", async () => {
+    mocks.rows = [
+      { id: "active-a", isActive: 1 },
+      { id: "old-a", isActive: 0 },
+      { id: "old-b", isActive: 0 },
+    ];
+
+    await expect(cleanupStaleXrayConfigs(0)).resolves.toBe(2);
+
+    expect(mocks.rows.map((row) => row.id)).toEqual(["active-a"]);
   });
 });
