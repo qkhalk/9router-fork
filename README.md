@@ -9,15 +9,17 @@
   
   [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
   [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
-  [![Docker Pulls](https://img.shields.io/docker/pulls/decolua/9router.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/decolua/9router)
-  [![GHCR](https://img.shields.io/badge/GHCR-decolua%2F9router-blue?logo=github)](https://github.com/decolua/9router/pkgs/container/9router)
-  [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/decolua/9router/blob/main/LICENSE)
+  [![Docker Pulls](https://img.shields.io/docker/pulls/vibecoder11200/9router.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/vibecoder11200/9router)
+  [![GHCR](https://img.shields.io/badge/GHCR-vibecoder11200%2F9router-blue?logo=github)](https://github.com/vibecoder11200/9router/pkgs/container/9router)
+  [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/vibecoder11200/9router/blob/main/LICENSE)
 
-<a href="https://trendshift.io/repositories/22628" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22628" alt="decolua%2F9router | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/22628" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22628" alt="vibecoder11200%2F9router | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
 [🚀 Quick Start](#-quick-start) • [💡 Features](#-key-features) • [📖 Setup](#-setup-guide) • [🌐 Website](https://9router.com)
 
 [🇻🇳 Tiếng Việt](./i18n/README.vi.md) • [🇨🇳 中文](./i18n/README.zh-CN.md) • [🇯🇵 日本語](./i18n/README.ja-JP.md) • [🇷🇺 Русский](./i18n/README.ru.md) • [🇹🇭 ไทย](./i18n/README.th.md) • [🇮🇷 فارسی](./i18n/README.fa_IR.md) • [🇮🇩 Indonesia](./i18n/README.id-ID.md)
+
+> 🔀 **This is a feature-enhanced fork** of [decolua/9router](https://github.com/decolua/9router), adding a **managed V2Ray/Xray proxy** (v2go), **DeepSeek Web (DS2API) sidecar**, **rotating proxy pools**, **Genspark/Gemini web-cookie providers**, **external tunnel URL**, and more. Distributed via [GitHub Releases](https://github.com/vibecoder11200/9router/releases) (not npm). See [⭐ Fork Features](#-fork-features) below.
 
 </div>
 
@@ -71,12 +73,53 @@ Result: Never stop coding, minimal cost + 20-40% token savings via RTK
 
 ---
 
+## ⭐ Fork Features
+
+> Additions in **this fork** (`vibecoder11200/9router`) on top of upstream. All are optional and ship disabled by default.
+
+| Feature | What it adds | Where to enable |
+| --- | --- | --- |
+| 🛰️ **V2Ray Proxy (v2go)** | Managed local **Xray-core** client that turns V2Ray share links (VLESS/VMess/Trojan/SS) from [v2go](https://github.com/Danialsamadi/v2go) into a SOCKS5/HTTP proxy 9Router can route through. Auto-syncs ~1,000+ working configs hourly, per-server latency testing, auto-rotation when the active server dies. Bundles the Xray-core binary (auto-download per OS/arch). Creates a managed Proxy Pool you can assign to any connection. *(v0.6.0+)* | Dashboard → **V2Ray Proxy** |
+| 🐬 **DeepSeek Web (DS2API)** | Runs a local Go sidecar that turns your DeepSeek Web session into an OpenAI-compatible endpoint. Managed start/stop/install/**update**, per-account proxies + **rotating proxy groups** (round-robin/random/failover). Engine pulled from [`vibecoder11200/ds2api`](https://github.com/vibecoder11200/ds2api) `v4.6.2-rotation`. | Dashboard → **DeepSeek Web** |
+| 🔀 **Proxy Pools & Rotating Groups** | Single-proxy pools **or** rotating groups (many proxies + optional "direct" server-IP slot). Per-request rotation: **on-error** (LRU) / **round-robin** / **random**. All protocols (http, https, socks5/5h/4/4a). Batch import. `strictProxy` fail-hard. Auto-cooldown (60s rate-limit, 30s 5xx). Bind to any provider connection. | Dashboard → **Proxy Pools** |
+| 🌐 **No-auth provider rotation** | Free no-auth providers (OpenCode Free, mimo-free…) can be bound to a rotating pool group from their provider page — set **Rotation Strategy** to round-robin/random (needs ≥2 active pools) to spread requests across IPs. | Provider page → **Proxy / Rotation** card |
+| 🤖 **Genspark Web** | Cookie-based Genspark Copilot MOA backend. Chat + **image generation** (`COPILOT_MOA_IMAGE`). Append `-search` to any model for web grounding. Prefix `genspark-web/` (`gspark`). | Dashboard → Providers → **Genspark Web** |
+| ♊ **Gemini Web** | Cookie-based `gemini.google.com` (internal `StreamGenerate` RPC). Cookie pool up to 5, round-robin, 15-min health checks, auto-disable dead cookies. LLM + image + video + audio. Prefix `gemini-web/` (`gweb`). | Dashboard → Providers → **Gemini Web** |
+| 🔗 **External Tunnel URL** | Register a tunnel the app does **not** manage (e.g. `cloudflared` via systemd, or any reverse proxy). Combined with *Allow dashboard access via tunnel*, local-only actions (DS2API install/start/stop, tunnel controls, Headroom, MITM) run over that tunnel after login. Setting `externalTunnelUrl`. | Dashboard → Endpoint → **External tunnel URL** |
+
+> Plus everything from **upstream** (regularly merged): PXPipe multimodal token saver, Grok CLI, Perplexity Agent API, Featherless, self-hosted STT/TTS/embedding providers, Headroom extras — all documented in their sections below.
+
+<details>
+<summary><b>📖 How the two proxy-group systems differ</b></summary>
+
+This fork has **two independent** proxy-group systems. They are easy to confuse:
+
+- **9Router Proxy Pools** (Dashboard → Proxy Pools) — 9Router's own. Modes: `on-error` / `round-robin` / `random`. Applies to **any** provider connection. Cools down failing entries and tries another entry on the **same account** before account fallback. Code: `src/lib/network/proxyRotation.js`.
+- **DS2API proxy groups** (Dashboard → DeepSeek Web) — managed **inside the DS2API Go sidecar** and surfaced through the dashboard. Modes: `round-robin` / `random` / `failover` (+ `sticky` count). Applies **only** to DeepSeek Web accounts. Code: `temp/ds2api/internal/config`.
+
+</details>
+
+---
+
 ## ⚡ Quick Start
 
 **1. Install globally:**
 
+> This fork is **distributed via GitHub Releases**, not the npm registry.
+> Pick the one-liner for your platform (Node.js >= 18 required):
+
 ```bash
-npm install -g 9router
+# macOS / Linux / WSL
+curl -fsSL https://github.com/vibecoder11200/9router/raw/master/install.sh | bash
+
+# Windows (PowerShell)
+powershell -c "irm https://github.com/vibecoder11200/9router/raw/master/install.ps1 | iex"
+
+# …or install the latest release tarball directly:
+npm install -g https://github.com/vibecoder11200/9router/releases/latest/download/9router.tgz
+```
+
+```bash
 9router
 ```
 
@@ -119,6 +162,33 @@ Default URLs:
 - Dashboard: `http://localhost:20128/dashboard`
 - OpenAI-compatible API: `http://localhost:20128/v1`
 
+### 🔄 Update / Nâng cấp
+
+This fork ships via **GitHub Releases** (not npm). The dashboard checks for new
+releases automatically on the fork's [GitHub Releases](https://github.com/vibecoder11200/9router/releases)
+and shows an **"↑ New version available"** badge in the sidebar when one is
+found — click it to copy the upgrade command and shut the server down safely.
+
+To upgrade manually, re-run the install one-liner (it always pulls `latest`):
+
+```bash
+# macOS / Linux / WSL
+curl -fsSL https://github.com/vibecoder11200/9router/raw/master/install.sh | bash
+
+# Windows (PowerShell)
+powershell -c "irm https://github.com/vibecoder11200/9router/raw/master/install.ps1 | iex"
+
+# …or install the latest release tarball directly:
+npm install -g https://github.com/vibecoder11200/9router/releases/latest/download/9router.tgz
+```
+
+The CLI launcher also checks for updates on start and prints the exact upgrade
+command when a newer release exists (run `9router` and watch the menu).
+
+> **Note:** Do **not** run `npm i -g 9router` / `npm i -g 9router@latest` — that
+> installs the upstream `decolua` package from npm, not this fork. Always use the
+> GitHub Releases tarball URL or the install scripts above.
+
 ---
 
 ## Video Guides
@@ -127,103 +197,58 @@ Default URLs:
 
 <table>
   <tr>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=X69n5Lm06Yw">
-        <img src="https://img.youtube.com/vi/X69n5Lm06Yw/maxresdefault.jpg" alt="Tiết kiệm chi phí LLM với 9Router" width="300"/>
-      </a><br/>
-      <b>🇻🇳 Tiếng Việt</b><br/>
-      <sub>Tiết kiệm chi phí LLM cho OpenClaw với 9Router<br/>by <a href="https://www.youtube.com/c/M%C3%ACAIblog">Mì AI</a></sub>
-    </td>
-    <td align="center" width="320">
-      <a href="https://youtu.be/VQAw612S27Y">
-        <img src="https://img.youtube.com/vi/VQAw612S27Y/maxresdefault.jpg" alt="9Router + Claude Code FREE Unlimited Setup" width="300"/>
-      </a><br/>
-      <b>🇵🇰 اردو / हिन्दी</b><br/>
-      <sub>9Router + Claude Code FREE Unlimited Setup<br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub>
-    </td>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=raEyZPg5xE0">
-        <img src="https://img.youtube.com/vi/raEyZPg5xE0/maxresdefault.jpg" alt="9Router Setup Tutorial" width="300"/>
-      </a><br/>
-      <b>🇺🇸 English</b><br/>
-      <sub>9Router + Claude Code FREE Setup<br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub>
-    </td>
-    <td align="center" width="320">
-      <a href="https://youtu.be/3dF5GIYMrcQ?si=bAyfyiHbARJQAHj_">
-        <img src="https://img.youtube.com/vi/3dF5GIYMrcQ/hqdefault.jpg" alt="9Router Setup Tutorial" width="300"/>
-      </a><br/>
-      <b>🇺🇸 English</b><br/>
-      <sub>9Router + Claude Code FREE Setup<br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub>
-    </td>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=o3qYCyjrFYg">
-        <img src="https://img.youtube.com/vi/o3qYCyjrFYg/maxresdefault.jpg" alt="Claude Code FREE Forever" width="300"/>
-      </a><br/>
-      <b>🇺🇸 English</b><br/>
-      <sub>Claude Code FREE Forever — Unlimited Models<br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub>
-    </td>
+    <td width="50%" align="center"><a href="https://www.youtube.com/watch?v=X69n5Lm06Yw"><img src="https://img.youtube.com/vi/X69n5Lm06Yw/hqdefault.jpg" alt="Tiết kiệm chi phí LLM với 9Router" width="360"/></a></td>
+    <td width="50%" align="center"><a href="https://www.youtube.com/watch?v=G-5A_D5Pm6Y"><img src="https://img.youtube.com/vi/G-5A_D5Pm6Y/hqdefault.jpg" alt="Cài đặt OpenClaw Free A-Z" width="360"/></a></td>
   </tr>
   <tr>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=Ttpc26m39Dw">
-        <img src="https://img.youtube.com/vi/Ttpc26m39Dw/maxresdefault.jpg" alt="Claude CLI Free Setup" width="300"/>
-      </a><br/>
-      <b>🇺🇸 English</b><br/>
-      <sub>Claude CLI Free Setup with 9Router 🚀<br/>by <a href="https://www.youtube.com/@CodeVerseSoban">CodeVerse Soban</a></sub>
-    </td>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=G-5A_D5Pm6Y">
-        <img src="https://img.youtube.com/vi/G-5A_D5Pm6Y/maxresdefault.jpg" alt="Cài đặt OpenClaw Free A-Z" width="300"/>
-      </a><br/>
-      <b>🇻🇳 Tiếng Việt</b><br/>
-      <sub>Cài Đặt OpenClaw Free Từ A-Z + 9Router<br/>by <a href="https://www.youtube.com/@maigia">Mai Gia</a></sub>
-    </td>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=JXmg8_gccgE">
-        <img src="https://img.youtube.com/vi/JXmg8_gccgE/maxresdefault.jpg" alt="FREE OpenClaw with Claude Opus" width="300"/>
-      </a><br/>
-      <b>🇺🇸 English</b><br/>
-      <sub>FREE OpenClaw + Claude Opus 4.6<br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub>
-    </td>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=CkVZZUSTXAI">
-        <img src="https://img.youtube.com/vi/CkVZZUSTXAI/mqdefault.jpg" alt="Claude CLI Free Setup" width="300"/>
-      </a><br/>
-      <b>🇮🇩 Indonesia</b><br/>
-      <sub>Koding 24 Jam Anti Rate Limit! Hemat Token AI 65% | Tutorial Quick Setup 9Router 🚀<br/>by <a href="https://www.youtube.com/@krisswuh">Krisswuh</a></sub>
-    </td>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=TXGv4eofe1I">
-        <img src="https://img.youtube.com/vi/TXGv4eofe1I/mqdefault.jpg" alt="Cara Deploy 9Router di Hugging Face GRATIS Non-Stop! | Alternatif VPS RAM 16GB" width="300"/>
-      </a><br/>
-      <b>🇮🇩 Indonesia</b><br/>
-      <sub>Cara Deploy 9Router di Hugging Face GRATIS Non-Stop! | Alternatif VPS RAM 16GB<br/>by <a href="https://www.youtube.com/@krisswuh">Krisswuh</a></sub>
-    </td>
+    <td align="center"><sub>🇻🇳 <b>Tiết kiệm chi phí LLM cho OpenClaw với 9Router</b><br/>by <a href="https://www.youtube.com/c/M%C3%ACAIblog">Mì AI</a></sub></td>
+    <td align="center"><sub>🇻🇳 <b>Cài Đặt OpenClaw Free Từ A-Z + 9Router</b><br/>by <a href="https://www.youtube.com/@maigia">Mai Gia</a></sub></td>
   </tr>
   <tr>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=GyX-DLvePW8">
-        <img src="https://img.youtube.com/vi/GyX-DLvePW8/hqdefault.jpg" alt="این شکلی از هر API ای استفاده کن برای هوش مصنوعی" width="300"/>
-      </a><br/>
-      <b>🇮🇷 Persian-فارسی</b><br/>
-      <sub dir="rtl">این شکلی از هر API ای استفاده کن برای هوش مصنوعی<br/>by <a href="https://www.youtube.com/@Matin_SenPai">Matin SenPai</a></sub>
-    </td>
-    <td align="center" width="320">
-      <a href="https://www.youtube.com/watch?v=hPusYX-5Pmw">
-        <img src="https://img.youtube.com/vi/hPusYX-5Pmw/maxresdefault.jpg" alt="Hướng Dẫn Setup OpenClaw + 9Router: Tạo Bot Zalo AI Tự Động Từ A-Z" width="300"/>
-      </a><br/>
-      <b>🇻🇳 Tiếng Việt</b><br/>
-      <sub>Hướng Dẫn Setup OpenClaw + 9Router: Tạo Bot Zalo AI Tự Động Từ A-Z<br/>by <a href="https://github.com/tuanminhhole">tuanminhhole</a></sub>
-    </td>
-    <td align="center" width="320"></td>
-    <td align="center" width="320"></td>
-    <td align="center" width="320"></td>
+    <td align="center"><a href="https://www.youtube.com/watch?v=hPusYX-5Pmw"><img src="https://img.youtube.com/vi/hPusYX-5Pmw/hqdefault.jpg" alt="Bot Zalo AI" width="360"/></a></td>
+    <td align="center"><a href="https://www.youtube.com/watch?v=raEyZPg5xE0"><img src="https://img.youtube.com/vi/raEyZPg5xE0/hqdefault.jpg" alt="9Router + Claude Code FREE Setup" width="360"/></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>🇻🇳 <b>Setup OpenClaw + 9Router: Bot Zalo AI Tự Động A-Z</b><br/>by <a href="https://github.com/tuanminhhole">tuanminhhole</a></sub></td>
+    <td align="center"><sub>🇺🇸 <b>9Router + Claude Code FREE Setup</b><br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://www.youtube.com/watch?v=o3qYCyjrFYg"><img src="https://img.youtube.com/vi/o3qYCyjrFYg/hqdefault.jpg" alt="Claude Code FREE Forever" width="360"/></a></td>
+    <td align="center"><a href="https://www.youtube.com/watch?v=Ttpc26m39Dw"><img src="https://img.youtube.com/vi/Ttpc26m39Dw/hqdefault.jpg" alt="Claude CLI Free Setup" width="360"/></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>🇺🇸 <b>Claude Code FREE Forever — Unlimited Models</b><br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub></td>
+    <td align="center"><sub>🇺🇸 <b>Claude CLI Free Setup with 9Router</b><br/>by <a href="https://www.youtube.com/@CodeVerseSoban">CodeVerse Soban</a></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://youtu.be/VQAw612S27Y"><img src="https://img.youtube.com/vi/VQAw612S27Y/hqdefault.jpg" alt="9Router + Claude Code FREE Setup" width="360"/></a></td>
+    <td align="center"><a href="https://www.youtube.com/watch?v=JXmg8_gccgE"><img src="https://img.youtube.com/vi/JXmg8_gccgE/hqdefault.jpg" alt="FREE OpenClaw + Claude Opus" width="360"/></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>🇵🇰 <b>9Router + Claude Code FREE Unlimited Setup</b><br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub></td>
+    <td align="center"><sub>🇺🇸 <b>FREE OpenClaw + Claude Opus 4.6</b><br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://www.youtube.com/watch?v=3dF5GIYMrcQ"><img src="https://img.youtube.com/vi/3dF5GIYMrcQ/hqdefault.jpg" alt="9Router Setup Tutorial" width="360"/></a></td>
+    <td align="center"><a href="https://www.youtube.com/watch?v=CkVZZUSTXAI"><img src="https://img.youtube.com/vi/CkVZZUSTXAI/hqdefault.jpg" alt="Koding 24 Jam Anti Rate Limit" width="360"/></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>🇺🇸 <b>9Router + Claude Code FREE Setup</b><br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub></td>
+    <td align="center"><sub>🇮🇩 <b>Koding 24 Jam Anti Rate Limit! Hemat Token AI 65%</b><br/>by <a href="https://www.youtube.com/@krisswuh">Krisswuh</a></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://www.youtube.com/watch?v=TXGv4eofe1I"><img src="https://img.youtube.com/vi/TXGv4eofe1I/hqdefault.jpg" alt="Deploy 9Router di Hugging Face" width="360"/></a></td>
+    <td align="center"><a href="https://www.youtube.com/watch?v=GyX-DLvePW8"><img src="https://img.youtube.com/vi/GyX-DLvePW8/hqdefault.jpg" alt="Persian tutorial" width="360"/></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>🇮🇩 <b>Deploy 9Router di Hugging Face GRATIS Non-Stop</b><br/>by <a href="https://www.youtube.com/@krisswuh">Krisswuh</a></sub></td>
+    <td align="center"><sub dir="rtl">🇮🇷 <b>این شکلی از هر API ای استفاده کن برای هوش مصنوعی</b><br/>by <a href="https://www.youtube.com/@Matin_SenPai">Matin SenPai</a></sub></td>
   </tr>
 </table>
 
 </div>
 
-> 🎬 **Made a video about 9Router?** Submit a [Pull Request](https://github.com/decolua/9router/pulls) adding your video to this section — we'll merge it!
+> 🎬 **Made a video about 9Router?** Submit a [Pull Request](https://github.com/vibecoder11200/9router/pulls) adding your video to this section — we'll merge it!
 
 ---
 
@@ -381,6 +406,18 @@ Default URLs:
 > **OpenCode Free** model list fluctuates over time (some models free only for limited promos) — subject to change without notice.
 > **Vertex AI**: the $300 free credit for new GCP accounts is still valid, but since Mar 2026 the **Gemini API endpoint no longer consumes these credits** — call the **Vertex AI Studio** endpoint instead.
 
+### 🍪 Web-Cookie Providers · *fork*
+
+> Authenticate with a browser **session cookie** instead of an API key — turns web-only AI into an OpenAI-compatible endpoint. *Added by this fork.*
+
+| Provider | Prefix | What you get |
+| --- | --- | --- |
+| **Gemini Web** | `gemini-web/` (`gweb`) | `gemini.google.com` via internal RPC. LLM + image + video + audio. Cookie pool (up to 5, round-robin, 15-min health checks, auto-disable dead cookies). |
+| **Genspark Web** | `genspark-web/` (`gspark`) | Genspark Copilot MOA chat + **image generation** (`COPILOT_MOA_IMAGE`). Append `-search` to any model for web grounding. |
+| **DeepSeek Web** | `ds2api/` | Your DeepSeek Web session, via a managed local sidecar. See [⭐ Fork Features](#-fork-features). |
+
+**Setup:** open the provider in Dashboard → Providers, paste the session cookie (JSON from a cookie editor, or the bare `session_id` value), and the models appear automatically.
+
 ### 🔑 API Key Providers (40+)
 
 <div align="center">
@@ -464,7 +501,7 @@ Default URLs:
       </td>
     </tr>
   </table>
-  <p><i>...and 20+ more providers including Nebius, Chutes, Hyperbolic, and custom OpenAI/Anthropic compatible endpoints</i></p>
+  <p><i>...and 20+ more providers including Grok CLI (OAuth), Perplexity Agent API, Featherless, Cloudflare AI, Nebius, Chutes, Hyperbolic, Venice AI, TokenRouter, and custom OpenAI/Anthropic compatible endpoints</i></p>
 </div>
 
 ### 🏠 Self-hosted Providers
@@ -515,8 +552,13 @@ a third party under a provider named "Self-hosted".
 | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | 🚀 **RTK Token Saver** ([RTK](https://github.com/rtk-ai/rtk) ⭐40K)               | Compress tool outputs (`git diff`, `grep`, `ls`, `tree`...) before sending to LLM        | Save **20-40% input tokens** per request          |
 | 🧠 **Headroom Token Saver** ([Headroom](https://github.com/chopratejas/headroom)) | Optional external `/v1/compress` proxy before provider routing                           | Save more context tokens without changing clients |
+| 🖼️ **PXPipe Token Saver**                                                         | **In-process** multimodal compression — re-renders Claude-format context as dense images (Anthropic bills images by pixels, not text length) | Save context tokens on long Claude requests |
 | 🪨 **Caveman Mode** ([Caveman](https://github.com/JuliusBrussee/caveman) ⭐52K)   | Inject caveman-speak prompt → LLM replies terse, technical substance preserved           | Save **up to 65% output tokens**                  |
 | 🐴 **Ponytail** ([Ponytail](https://github.com/DietrichGebert/ponytail))          | Inject "lazy senior dev" prompt → LLM writes minimal, YAGNI-first code (Lite/Full/Ultra) | **Fewer output tokens, less refactoring**         |
+| 🛰️ **V2Ray Proxy (v2go)** · *fork*                                                | Managed Xray-core client → SOCKS5/HTTP proxy from free V2Ray share links (auto-synced)   | Premium-grade proxies for any provider, free      |
+| 🐬 **DeepSeek Web (DS2API)** · *fork*                                             | Local Go sidecar turns your DeepSeek Web session into an OpenAI endpoint                 | Use DeepSeek Web from any CLI tool                |
+| 🔀 **Proxy Pools & Rotating Groups** · *fork*                                     | Single-proxy pools **or** rotating groups (on-error/round-robin/random + direct slot)    | Spread load, beat IP rate-limits                  |
+| 🤖 **Web-Cookie Providers** · *fork*                                              | Genspark (MOA + image), Gemini Web (multimodal, cookie pool)                             | Access web-only AI in any CLI tool                |
 | 🎯 **Smart 3-Tier Fallback**                                                      | Auto-route: Subscription → Cheap → Free                                                  | Never stop coding, zero downtime                  |
 | 📊 **Real-Time Quota Tracking**                                                   | Live token count + reset countdown                                                       | Maximize subscription value                       |
 | 🔄 **Format Translation**                                                         | OpenAI ↔ Claude ↔ Gemini ↔ Cursor ↔ Kiro ↔ Vertex                                        | Works with any CLI tool                           |
@@ -563,7 +605,14 @@ pip install "headroom-ai[proxy]"
 headroom proxy --port 8787
 ```
 
-Enable in Dashboard → Endpoint → Token Saver → Headroom. Default URL: `http://localhost:8787`.
+Enable in Dashboard → Endpoint → Token Saver → Headroom. Default URL: `http://localhost:8787` (override with `HEADROOM_URL`).
+
+**Optional extras** (install from the same Headroom card in the dashboard):
+
+- **`code`** — tree-sitter AST-based code compression.
+- **`ml`** — Kompress-v2 HuggingFace model compression.
+
+The dashboard auto-detects installed extras via `pip list`, and offers one-click install/uninstall with a live log. Other extras (image, voice, otel, …) aren't tracked since they don't help token compression.
 
 Docker examples:
 
@@ -576,6 +625,17 @@ http://host.docker.internal:8787
 ```
 
 If Headroom is down or returns an error, 9Router fails open and sends the original request.
+
+### 🖼️ PXPipe Token Saver
+
+PXPipe is a **multimodal** compressor: it re-renders dense Claude-format text context as compact images. Anthropic bills images by **pixels** (pixels/750) rather than encoded text length, so a long context can cost fewer tokens as an image than as text.
+
+- **In-process** — runs as a library inside 9Router (no separate daemon/port). The npm package is installed on first enable.
+- **Claude-only** — only transforms Claude-format requests above a size threshold (`pxpipeMinChars`, default 25000 chars).
+- **Fail-open** — any error/timeout leaves the request untouched.
+- **Default off** — enable in Dashboard → **Token Saver** (the `pxpipeEnabled` toggle). Stats and a health check live under Dashboard → **Pxpipe**.
+
+Stacks with RTK (which runs first and strips agentic noise) and Headroom (external text compression).
 
 ### 🐴 Ponytail (Lazy Senior Dev)
 
@@ -673,7 +733,7 @@ Seamless translation between formats:
 > The "cost" displayed in Usage Analytics is **for tracking and comparison purposes only**.
 > 9Router itself **never charges** you anything. You only pay providers directly (if using paid services).
 >
-> **Example:** If your dashboard shows "$290 total cost" while using Kiro free models, this represents
+> **Example:** If your dashboard shows "$290 total cost" while using Kiro models, this represents
 > what you would have paid using paid APIs directly. Your actual cost = **$0** (Kiro free tier: ~50 credits/mo).
 >
 > Think of it as a "savings tracker" showing how much you're saving by using free models or
@@ -690,7 +750,9 @@ Seamless translation between formats:
 
 ---
 
-## 💰 Pricing at a Glance
+## 💰 Cost & Strategy
+
+### Pricing at a glance
 
 | Tier                | Provider              | Cost         | Quota Reset      | Best For                                |
 | ------------------- | --------------------- | ------------ | ---------------- | --------------------------------------- |
@@ -702,225 +764,45 @@ Seamless translation between formats:
 | **💰 CHEAP**        | GLM-5.1 / GLM-4.7     | $0.6/1M      | Daily 10AM       | Budget backup                           |
 |                     | MiniMax M2.7          | $0.2/1M      | 5-hour rolling   | Cheapest option                         |
 |                     | Kimi K2.5             | $9/mo flat   | 10M tokens/mo    | Predictable cost                        |
- | **🆓 FREE**         | Kiro AI               | $0           | 50 credits/mo    | Claude 4.5 + GLM-5 + MiniMax free (paid tiers above) |
- |                     | OpenCode Free         | $0           | Varies*          | No auth, auto-fetch models (list changes over time) |
- |                     | Vertex AI             | $300 credits | New GCP accounts | Gemini 3 Pro + DeepSeek + GLM-5 (use Vertex AI Studio endpoint for free credits) |
+| **🆓 FREE**         | Kiro AI               | $0           | 50 credits/mo    | Claude 4.5 + GLM-5 + MiniMax free (paid tiers above) |
+|                     | OpenCode Free         | $0           | Varies*          | No auth, auto-fetch models (list changes over time) |
+|                     | Vertex AI             | $300 credits | New GCP accounts | Gemini 3 Pro + DeepSeek + GLM-5 (use Vertex AI Studio endpoint for free credits) |
 
-**💡 Pro Tip:** RTK + Kiro AI + OpenCode Free combo = **$0 cost + 20-40% token savings**!
+### Billing reality
 
----
+- ✅ **9Router = FREE forever** (open source, never charges, no invoices, no credit card).
+- ✅ **You pay providers directly** — subscriptions on their websites, or API fees. 9Router just routes.
+- ✅ **Dashboard "cost" is a savings tracker, not a bill.** It shows what you *would have* paid using paid APIs — e.g. "$290 displayed" while using Kiro free tier means you **saved** $290, actual payment $0.
+- ❌ **FREE providers have free-tier limits** (Kiro ~50 credits/mo, OpenCode/Vertex per their terms). iFlow/Qwen/Gemini CLI free tiers were discontinued in 2026.
 
-### 📊 Understanding 9Router Costs & Billing
+### Example combos
 
-**9Router Billing Reality:**
+| Combo | Layers (fallback top → bottom) | Monthly cost |
+| --- | --- | --- |
+| **free-forever** | `kr/claude-sonnet-4.5` → `kr/glm-5` → `oc/<auto>` (OpenCode Free) | **$0** |
+| **maximize-claude** | `cc/claude-opus-4-7` (subscription) → `glm/glm-5.1` (cheap) → `kr/claude-sonnet-4.5` (free fallback) | ~$25 |
+| **always-on** | `cc/claude-opus-4-7` → `cx/gpt-5.5` → `glm/glm-5.1` → `minimax/MiniMax-M2.7` → `kr/claude-sonnet-4.5` | $30-220 |
+| **openclaw-free** | `kr/claude-sonnet-4.5` → `kr/glm-5` → `kr/MiniMax-M2.5` — free AI in WhatsApp/Telegram/Slack/Discord/iMessage/Signal | **$0** |
 
-✅ **9Router software = FREE forever** (open source, never charges)  
-✅ **Dashboard "costs" = Display/tracking only** (not actual bills)  
-✅ **You pay providers directly** (subscriptions or API fees)  
-✅ **FREE providers stay FREE** (Kiro ~50 credits/mo, OpenCode Free, Vertex $300 credits = $0 within free-tier limits) — note iFlow/Qwen/Gemini CLI free tiers were discontinued in 2026
-❌ **9Router never sends invoices** or charges your card
-
-**How Cost Display Works:**
-
-The dashboard shows **estimated costs** as if you were using paid APIs directly. This is **not billing** - it's a comparison tool to show your savings.
-
-**Example Scenario:**
-
-```
-Dashboard Display:
-• Total Requests: 1,662
-• Total Tokens: 47M
-• Display Cost: $290
-
-Reality Check:
-• Provider: Kiro (free tier: ~50 credits/mo)
-• Actual Payment: $0.00
-• What $290 Means: Amount you SAVED by using free models!
-```
-
-**Payment Rules:**
-
-- **Subscription providers** (Claude Code, Codex): Pay them directly via their websites
-- **Cheap providers** (GLM, MiniMax): Pay them directly, 9Router just routes
-- **FREE providers** (iFlow, Kiro, Qwen): Genuinely free forever, no hidden charges
-- **9Router**: Never charges anything, ever
-
----
-
-## 🎯 Use Cases
-
-### Case 1: "I have Claude Pro subscription"
-
-**Problem:** Quota expires unused, rate limits during heavy coding
-
-**Solution:**
-
-```
-Combo: "maximize-claude"
-  1. cc/claude-opus-4-7        (use subscription fully)
-  2. glm/glm-5.1               (cheap backup when quota out)
-  3. kr/claude-sonnet-4.5      (free emergency fallback)
-
-Monthly cost: $20 (subscription) + ~$5 (backup) = $25 total
-vs. $20 + hitting limits = frustration
-```
-
-### Case 2: "I want zero cost"
-
-**Problem:** Can't afford subscriptions, need reliable AI coding
-
-**Solution:**
-
-```
-Combo: "free-forever"
-  1. kr/claude-sonnet-4.5      (Claude 4.5 free via Kiro, ~50 credits/mo)
-  2. kr/glm-5                  (GLM-5 free via Kiro)
-  3. oc/<auto>                 (OpenCode Free, no auth)
-
-Monthly cost: $0
-Quality: Production-ready models + RTK saves 20-40% tokens
-```
-
-### Case 3: "I need 24/7 coding, no interruptions"
-
-**Problem:** Deadlines, can't afford downtime
-
-**Solution:**
-
-```
-Combo: "always-on"
-  1. cc/claude-opus-4-7        (best quality)
-  2. cx/gpt-5.5                (second subscription)
-  3. glm/glm-5.1               (cheap, resets daily)
-  4. minimax/MiniMax-M2.7      (cheapest, 5h reset)
-  5. kr/claude-sonnet-4.5      (free via Kiro, ~50 credits/mo)
-
-Result: 5 layers of fallback = zero downtime
-Monthly cost: $20-200 (subscriptions) + $10-20 (backup)
-```
-
-### Case 4: "I want FREE AI in OpenClaw"
-
-**Problem:** Need AI assistant in messaging apps (WhatsApp, Telegram, Slack...), completely free
-
-**Solution:**
-
-```
-Combo: "openclaw-free"
-  1. kr/claude-sonnet-4.5      (Claude 4.5 free)
-  2. kr/glm-5                  (GLM-5 free)
-  3. kr/MiniMax-M2.5           (MiniMax free)
-
-Monthly cost: $0
-Access via: WhatsApp, Telegram, Slack, Discord, iMessage, Signal...
-```
+> 💡 **Pro Tip:** RTK + Kiro + OpenCode Free = **$0 cost + 20-40% token savings**.
 
 ---
 
 ## ❓ Frequently Asked Questions
 
 <details>
-<summary><b>📊 Why does my dashboard show high costs?</b></summary>
+<summary><b>📊 Why does my dashboard show high costs? Will I be charged?</b></summary>
 
-The dashboard tracks your token usage and displays **estimated costs** as if you were using paid APIs directly. This is **not actual billing** - it's a reference to show how much you're saving by using free models or existing subscriptions through 9Router.
-
-**Example:**
-
-- **Dashboard shows:** "$290 total cost"
-- **Reality:** You're using Kiro free models (~50 credits/mo)
-- **Your actual cost:** **$0.00**
-- **What $290 means:** Amount you **saved** by using free models instead of paid APIs!
-
-The cost display is a "savings tracker" to help you understand your usage patterns and optimization opportunities.
+The dashboard "cost" is a **savings tracker**, not a bill — it shows what you *would have* paid using paid APIs. **9Router never charges you** (open source, no invoices, no credit card). You only pay providers directly (subscriptions/API fees). Example: "$290 displayed" while using Kiro free tier = you **saved** $290, actual payment $0. See [💰 Cost & Strategy](#-cost--strategy) for full pricing, free-tier limits, and example combos.
 
 </details>
 
 <details>
-<summary><b>💳 Will I be charged by 9Router?</b></summary>
+<summary><b>🆓 Are FREE providers really free? Which ones still work?</b></summary>
 
-**No.** 9Router is free, open-source software that runs on your own computer. It never charges you anything.
+**Yes, within free-tier limits** — Kiro AI (~50 credits/mo + 500 trial credits for new accounts in first 30 days), OpenCode Free (no-auth, model list fluctuates), Vertex AI ($300 credits for new GCP accounts — use the **Vertex AI Studio** endpoint since the Gemini API stopped consuming credits in Mar 2026). 9Router just routes; no catch, no future billing.
 
-**You only pay:**
-
-- ✅ **Subscription providers** (Claude Code $20/mo, Codex $20-200/mo) → Pay them directly on their websites
-- ✅ **Cheap providers** (GLM, MiniMax) → Pay them directly, 9Router just routes your requests
-- ❌ **9Router itself** → **Never charges anything, ever**
-
-9Router is a local proxy/router. It doesn't have your credit card, can't send invoices, and has no billing system. It's completely free software.
-
-</details>
-
-<details>
-<summary><b>🆓 Are FREE providers really unlimited?</b></summary>
-
-**Mostly!** The current FREE providers (Kiro, OpenCode Free, Vertex) are genuinely free, but free tiers have limits:
-
-These are free services offered by those respective companies:
-
-- **Kiro AI**: ~50 credits/month free (plus 500 trial credits for new accounts in the first 30 days) via AWS Builder ID / Google / GitHub OAuth. Paid tiers available above that.
-- **OpenCode Free**: No-auth passthrough proxy, models auto-fetched from `opencode.ai/zen/v1/models`. The free model list fluctuates over time (some models free only for limited promos) — subject to change without notice.
-- **Vertex AI**: $300 free credits for new Google Cloud accounts (90 days). Since Mar 2026 the Gemini API endpoint no longer consumes these credits — use the **Vertex AI Studio** endpoint instead.
-
-9Router just routes your requests to them - there's no "catch" or future billing from 9Router itself. They're truly free services, and 9Router makes them easy to use with fallback support.
-
-**Discontinued free tiers (no longer recommended):**
-
-- ❌ **iFlow**: Was free unlimited, now changed to paid (2026)
-- ❌ **Qwen Code**: Free OAuth tier fully discontinued by Alibaba on 2026-04-15
-- ❌ **Gemini CLI**: Service fully shut down by Google on 2026-06-18 (replaced by the closed-source Antigravity CLI). Discontinued — do not use.
-
-</details>
-
-<details>
-<summary><b>💰 How do I minimize my actual AI costs?</b></summary>
-
-**Free-First Strategy:**
-
-1. **Start with 100% free combo:**
-
-   ```
-   1. kr/glm-5 (GLM-5 free via Kiro, ~50 credits/mo)
-   2. OpenCode Free models (no auth, auto-fetched)
-   3. Vertex AI Gemini 3 Pro (using the Vertex AI Studio endpoint with $300 credits)
-   ```
-
-   **Cost: $0/month** (within Kiro's free credit cap; OpenCode/Vertex subject to their free-tier limits)
-
-2. **Add cheap backup** only if you need it:
-
-   ```
-   4. glm/glm-4.7 ($0.6/1M tokens)
-   ```
-
-   **Additional cost: Only pay for what you actually use**
-
-3. **Use subscription providers last:**
-   - Only if you already have them
-   - 9Router helps maximize their value through quota tracking
-
-**Result:** Most users can operate at $0/month using only free tiers!
-
-</details>
-
-<details>
-<summary><b>📈 What if my usage suddenly spikes?</b></summary>
-
-9Router's smart fallback prevents surprise charges:
-
-**Scenario:** You're on a coding sprint and blow through your quotas
-
-**Without 9Router:**
-
-- ❌ Hit rate limit → Work stops → Frustration
-- ❌ Or: Accidentally rack up huge API bills
-
-**With 9Router:**
-
-- ✅ Subscription hits limit → Auto-fallback to cheap tier
-- ✅ Cheap tier gets expensive → Auto-fallback to free tier
-- ✅ Never stop coding → Predictable costs
-
-**You're in control:** Set spending limits per provider in dashboard, and 9Router respects them.
+**Discontinued (don't use):** ❌ iFlow (paid since 2026) · ❌ Qwen Code (Alibaba discontinued free OAuth 2026-04-15) · ❌ Gemini CLI (Google shut down 2026-06-18, replaced by Antigravity CLI).
 
 </details>
 
@@ -928,193 +810,202 @@ These are free services offered by those respective companies:
 
 ## 📖 Setup Guide
 
-<details>
-<summary><b>🔐 Subscription Providers (Maximize Value)</b></summary>
+### 🔌 Connect a provider
 
-### Claude Code (Pro/Max)
+All providers connect from **Dashboard → Providers**. Point your CLI tool at `http://localhost:20128/v1` (API key from the dashboard), then use the model prefix.
 
-```bash
-Dashboard → Providers → Connect Claude Code
-→ OAuth login → Auto token refresh
-→ 5-hour + weekly quota tracking
+| Tier | Provider | How to connect | Model examples |
+| --- | --- | --- | --- |
+| 💳 **Subscription** | Claude Code | OAuth login → auto token refresh | `cc/claude-opus-4-7`, `cc/claude-sonnet-4-6` |
+| 💳 | Codex | OAuth (port 1455) | `cx/gpt-5.5`, `cx/gpt-5.3-codex` |
+| 💳 | GitHub Copilot | OAuth via GitHub (monthly reset) | `gh/gpt-5.4`, `gh/claude-opus-4.7`, `gh/gemini-3.1-pro-preview` |
+| 💳 | Cursor IDE | OAuth login | `cu/claude-4.6-opus-max`, `cu/gpt-5.3-codex` |
+| 💰 **Cheap** | GLM | API key from [Zhipu AI](https://open.bigmodel.cn/) — Coding Plan = 3× quota at 1/7 cost, resets daily 10 AM | `glm/glm-5.1`, `glm/glm-4.7` |
+| 💰 | MiniMax | API key from [MiniMax](https://www.minimax.io/) — cheapest for long context | `minimax/MiniMax-M2.7` |
+| 💰 | Kimi | API key from [Moonshot AI](https://platform.moonshot.ai/) — $9/mo flat for 10M tokens | `kimi/kimi-k2.5`, `kimi/kimi-k2.5-thinking` |
 
-Models:
-  cc/claude-opus-4-7
-  cc/claude-opus-4-6
-  cc/claude-sonnet-4-6
-  cc/claude-haiku-4-5-20251001
+> **Pro Tip:** In any combo, order models Subscription → Cheap → Free so 9Router auto-falls through tiers when quota runs out. See [💰 Cost & Strategy](#-cost--strategy) for ready-made combos.
+
+### 🆓 FREE providers (recommended)
+
+<div align="center">
+<table>
+<tr>
+<td width="33%" valign="top">
+
+**Kiro AI** · `kr/`
+~50 credits/mo free (500 trial for new accounts in first 30 days). Best free Claude.
+
 ```
-
-**Pro Tip:** Use Opus for complex tasks, Sonnet for speed. 9Router tracks quota per model!
-
-### OpenAI Codex (Plus/Pro)
-
-```bash
-Dashboard → Providers → Connect Codex
-→ OAuth login (port 1455)
-→ 5-hour + weekly reset
-
-Models:
-  cx/gpt-5.5
-  cx/gpt-5.4
-  cx/gpt-5.3-codex
-  cx/gpt-5.2-codex
-```
-
-### GitHub Copilot
-
-```bash
-Dashboard → Providers → Connect GitHub
-→ OAuth via GitHub
-→ Monthly reset (1st of month)
-
-Models:
-  gh/gpt-5.4
-  gh/claude-opus-4.7
-  gh/claude-sonnet-4.6
-  gh/gemini-3.1-pro-preview
-  gh/grok-code-fast-1
-```
-
-### Cursor IDE
-
-```bash
-Dashboard → Providers → Connect Cursor
-→ OAuth login
-→ Monthly subscription
-
-Models:
-  cu/claude-4.6-opus-max
-  cu/claude-4.5-sonnet-thinking
-  cu/gpt-5.3-codex
-```
-
-</details>
-
-<details>
-<summary><b>💰 Cheap Providers (Backup)</b></summary>
-
-### GLM-5.1 / GLM-4.7 (Daily reset, $0.6/1M)
-
-1. Sign up: [Zhipu AI](https://open.bigmodel.cn/)
-2. Get API key from Coding Plan
-3. Dashboard → Add API Key:
-   - Provider: `glm`
-   - API Key: `your-key`
-
-**Use:** `glm/glm-5.1`, `glm/glm-5`, `glm/glm-4.7`
-
-**Pro Tip:** Coding Plan offers 3× quota at 1/7 cost! Reset daily 10:00 AM.
-
-### MiniMax M2.7 (5h reset, $0.20/1M)
-
-1. Sign up: [MiniMax](https://www.minimax.io/)
-2. Get API key
-3. Dashboard → Add API Key
-
-**Use:** `minimax/MiniMax-M2.7`, `minimax/MiniMax-M2.5`
-
-**Pro Tip:** Cheapest option for long context (1M tokens)!
-
-### Kimi K2.5 ($9/month flat)
-
-1. Subscribe: [Moonshot AI](https://platform.moonshot.ai/)
-2. Get API key
-3. Dashboard → Add API Key
-
-**Use:** `kimi/kimi-k2.5`, `kimi/kimi-k2.5-thinking`
-
-**Pro Tip:** Fixed $9/month for 10M tokens = $0.90/1M effective cost!
-
-</details>
-
-<details>
-<summary><b>🆓 FREE Providers (Recommended)</b></summary>
-
-### Kiro AI (Claude 4.5 + GLM-5 + MiniMax FREE)
-
-```bash
 Dashboard → Connect Kiro
-→ AWS Builder ID, AWS IAM Identity Center, Google, or GitHub
-→ Unlimited usage
+→ AWS Builder ID / Google / GitHub
 
-Models:
-  kr/claude-sonnet-4.5
-  kr/claude-haiku-4.5
-  kr/glm-5
-  kr/MiniMax-M2.5
-  kr/qwen3-coder-next
-  kr/deepseek-3.2
+kr/claude-sonnet-4.5
+kr/claude-haiku-4.5
+kr/glm-5
+kr/MiniMax-M2.5
+kr/qwen3-coder-next
+kr/deepseek-3.2
 ```
 
-**Pro Tip:** Best free option for Claude. No API key, no payment, fully unlimited.
+</td>
+<td width="33%" valign="top">
 
-### OpenCode Free (No auth, auto-fetch models)
+**OpenCode Free** · `oc/`
+No login — passthrough proxy. Fastest setup. Model list auto-fetched from `opencode.ai/zen/v1/models` (fluctuates over time).
 
-```bash
+```
 Dashboard → Connect OpenCode Free
-→ No login required (passthrough proxy)
-→ Models auto-fetched from opencode.ai/zen/v1/models
+→ No login required
+→ Use oc/<auto> in combos
 ```
 
-**Pro Tip:** Fastest setup. Just connect and start coding.
+</td>
+<td width="33%" valign="top">
 
-### Vertex AI ($300 free credits for new GCP accounts)
+**Vertex AI** · `vertex/`
+$300 free credits for new GCP accounts (90 days). **Use the Vertex AI Studio endpoint** — the Gemini API endpoint stopped consuming credits in Mar 2026.
 
-```bash
+```
 Dashboard → Connect Vertex AI
-→ Upload Google Cloud Service Account JSON
-→ Enable Vertex AI API in your GCP project
+→ Upload GCP Service Account JSON
 
-Models:
-  vertex/gemini-3.1-pro-preview
-  vertex/gemini-3-flash-preview
-  vertex/gemini-2.5-flash
-
-Vertex Partner (Anthropic / DeepSeek / GLM / Qwen via Vertex):
-  vertex-partner/glm-5-maas
-  vertex-partner/deepseek-v3.2-maas
-  vertex-partner/qwen3-next-80b-a3b-thinking-maas
+vertex/gemini-3.1-pro-preview
+vertex/gemini-3-flash-preview
+vertex-partner/glm-5-maas
+vertex-partner/deepseek-v3.2-maas
 ```
 
-**Pro Tip:** New Google Cloud accounts get $300 credits free for 90 days. Plenty for daily coding.
+</td>
+</tr>
+</table>
+</div>
+
+<details>
+<summary><b>🛰️ V2Ray Proxy (v2go)</b> · <i>fork</i></summary>
+
+9Router manages a **local Xray-core client** that turns free V2Ray share links (VLESS/VMess/Trojan/Shadowsocks) into a SOCKS5/HTTP proxy 9Router can route any provider through. The config catalog is auto-synced from [v2go](https://github.com/Danialsamadi/v2go), which publishes ~1,000+ working servers via a GitHub Actions pipeline.
+
+### Setup
+
+```
+Dashboard → V2Ray Proxy
+  → Install Xray-core   (downloads the official binary, one-time, per OS/arch)
+  → Sync configs        (pulls the v2go catalog — VLESS/VMess/Trojan/SS)
+  → Pick a server       (filter by country / protocol; run a latency test)
+  → Start               (launches the local SOCKS5 + HTTP proxy)
+  → Assign the pool     (a managed Proxy Pool "V2Ray Proxy (v2go)" is created
+                         automatically — bind it to any provider connection)
+```
+
+Once started, a managed Proxy Pool named **"V2Ray Proxy (v2go)"** appears in Dashboard → Proxy Pools. Assign it to any provider connection (or to a no-auth provider's **Proxy / Rotation** card) and that connection's traffic routes through the active SOCKS proxy.
+
+### Features
+
+- **Auto-sync** — refreshes the server catalog every 60 minutes (configurable) from v2go's `AllConfigsSub.txt`.
+- **Server selection** — country and protocol filters, per-server latency testing.
+- **Auto-rotation** *(optional)* — when the active server dies, 9Router promotes the next-best server automatically.
+- **Health checks** — periodic liveness checks (default every 10 min).
+- **Share-link parser** — a faithful JS port of v2go's `converter.go`: handles VLESS, VMess, Trojan, Shadowsocks, Hysteria2 with REALITY/TLS/WebSocket/gRPC/XHTTP transports, including the XHTTP host-safety guard that prevents Xray crashes.
+
+### Engine / settings
+
+The Xray-core binary is pinned to `v26.3.27` (MPL-2.0) and auto-downloaded on first use — override the tag with the `XRAY_VERSION` env var. The rest is configured from the dashboard (stored as settings, not env vars):
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `xrayEnabled` | `false` | Master on/off for the V2Ray proxy |
+| `xrayAutoStart` | `false` | Start the proxy when 9Router boots |
+| `xrayAutoRotate` | `false` | Promote the next server when the active one dies |
+| `xraySocksPort` | `10808` | Local SOCKS5 port |
+| `xrayHttpPort` | `10809` | Local HTTP proxy port |
+| `xraySubscriptionUrl` | v2go `AllConfigsSub.txt` | Config catalog source |
+| `xraySyncIntervalMin` | `60` | Catalog refresh interval (minutes) |
+| `xrayHealthCheckIntervalMin` | `10` | Liveness check interval (minutes) |
 
 </details>
 
 <details>
-<summary><b>🎨 Create Combos</b></summary>
+<summary><b>🔀 Proxy Pools & Rotating Groups</b> · <i>fork</i></summary>
 
-### Example 1: Maximize Subscription → Cheap Backup
+A **proxy pool** is either a single proxy or a **rotating group** of many proxies (plus an optional "direct" server-IP slot). Bind it to any provider connection so that connection's outbound traffic goes through the pool.
 
-```
-Dashboard → Combos → Create New
-
-Name: premium-coding
-Models:
-  1. cc/claude-opus-4-7 (Subscription primary)
-  2. glm/glm-5.1 (Cheap backup, $0.6/1M)
-  3. minimax/MiniMax-M2.7 (Cheapest fallback, $0.20/1M)
-
-Use in CLI: premium-coding
-
-Monthly cost example (100M tokens):
-  80M via Claude (subscription): $0 extra
-  15M via GLM: $9
-  5M via MiniMax: $1
-  Total: $10 + your subscription
-```
-
-### Example 2: Free-Only (Zero Cost)
+### Create a pool
 
 ```
-Name: free-combo
-Models:
-  1. kr/claude-sonnet-4.5 (Claude 4.5 free via Kiro, ~50 credits/mo)
-  2. kr/glm-5 (GLM-5 free via Kiro)
-  3. vertex/gemini-3.1-pro-preview ($300 free credits)
+Dashboard → Proxy Pools → Create
 
-Cost: $0 forever (+ 20-40% token savings via RTK)!
+  Type:
+    • Single proxy  → one proxyUrl (http/https/socks5/socks5h/socks4/socks4a)
+    • Rotating group → multiple entries + rotation mode
+
+  Rotating group options:
+    Rotation mode:
+      • on-error  (default) — least-recently-used, skips the entry that just failed
+      • round-robin — advance to the next entry every request
+      • random    — uniform random per request
+    Entries:   +proxy  (paste a proxy URL)
+               +direct (server's own IP, no proxy)
+    strictProxy: ☐  fail hard if the proxy errors (don't fall back to direct)
 ```
+
+**Batch import:** paste a proxy list (`protocol://user:pass@host:port` or `host:port:user:pass`) to add many entries at once (deduped automatically).
+
+### Bind to a connection
+
+Open a provider connection → **Proxy** → select the pool. Free no-auth providers (OpenCode Free, mimo-free) instead show a **Proxy / Rotation** card on the provider page: set **Rotation Strategy** to round-robin or random (needs ≥2 active pools) to spread requests across IPs.
+
+### How rotation behaves at runtime
+
+- On a **rotatable error** (408/429/rate-limit/quota/capacity/overloaded/5xx), the current entry is cooled down (**60s** for rate-limits, **30s** for 5xx) and the next entry is tried **on the same account**.
+- Only when the whole group is exhausted does 9Router fall back to the next account/combo tier.
+- `strictProxy = on` disables that graceful fallback for the pool — a failing proxy fails the request instead of leaking your real IP.
+
+</details>
+
+<details>
+<summary><b>🐬 DeepSeek Web (DS2API)</b> · <i>fork</i></summary>
+
+9Router manages a **local Go sidecar** that turns your DeepSeek Web session into an OpenAI-compatible endpoint, so any CLI tool can use DeepSeek Web.
+
+### Setup
+
+```
+Dashboard → DeepSeek Web
+  → Install engine   (downloads vibecoder11200/ds2api v4.6.2-rotation, ~one-time)
+  → Add account      (paste your DeepSeek Web credentials)
+  → Start engine
+  → Enable           (toggles the ds2api provider connection + auto-aliases models)
+```
+
+Models are auto-aliased with the `ds2api/` prefix on managed start (e.g. `ds2api/deepseek-chat`), so OpenAI clients work without the prefix too.
+
+### Per-account proxies & rotating groups
+
+The DS2API sidecar has its **own** proxy-group system (separate from 9Router's Proxy Pools):
+
+```
+Dashboard → DeepSeek Web → Proxy groups (rotating)
+  Strategy: round-robin | random | failover
+  Sticky:   N   (requests before rotating — round-robin only, 1–1000)
+
+Each account row → proxy mode: direct | fixed | group
+```
+
+- `round-robin` — advance every N requests (sticky).
+- `random` — uniform per request.
+- `failover` — retry on the next proxy on transport error / 5xx / 408 / 429, replaying the request body.
+
+### Engine / env
+
+The engine is pulled from the [`vibecoder11200/ds2api`](https://github.com/vibecoder11200/ds2api) fork (release `v4.6.2-rotation`) which adds HTTP/HTTPS proxy support on top of upstream's socks5-only build. Override with:
+
+| Env var | Purpose |
+| --- | --- |
+| `DS2API_VERSION` | Engine release tag (default `v4.6.2-rotation`) |
+| `DS2API_URL` | Override the sidecar loopback URL |
+| `DS2API_ADMIN_KEY` | Override the auto-generated admin secret |
+| `DS2API_CONFIG_PATH` | Sidecar config file location (default `${DATA_DIR}/ds2api/config.json`) |
 
 </details>
 
@@ -1209,7 +1100,7 @@ Model: cc/claude-opus-4-7
 
 ```bash
 # Clone and install
-git clone https://github.com/decolua/9router.git
+git clone https://github.com/vibecoder11200/9router.git
 cd 9router
 npm install
 npm run build
@@ -1240,8 +1131,8 @@ pm2 startup
 
 Published images (multi-platform `linux/amd64` + `linux/arm64`):
 
-- Docker Hub: [`decolua/9router`](https://hub.docker.com/r/decolua/9router)
-- GHCR: [`ghcr.io/decolua/9router`](https://github.com/decolua/9router/pkgs/container/9router)
+- Docker Hub: [`vibecoder11200/9router`](https://hub.docker.com/r/vibecoder11200/9router)
+- GHCR: [`ghcr.io/vibecoder11200/9router`](https://github.com/vibecoder11200/9router/pkgs/container/9router)
 
 **Quick start (use published image):**
 
@@ -1251,7 +1142,7 @@ docker run -d \
   -p 20128:20128 \
   -v "$HOME/.9router:/app/data" \
   -e DATA_DIR=/app/data \
-  decolua/9router:latest
+  vibecoder11200/9router:latest
 ```
 
 → Open http://localhost:20128
@@ -1259,7 +1150,7 @@ docker run -d \
 **Build from source (dev):**
 
 ```bash
-git clone https://github.com/decolua/9router.git
+git clone https://github.com/vibecoder11200/9router.git
 cd 9router/app
 docker build -t 9router .
 docker run -d --name 9router -p 20128:20128 \
@@ -1277,7 +1168,7 @@ docker run -d --name 9router -p 20128:20128 \
 docker logs -f 9router
 docker restart 9router
 docker stop 9router && docker rm 9router
-docker pull decolua/9router:latest   # update to latest
+docker pull vibecoder11200/9router:latest   # update to latest
 ```
 
 **Data persistence:** `$HOME/.9router/db/data.sqlite` on host ↔ `/app/data/db/data.sqlite` in container.
@@ -1303,6 +1194,11 @@ docker pull decolua/9router:latest   # update to latest
 | `REQUIRE_API_KEY`                                    | `false`                                  | Enforce Bearer API key on `/v1/*` routes (recommended for internet-exposed deploys) |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | empty                                    | Optional outbound proxy for upstream provider calls                                 |
 | `SEARXNG_URL`                                        | `http://localhost:8888/search`           | Endpoint for the built-in unauthenticated SearXNG web-search provider               |
+| `DS2API_URL` · *fork*                                | auto (loopback)                          | Override the DeepSeek Web sidecar URL                                                |
+| `DS2API_VERSION` · *fork*                             | `v4.6.2-rotation`                        | DS2API engine release tag (pulled from `vibecoder11200/ds2api`)                     |
+| `DS2API_ADMIN_KEY` · *fork*                           | auto-generated                           | Override the DS2API sidecar admin secret                                              |
+| `XRAY_VERSION` · *fork*                               | `v26.3.27`                               | Xray-core binary release tag (auto-downloaded per OS/arch on first use)                |
+| `HEADROOM_URL`                                       | `http://localhost:8787`                  | Headroom token-saver proxy endpoint                                                   |
 
 Notes:
 
@@ -1395,6 +1291,30 @@ Notes:
 - `vertex-partner/glm-5-maas`
 - `vertex-partner/deepseek-v3.2-maas`
 
+**Grok CLI (`gcli/`)** - OAuth (device-code):
+
+- `gcli/grok-4.5`, `gcli/grok-4.5-high`, `gcli/grok-4.5-medium`, `gcli/grok-4.5-low`
+
+**Perplexity Agent (`perplexity-agent/`)** - API key, Responses API:
+
+- Cross-vendor routing: `perplexity-agent/openai/gpt-5.5`, `perplexity-agent/anthropic/claude-sonnet-4-6`, `perplexity-agent/google/gemini-3.1-pro-preview`, `perplexity-agent/xai/grok-4.20-reasoning`, plus Sonar. (Dynamic — fetched from `/v1/models`.)
+
+**Featherless (`featherless/`)** - API key, OpenAI-compatible:
+
+- `featherless/deepseek-v4-pro`, `featherless/glm-5.2`, `featherless/kimi-k2.7-code`, and more.
+
+**Gemini Web (`gemini-web/`)** · *fork* - cookie auth:
+
+- `gemini-web/gemini-3-pro`, `gemini-web/gemini-3-flash`, `gemini-web/gemini-3-flash-thinking`, `gemini-web/gemini-3-flash-image`, `gemini-web/gemini-3-veo-video`, `gemini-web/gemini-3-audio` (passthrough).
+
+**Genspark Web (`genspark-web/`)** · *fork* - cookie auth:
+
+- `genspark-web/gpt-5-pro`, `genspark-web/claude-sonnet-4-6`, `genspark-web/gemini-3-pro-preview`, `genspark-web/grok-4-0709` (append `-search` for web grounding), plus image models `genspark-web/nano-banana-pro`, `genspark-web/fal-ai/flux-2` (passthrough).
+
+**DeepSeek Web (`ds2api/`)** · *fork* - managed sidecar:
+
+- `ds2api/<deepseek-models>` — bare DeepSeek model names are auto-aliased on managed start.
+
 </details>
 
 ---
@@ -1479,8 +1399,8 @@ Authorization: Bearer your-api-key
 ## 📧 Support
 
 - **Website**: [9router.com](https://9router.com)
-- **GitHub**: [github.com/decolua/9router](https://github.com/decolua/9router)
-- **Issues**: [github.com/decolua/9router/issues](https://github.com/decolua/9router/issues)
+- **GitHub**: [github.com/vibecoder11200/9router](https://github.com/vibecoder11200/9router)
+- **Issues**: [github.com/vibecoder11200/9router/issues](https://github.com/vibecoder11200/9router/issues)
 
 ---
 
@@ -1488,15 +1408,17 @@ Authorization: Bearer your-api-key
 
 Thanks to all contributors who helped make 9Router better!
 
-[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=150&columns=15&anon=1&v=20260309)](https://github.com/decolua/9router/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=vibecoder11200/9router&max=150&columns=15&anon=1&v=20260309)](https://github.com/vibecoder11200/9router/graphs/contributors)
 
 ---
 
 ## 📊 Star Chart
 
-[![Star Chart](https://starchart.cc/decolua/9router.svg?variant=adaptive)](https://starchart.cc/decolua/9router)
+[![Star Chart](https://starchart.cc/vibecoder11200/9router.svg?variant=adaptive)](https://starchart.cc/vibecoder11200/9router)
 
 ## 🔀 Forks
+
+**This repository** — [`vibecoder11200/9router`](https://github.com/vibecoder11200/9router): a feature-enhanced fork of upstream [decolua/9router](https://github.com/decolua/9router). Adds a managed V2Ray/Xray proxy (v2go), DeepSeek Web (DS2API) sidecar, rotating proxy pools/groups, Genspark & Gemini web-cookie providers, external tunnel URL, and a GitHub Releases distribution model. Track changes in [`CHANGELOG.md`](./CHANGELOG.md).
 
 **[OmniRoute](https://github.com/diegosouzapw/OmniRoute)** — A full-featured TypeScript fork of 9Router. Adds 36+ providers, 4-tier auto-fallback, multi-modal APIs (images, embeddings, audio, TTS), circuit breaker, semantic cache, LLM evaluations, and a polished dashboard. 368+ unit tests. Available via npm and Docker.
 
