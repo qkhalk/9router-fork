@@ -1,3 +1,16 @@
+# v0.6.3 (2026-08-11)
+
+## Fixes
+- **V2Ray Proxy**: persist dashboard proxy settings correctly. The `/dashboard/xray`
+  page now loads saved Xray settings from `/api/settings`, so Auto Start,
+  Auto Rotate, sync interval, SOCKS/HTTP ports, and subscription URL reflect the
+  stored values after a refresh instead of falling back to in-memory defaults.
+- **V2Ray Proxy**: make setting saves optimistic but verified — failed saves now
+  show the API error and revert the toggle locally, while successful saves re-read
+  settings from the server to confirm persistence.
+- **Dashboard**: use `next/link` for the V2Ray quick-start links to Providers and
+  Proxy Pools.
+
 # v0.6.2 (2026-08-10)
 
 ## Features
