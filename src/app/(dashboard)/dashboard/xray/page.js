@@ -37,10 +37,11 @@ export default function XrayProxyPage() {
   const [status, setStatus] = useState(null);
   const [configs, setConfigs] = useState([]);
   const [facets, setFacets] = useState({ countries: [], protocols: [] });
+  const [configCounts, setConfigCounts] = useState({ active: 0, inactive: 0, total: 0 });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [testingId, setTestingId] = useState(null);
-  const [filter, setFilter] = useState({ protocol: "", country: "", healthyOnly: false });
+  const [filter, setFilter] = useState({ protocol: "", country: "", status: "active", healthyOnly: false });
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState({ runtime: "", install: "" });
   const [settings, setSettings] = useState({});
@@ -89,6 +90,7 @@ export default function XrayProxyPage() {
           xrayAutoStart: data.xrayAutoStart === true,
           xrayAutoRotate: data.xrayAutoRotate === true,
           xraySyncIntervalMin: data.xraySyncIntervalMin ?? prev.xraySyncIntervalMin,
+          xrayStaleRetentionDays: data.xrayStaleRetentionDays ?? 7,
           xraySocksPort: data.xraySocksPort ?? prev.xraySocksPort,
           xrayHttpPort: data.xrayHttpPort ?? prev.xrayHttpPort,
           xraySubscriptionUrl: data.xraySubscriptionUrl || prev.xraySubscriptionUrl,
@@ -122,12 +124,15 @@ export default function XrayProxyPage() {
       const params = new URLSearchParams();
       if (filter.protocol) params.set("protocol", filter.protocol);
       if (filter.country) params.set("country", filter.country);
+      if (filter.status === "active") params.set("active", "1");
+      if (filter.status === "inactive") params.set("active", "0");
       if (filter.healthyOnly) params.set("healthy", "1");
       const res = await fetch(`/api/xray/configs?${params}`, { cache: "no-store" });
       const data = await res.json();
       if (res.ok) {
         setConfigs(data.configs || []);
         setFacets(data.facets || { countries: [], protocols: [] });
+        setConfigCounts(data.counts || { active: 0, inactive: 0, total: 0 });
       }
     } catch (e) {
       console.log("configs fetch error:", e.message);
@@ -238,7 +243,7 @@ export default function XrayProxyPage() {
     try {
       notify.info("Syncing subscription from v2go...");
       const result = await api("/api/xray/sync", "POST", {});
-      notify.success(`Synced ${result.count} configs${result.autoFilter?.queued ? " · model filter queued" : ""}`);
+      notify.success(`Synced ${result.count} configs${result.stalePruned ? ` · removed ${result.stalePruned} inactive` : ""}${result.autoFilter?.queued ? " · model filter queued" : ""}`);
       await fetchStatus();
       await fetchConfigs();
     } catch (e) {
@@ -316,6 +321,7 @@ export default function XrayProxyPage() {
 
   const handleSaveSetting = async (key, value) => {
     // Optimistic update: toggle reflects immediately.
+    const previousValue = settings[key];
     setSettings((s) => ({ ...s, [key]: value }));
     try {
       const res = await fetch("/api/settings", {
@@ -332,7 +338,7 @@ export default function XrayProxyPage() {
       await fetchSettings();
     } catch (e) {
       // Revert on failure.
-      setSettings((s) => ({ ...s, [key]: !value }));
+      setSettings((s) => ({ ...s, [key]: previousValue }));
       notify.error(`Save failed: ${e.message}`);
     }
   };
@@ -558,6 +564,28 @@ export default function XrayProxyPage() {
           </Button>
           <Button onClick={handleSync} disabled={busy}>Sync Now</Button>
         </div>
+        <div className="grid sm:grid-cols-[220px_1fr] gap-3 items-end text-sm">
+          <div>
+            <label className="text-xs text-zinc-500 block mb-1">Keep inactive servers</label>
+            <select
+              className="w-full text-sm border rounded px-2 py-2 bg-transparent"
+              value={String(settings.xrayStaleRetentionDays ?? 7)}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                setSettings((s) => ({ ...s, xrayStaleRetentionDays: value }));
+                handleSaveSetting("xrayStaleRetentionDays", value);
+              }}
+            >
+              <option value="7">7 days</option>
+              <option value="1">24 hours</option>
+              <option value="0">Delete after sync</option>
+              <option value="-1">Forever</option>
+            </select>
+          </div>
+          <div className="text-xs text-zinc-500 pb-2">
+            Sync marks missing servers inactive first, then this setting decides when inactive rows are deleted.
+          </div>
+        </div>
       </Card>
 
       {/* Settings card */}
@@ -747,8 +775,22 @@ export default function XrayProxyPage() {
       {/* Server list */}
       <Card className="p-5 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <h2 className="font-semibold">Servers ({configs.length})</h2>
+          <div>
+            <h2 className="font-semibold">Servers ({configs.length})</h2>
+            <div className="text-xs text-zinc-500 mt-1">
+              Active {configCounts.active || 0} · Inactive {configCounts.inactive || 0} · Total {configCounts.total || 0}
+            </div>
+          </div>
           <div className="flex gap-2 flex-wrap">
+            <select
+              className="text-sm border rounded px-2 py-1 bg-transparent"
+              value={filter.status}
+              onChange={(e) => setFilter((f) => ({ ...f, status: e.target.value, country: "", protocol: "" }))}
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="all">All</option>
+            </select>
             <select
               className="text-sm border rounded px-2 py-1 bg-transparent"
               value={filter.protocol}
@@ -790,11 +832,12 @@ export default function XrayProxyPage() {
             </thead>
             <tbody>
               {configs.slice(0, 200).map((c) => (
-                <tr key={c.id} className="border-b last:border-0 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+                <tr key={c.id} className={`border-b last:border-0 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 ${c.isActive === false ? "opacity-60" : ""}`}>
                   <td className="py-2 pr-3">
                     <div className="flex items-center gap-2">
                       {c.isSelected && <span className="w-2 h-2 rounded-full bg-green-500" title="active" />}
                       <span className="truncate max-w-xs">{c.name || c.host}</span>
+                      {c.isActive === false && <Badge>inactive</Badge>}
                     </div>
                   </td>
                   <td className="py-2 px-3"><Badge>{c.protocol?.toUpperCase()}</Badge></td>
@@ -805,7 +848,7 @@ export default function XrayProxyPage() {
                   </td>
                   <td className="py-2 pl-3 text-right">
                     <div className="flex gap-1 justify-end">
-                      {!c.isSelected && (
+                      {!c.isSelected && c.isActive !== false && (
                         <Button size="sm" variant="ghost" onClick={() => handleSwitch(c.id, c.name)} disabled={busy}>
                           Select
                         </Button>
@@ -814,7 +857,7 @@ export default function XrayProxyPage() {
                         size="sm"
                         variant="ghost"
                         onClick={() => handleTest(c.id)}
-                        disabled={testingId === c.id || busy}
+                        disabled={testingId === c.id || busy || c.isActive === false}
                       >
                         {testingId === c.id ? "..." : "Test"}
                       </Button>
@@ -826,7 +869,7 @@ export default function XrayProxyPage() {
           </table>
           {configs.length === 0 && (
             <div className="text-center py-8 text-zinc-500">
-              No configs yet. Click <strong>Sync Now</strong> to fetch from v2go.
+              No {filter.status === "all" ? "" : `${filter.status} `}configs found. Click <strong>Sync Now</strong> to fetch from v2go.
             </div>
           )}
           {configs.length > 200 && (

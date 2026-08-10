@@ -1,3 +1,13 @@
+# v0.6.9 (2026-08-11)
+
+## Fixes
+- **V2Ray Proxy**: make `/dashboard/xray` show active synced servers by
+  default instead of mixing inactive stale rows into the main server count.
+  The page now includes Active / Inactive / All views plus catalog totals.
+- **V2Ray Proxy**: add configurable cleanup for inactive servers after sync.
+  Missing subscription entries are still marked inactive first to preserve
+  history, then deleted according to the selected retention window.
+
 # v0.6.8 (2026-08-11)
 
 ## Fixes

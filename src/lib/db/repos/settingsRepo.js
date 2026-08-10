@@ -68,6 +68,7 @@ const DEFAULT_SETTINGS = {
   xrayHttpPort: 10809,
   xraySubscriptionUrl: "https://raw.githubusercontent.com/Danialsamadi/v2go/main/AllConfigsSub.txt",
   xraySyncIntervalMin: 60,
+  xrayStaleRetentionDays: 7,
   xrayAutoRotate: false,
   xrayHealthCheckIntervalMin: 10,
   xrayVersion: "",

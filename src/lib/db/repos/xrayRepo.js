@@ -70,14 +70,37 @@ export async function getXrayConfigByLink(link) {
   return rowToConfig(db.get(`SELECT * FROM xrayConfigs WHERE link = ?`, [link]));
 }
 
-/** Distinct countries/protocols present in the catalog — for UI filters. */
-export async function getXrayFacets() {
+export async function getXrayConfigCounts() {
   const db = await getAdapter();
+  const row = db.get(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN isActive = 1 THEN 1 ELSE 0 END) AS active,
+      SUM(CASE WHEN isActive = 0 THEN 1 ELSE 0 END) AS inactive
+    FROM xrayConfigs
+  `);
+  return {
+    total: Number(row?.total) || 0,
+    active: Number(row?.active) || 0,
+    inactive: Number(row?.inactive) || 0,
+  };
+}
+
+/** Distinct countries/protocols present in the catalog — for UI filters. */
+export async function getXrayFacets(filter = {}) {
+  const db = await getAdapter();
+  const where = [];
+  const params = [];
+  if (filter.isActive !== undefined) {
+    where.push("isActive = ?");
+    params.push(filter.isActive ? 1 : 0);
+  }
+  const prefix = where.length ? ` WHERE ${where.join(" AND ")} AND` : " WHERE";
   const countries = db
-    .all(`SELECT DISTINCT country FROM xrayConfigs WHERE country IS NOT NULL AND country != '' ORDER BY country`)
+    .all(`SELECT DISTINCT country FROM xrayConfigs${prefix} country IS NOT NULL AND country != '' ORDER BY country`, params)
     .map((r) => r.country);
   const protocols = db
-    .all(`SELECT DISTINCT protocol FROM xrayConfigs WHERE protocol IS NOT NULL AND protocol != '' ORDER BY protocol`)
+    .all(`SELECT DISTINCT protocol FROM xrayConfigs${prefix} protocol IS NOT NULL AND protocol != '' ORDER BY protocol`, params)
     .map((r) => r.protocol);
   return { countries, protocols };
 }
@@ -185,6 +208,18 @@ export async function deleteStaleXrayConfigs(beforeIso) {
   if (!beforeIso) return 0;
   const res = db.run(`DELETE FROM xrayConfigs WHERE isActive = 0 AND updatedAt < ?`, [beforeIso]);
   return res?.changes || 0;
+}
+
+export async function cleanupStaleXrayConfigs(retentionDays) {
+  const days = Number(retentionDays);
+  if (!Number.isFinite(days) || days < 0) return 0;
+  const db = await getAdapter();
+  if (days === 0) {
+    const res = db.run(`DELETE FROM xrayConfigs WHERE isActive = 0`);
+    return res?.changes || 0;
+  }
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  return deleteStaleXrayConfigs(cutoff);
 }
 
 export async function deleteXrayConfig(id) {
