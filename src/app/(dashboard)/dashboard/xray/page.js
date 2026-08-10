@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState, useRef } from "react";
 import { Badge, Button, Card, CardSkeleton, Input, Toggle, ConfirmModal } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
@@ -53,10 +54,37 @@ export default function XrayProxyPage() {
       const data = await res.json();
       if (res.ok) {
         setStatus(data);
-        setSettings((prev) => ({ ...prev, xraySubscriptionUrl: data.sync?.sourceUrl }));
+        // Only use sync.sourceUrl as a fallback if the user hasn't set one.
+        setSettings((prev) => ({
+          ...prev,
+          xraySubscriptionUrl: prev.xraySubscriptionUrl || data.sync?.sourceUrl || "",
+        }));
       }
     } catch (e) {
       console.log("status fetch error:", e.message);
+    }
+  }, []);
+
+  // Load the xray-related settings from /api/settings so toggles reflect
+  // persisted state (not just in-memory defaults). Without this, a page
+  // refresh would always show toggles as off even though the value was saved.
+  const fetchSettings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) {
+        setSettings((prev) => ({
+          ...prev,
+          xrayAutoStart: data.xrayAutoStart === true,
+          xrayAutoRotate: data.xrayAutoRotate === true,
+          xraySyncIntervalMin: data.xraySyncIntervalMin ?? prev.xraySyncIntervalMin,
+          xraySocksPort: data.xraySocksPort ?? prev.xraySocksPort,
+          xrayHttpPort: data.xrayHttpPort ?? prev.xrayHttpPort,
+          xraySubscriptionUrl: data.xraySubscriptionUrl || prev.xraySubscriptionUrl,
+        }));
+      }
+    } catch (e) {
+      console.log("settings fetch error:", e.message);
     }
   }, []);
 
@@ -80,9 +108,11 @@ export default function XrayProxyPage() {
   }, [filter]);
 
   useEffect(() => {
-    fetchStatus();
-    fetchConfigs();
-  }, [fetchStatus, fetchConfigs]);
+    const fetchInitialData = async () => {
+      await Promise.all([fetchStatus(), fetchConfigs(), fetchSettings()]);
+    };
+    fetchInitialData();
+  }, [fetchStatus, fetchConfigs, fetchSettings]);
 
   // Poll status while running so health/latency stay fresh.
   useEffect(() => {
@@ -204,34 +234,46 @@ export default function XrayProxyPage() {
   };
 
   const handleSaveSetting = async (key, value) => {
+    // Optimistic update: toggle reflects immediately.
+    setSettings((s) => ({ ...s, [key]: value }));
     try {
-      await fetch("/api/settings", {
+      const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [key]: value }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
       notify.success("Setting saved");
-      await fetchStatus();
+      // Re-read from server to confirm persistence.
+      await fetchSettings();
     } catch (e) {
+      // Revert on failure.
+      setSettings((s) => ({ ...s, [key]: !value }));
       notify.error(`Save failed: ${e.message}`);
     }
   };
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       const res = await fetch("/api/xray/logs?lines=200", { cache: "no-store" });
       const data = await res.json();
       if (res.ok) setLogs(data);
     } catch {}
-  };
+  }, []);
 
   useEffect(() => {
     if (showLogs) {
-      fetchLogs();
+      const fetchInitialLogs = async () => {
+        await fetchLogs();
+      };
+      fetchInitialLogs();
       const t = setInterval(fetchLogs, 3000);
       return () => clearInterval(t);
     }
-  }, [showLogs]);
+  }, [showLogs, fetchLogs]);
 
   if (loading || !status) {
     return (
@@ -271,10 +313,10 @@ export default function XrayProxyPage() {
               )}
               <li><strong>Sync</strong> configs from v2go (auto-runs hourly after first sync)</li>
               <li><strong>Start</strong> the proxy — a SOCKS5 proxy opens on <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1 rounded">127.0.0.1:10808</code></li>
-              <li>Go to <a href="/dashboard/providers" className="text-blue-600 hover:underline font-medium">Providers</a>, pick a connection, and assign the <strong>“V2Ray Proxy (v2go)”</strong> pool — requests to that provider now route through the proxy</li>
+              <li>Go to <Link href="/dashboard/providers" className="text-blue-600 hover:underline font-medium">Providers</Link>, pick a connection, and assign the <strong>“V2Ray Proxy (v2go)”</strong> pool — requests to that provider now route through the proxy</li>
             </ol>
             <div className="text-xs text-zinc-500 mt-2">
-              The proxy auto-creates a pool in <a href="/dashboard/proxy-pools" className="text-blue-600 hover:underline">Proxy Pools</a> when running. Switch servers any time; auto-rotate if enabled.
+              The proxy auto-creates a pool in <Link href="/dashboard/proxy-pools" className="text-blue-600 hover:underline">Proxy Pools</Link> when running. Switch servers any time; auto-rotate if enabled.
             </div>
           </div>
         </Card>
