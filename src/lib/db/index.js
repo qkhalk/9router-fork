@@ -68,6 +68,15 @@ export {
   saveRequestDetail, getRequestDetails, getRequestDetailById, getDistinctProviders,
 } from "./repos/requestDetailsRepo.js";
 
+// v2go/xray proxy integration
+export {
+  getXrayConfigs, getXrayConfigById, getXrayConfigByLink, getXrayFacets,
+  upsertXrayConfig, bulkUpsertXrayConfigs,
+  markStaleXrayConfigs, deleteStaleXrayConfigs, deleteXrayConfig, clearXrayConfigs,
+  setSelectedXrayConfig, getSelectedXrayConfig, updateXrayTestResult,
+  getXraySyncState, setXraySyncState,
+} from "./repos/xrayRepo.js";
+
 // Export/import full DB
 export async function exportDb() {
   const db = await getAdapter();

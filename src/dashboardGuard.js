@@ -64,6 +64,10 @@ const PROTECTED_API_PATHS = [
   "/api/mcp",
   "/api/translator",
   "/api/tunnel",
+  "/api/xray/status",
+  "/api/xray/configs",
+  "/api/xray/logs",
+  "/api/xray/sync",
 ];
 
 // Routes that spawn child processes or read host secrets — restrict to localhost.
@@ -86,6 +90,13 @@ const LOCAL_ONLY_PATHS = [
   "/api/ds2api/install",
   "/api/ds2api/start",
   "/api/ds2api/stop",
+  "/api/xray/install",
+  "/api/xray/start",
+  "/api/xray/stop",
+  "/api/xray/restart",
+  "/api/xray/switch",
+  "/api/xray/health-check",
+  "/api/xray/configs/", // covers /api/xray/configs/[id]/test (spawns xray)
 ];
 
 // Subset of LOCAL_ONLY_PATHS that stay loopback-only even when the user opts

@@ -1,3 +1,41 @@
+# v0.6.0 (2026-08-10)
+
+## Features
+- **V2Ray Proxy (v2go integration)**: managed local Xray-core proxy client that
+  turns V2Ray share links from [v2go](https://github.com/Danialsamadi/v2go) into a
+  SOCKS5/HTTP proxy 9Router can route through — giving every provider access to
+  premium-grade proxies that auto-update hourly.
+  - Auto-syncs ~1,000+ working V2Ray configs (VLESS/VMess/Trojan/SS) from v2go's
+    GitHub Actions pipeline every 60 minutes via `raw.githubusercontent.com`
+  - Bundles the official Xray-core binary (v26.3.27, MPL-2.0) — auto-downloaded
+    per OS/arch on first use, no manual install required
+  - Full web dashboard at `/dashboard/xray`: start/stop, server selection with
+    country/protocol filters, per-server latency testing, auto-rotation when the
+    active server dies, live log viewer, sync status, and settings
+  - Creates a managed Proxy Pool ("V2Ray Proxy (v2go)") automatically — assign it
+    to any provider connection via the existing Proxy Pools UI and requests route
+    through the active SOCKS proxy
+  - Faithful JS port of v2go's share-link parser (`converter.go`): handles VLESS,
+    VMess, Trojan, Shadowsocks, Hysteria2 with REALITY/TLS/WebSocket/gRPC/XHTTP
+    transports, including the XHTTP host-safety guard that prevents Xray crashes
+  - Settings: `xrayEnabled`, `xrayAutoStart` (boot), `xrayAutoRotate`,
+    configurable SOCKS/HTTP ports, subscription URL, sync/health-check intervals
+  - DB schema v2: `xrayConfigs` (catalog) + `xraySyncState` (singleton)
+
+## Fixes
+- (testing) fix Windows zip extraction: use PowerShell `Expand-Archive` instead
+  of `tar -xf` (GNU tar in Git Bash cannot extract zips)
+- (testing) fix Windows process kill: use PowerShell `Stop-Process` instead of
+  `taskkill` for reliable detached-process termination
+- (testing) fix single-config test isolation: spawn temp xray on ephemeral port
+  without touching the shared PID file, so the active proxy is never disturbed
+- (testing) fix HMR state reconciliation: `getStatus()`/`runHealthCheck()` infer
+  "running" from PID file + settings when in-memory state resets on dev reload
+- (testing) fix Next.js 16 dynamic route params: `await params` (params is a
+  Promise in Next 16, not a plain object)
+- (testing) fix vmess TCP/http-header parsing: coalesce null host → "" to match
+  Go's `url.Values.Get` + `strings.Split` semantics on missing keys
+
 # v0.5.50 (2026-08-05)
 
 ## Features
