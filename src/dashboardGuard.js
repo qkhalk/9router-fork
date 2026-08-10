@@ -117,6 +117,44 @@ function isLoopbackHostname(h) {
   return LOOPBACK_HOSTS.has(name);
 }
 
+function hostnameFromHeader(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw.startsWith("[")) {
+    const end = raw.indexOf("]");
+    return end >= 0 ? raw.slice(1, end) : raw.slice(1);
+  }
+  const colonCount = (raw.match(/:/g) || []).length;
+  return colonCount === 1 ? raw.split(":")[0] : raw;
+}
+
+function isPrivateNetworkHostname(h) {
+  const name = hostnameFromHeader(h);
+  const parts = name.split(".").map((p) => Number(p));
+  if (parts.length === 4 && parts.every((p) => Number.isInteger(p) && p >= 0 && p <= 255)) {
+    const [a, b] = parts;
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  }
+  return name.startsWith("fc") || name.startsWith("fd") || name.startsWith("fe80:");
+}
+
+async function canAccessFromPrivateDashboard(request) {
+  // Direct authenticated dashboard access over a private LAN IP should be able
+  // to run host-local tools such as Xray start/stop. Require a real JWT and a
+  // same-origin browser request so disabling dashboard login does not expose
+  // process-spawning APIs to the whole LAN.
+  if (request.headers.get("x-9r-via-proxy")) return false;
+  const host = hostnameFromHeader(request.headers.get("host"));
+  if (!isPrivateNetworkHostname(host)) return false;
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  try {
+    if (new URL(origin).hostname.toLowerCase() !== host) return false;
+  } catch {
+    return false;
+  }
+  return await hasValidToken(request);
+}
+
 export function isLocalRequest(request) {
   // Stamped by custom-server.js when forwarding headers exist: request came through
   // a reverse proxy, so the loopback socket is the proxy hop, not the end-user.
@@ -174,6 +212,8 @@ async function canAccessLocalOnlyRoute(request, pathname) {
   if (STRICT_LOCAL_ONLY.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
     return false;
   }
+
+  if (await canAccessFromPrivateDashboard(request)) return true;
 
   // Tunnel access: user must have explicitly enabled "Allow dashboard access via
   // tunnel", the request must come from a recognized tunnel host, and the user

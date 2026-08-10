@@ -33,6 +33,20 @@ vi.mock("@/lib/auth/dashboardSession", () => ({
   verifyDashboardAuthToken: mocks.verifyDashboardAuthToken,
 }));
 
+vi.mock("@/lib/auth/tunnelAccess", () => ({
+  isKnownTunnelHost: vi.fn((request, settings) => {
+    const host = (request.headers.get("host") || "").split(":")[0].toLowerCase();
+    const urls = [settings?.tunnelUrl, settings?.tailscaleUrl, settings?.externalTunnelUrl].filter(Boolean);
+    return urls.some((url) => {
+      try {
+        return new URL(url).hostname.toLowerCase() === host;
+      } catch {
+        return false;
+      }
+    });
+  }),
+}));
+
 const { proxy, __test__ } = await import("../../src/dashboardGuard.js");
 
 function request(pathname, headers = {}) {
@@ -314,13 +328,13 @@ describe("dashboard guard local-only access", () => {
       tunnelDashboardAccess: true,
       // App-managed tunnelUrl empty — tunnel runs outside the app.
       tunnelUrl: "",
-      externalTunnelUrl: "https://ai.1k.io.vn",
+      externalTunnelUrl: "https://ai.domain.com",
     });
     mocks.verifyDashboardAuthToken.mockResolvedValue(true);
 
     const response = await proxy(request("/api/ds2api/install", {
-      host: "ai.1k.io.vn",
-      origin: "https://ai.1k.io.vn",
+      host: "ai.domain.com",
+      origin: "https://ai.domain.com",
     }));
 
     expect(response).toBe(mocks.nextResponse);
@@ -353,6 +367,45 @@ describe("dashboard guard local-only access", () => {
     const response = await proxy(request("/api/cli-tools/cowork-settings", {
       host: "tunnel.example.com",
       origin: "https://tunnel.example.com",
+    }));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("allows non-strict local-only route from authenticated private LAN dashboard", async () => {
+    mocks.getSettings.mockResolvedValue({ requireLogin: true });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+
+    const response = await proxy(request("/api/xray/start", {
+      host: "192.168.1.107:20128",
+      origin: "http://192.168.1.107:20128",
+      "x-9r-real-ip": "192.168.1.55",
+    }));
+
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("rejects private LAN local-only route when dashboard is not authenticated", async () => {
+    mocks.getSettings.mockResolvedValue({ requireLogin: false });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(false);
+
+    const response = await proxy(request("/api/xray/start", {
+      host: "192.168.1.107:20128",
+      origin: "http://192.168.1.107:20128",
+      "x-9r-real-ip": "192.168.1.55",
+    }));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("rejects strict local-only route from private LAN even when authenticated", async () => {
+    mocks.getSettings.mockResolvedValue({ requireLogin: true });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+
+    const response = await proxy(request("/api/cli-tools/cowork-settings", {
+      host: "192.168.1.107:20128",
+      origin: "http://192.168.1.107:20128",
+      "x-9r-real-ip": "192.168.1.55",
     }));
 
     expect(response.status).toBe(403);

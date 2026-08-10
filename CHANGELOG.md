@@ -1,3 +1,25 @@
+# v0.6.4 (2026-08-11)
+
+## Fixes
+- **V2Ray Proxy**: fix first-start after subscription sync on large v2go
+  catalogs. The sync stale-marker now computes the actual missing config IDs
+  before chunking SQL updates, instead of applying `NOT IN (...)` per chunk.
+  This prevents subscriptions with more than 500 configs from accidentally
+  marking the entire catalog inactive and causing start to fail with
+  `No V2Ray configs available. Run a subscription sync first.`
+- **Dashboard Guard**: allow authenticated same-origin dashboard requests from
+  private LAN hosts such as `http://192.168.x.x:20128` to call non-strict
+  local-only Xray process routes (`install`, `start`, `stop`, `restart`,
+  `switch`, `health-check`, and per-config tests). This fixes `Local only: CLI
+  token required` when managing the host's Xray proxy from another machine on
+  the same LAN.
+- **Dashboard Guard**: keep strict local-only routes blocked from LAN/tunnel
+  dashboard access. Routes that can reset auth or expose the CLI token, such as
+  `/api/auth/reset-password` and `/api/cli-tools/cowork-settings`, still require
+  true local access or the CLI token.
+- **Endpoint**: replace the external tunnel placeholder/example domain with the
+  generic `https://ai.domain.com`.
+
 # v0.6.3 (2026-08-11)
 
 ## Fixes

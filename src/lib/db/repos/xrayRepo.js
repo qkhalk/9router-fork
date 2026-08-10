@@ -159,14 +159,21 @@ export async function markStaleXrayConfigs(keepIds = []) {
     db.run(`UPDATE xrayConfigs SET isActive = 0, updatedAt = ?`, [now]);
     return;
   }
+  const keep = new Set(keepIds);
+  const staleIds = db
+    .all(`SELECT id FROM xrayConfigs`)
+    .map((r) => r.id)
+    .filter((id) => !keep.has(id));
+  if (staleIds.length === 0) return;
+
   // SQLite parameter limit is generous (999+); chunk defensively for big catalogs.
   const CHUNK = 500;
-  for (let i = 0; i < keepIds.length; i += CHUNK) {
-    const slice = keepIds.slice(i, i + CHUNK);
+  for (let i = 0; i < staleIds.length; i += CHUNK) {
+    const slice = staleIds.slice(i, i + CHUNK);
     const placeholders = slice.map(() => "?").join(",");
     db.run(
       `UPDATE xrayConfigs SET isActive = 0, updatedAt = ?
-       WHERE id NOT IN (${placeholders})`,
+       WHERE id IN (${placeholders})`,
       [now, ...slice]
     );
   }
