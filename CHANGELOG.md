@@ -1,3 +1,17 @@
+# v0.6.2 (2026-08-10)
+
+## Features
+- **V2Ray Proxy UI**: add a quick-start guide card on the `/dashboard/xray` page
+  that walks new users through the 4-step flow (install → sync → start → assign
+  pool to a provider). Shows only until the proxy is running.
+
+## Fixes
+- **V2Ray Proxy**: protect the auto-managed `v2go-xray-managed` proxy pool from
+  accidental deletion — the DELETE endpoint now returns 403 for managed pools
+  with a message directing users to stop the proxy from the V2Ray Proxy page
+  instead (the manager recreates the pool on every start, so deleting it just
+  caused confusion)
+
 # v0.6.1 (2026-08-10)
 
 ## Fixes

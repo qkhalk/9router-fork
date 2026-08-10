@@ -257,6 +257,29 @@ export default function XrayProxyPage() {
         <Badge variant={statusVariant(status.status)}>{status.status}</Badge>
       </div>
 
+      {/* Quick-start guide */}
+      {!status.binaryInstalled || status.status !== "running" ? (
+        <Card className="p-4 border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/20">
+          <div className="text-sm space-y-1.5">
+            <div className="font-semibold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-base">lightbulb</span>
+              How to use this proxy
+            </div>
+            <ol className="list-decimal list-inside space-y-1 text-zinc-600 dark:text-zinc-300 ml-1">
+              {!status.binaryInstalled && (
+                <li><strong>Install</strong> the Xray binary (one-time, ~20MB download)</li>
+              )}
+              <li><strong>Sync</strong> configs from v2go (auto-runs hourly after first sync)</li>
+              <li><strong>Start</strong> the proxy — a SOCKS5 proxy opens on <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1 rounded">127.0.0.1:10808</code></li>
+              <li>Go to <a href="/dashboard/providers" className="text-blue-600 hover:underline font-medium">Providers</a>, pick a connection, and assign the <strong>“V2Ray Proxy (v2go)”</strong> pool — requests to that provider now route through the proxy</li>
+            </ol>
+            <div className="text-xs text-zinc-500 mt-2">
+              The proxy auto-creates a pool in <a href="/dashboard/proxy-pools" className="text-blue-600 hover:underline">Proxy Pools</a> when running. Switch servers any time; auto-rotate if enabled.
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
       {/* Status card */}
       <Card className="p-5 space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
