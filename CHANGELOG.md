@@ -1,3 +1,26 @@
+# v0.6.15 (2026-08-12)
+
+## Added
+- **V2Ray Proxy**: optional `api` execution mode for the Model Proxy Filter
+  (`xrayFilterMode` setting, default `spawn` for backward compatibility). In
+  `api` mode a single long-lived xray instance is started per filter job and
+  each config-under-test is probed by swapping its outbound via the xray gRPC
+  API (`ado`/`rmo` + per-worker SOCKS5 username routing) instead of spawning a
+  fresh `xray run` process per config. Eliminates thousands of process forks
+  per filter pass (~6000+/day on busy installs), drops per-probe RAM from
+  ~29MB transient to one ~30MB steady instance, and removes the readiness
+  port-poll wait. Verified end-to-end: 10 probes at concurrency 4 via one
+  instance, zero forks, exit IPs per outbound correct, production proxy
+  unaffected, filter instance cleaned up at job end. Auto-falls-back to
+  `spawn` mode if the api instance can't start (old binary, port conflict).
+  New settings: `xrayFilterMode`, `xrayFilterApiSocksPort` (53080),
+  `xrayFilterApiPort` (15491), `xrayFilterApiAccounts` (16).
+
+## Changed
+- **V2Ray Proxy**: `tester.js` exposes `testProxyExitIpWithUri(socksUri)` for
+  exit-IP probes through a full SOCKS URI (with auth) — used by api-mode where
+  each worker connects as `probe-<i>:x@...`.
+
 # v0.6.14 (2026-08-12)
 
 ## Fixes

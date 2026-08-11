@@ -85,8 +85,17 @@ export async function testProxyLatency(socksPort, timeoutMs = DEFAULT_TIMEOUT_MS
  * parsing, same empty-string-on-malformed behavior.
  */
 export async function testProxyExitIp(socksPort, timeoutMs = 4000) {
+  return testProxyExitIpWithUri(proxyUriForPort(socksPort), timeoutMs);
+}
+
+/**
+ * Exit-IP probe taking a full SOCKS URI (allows username/password auth, used
+ * by api-mode filter where each worker connects as `probe-<i>:x@...`). Same
+ * cloudflare trace parsing as testProxyExitIp.
+ */
+export async function testProxyExitIpWithUri(socksUri, timeoutMs = 4000) {
   try {
-    const dispatcher = await getDispatcher(proxyUriForPort(socksPort));
+    const dispatcher = await getDispatcher(socksUri);
     const res = await fetch(TRACE_URL, {
       dispatcher,
       signal: AbortSignal.timeout(timeoutMs),

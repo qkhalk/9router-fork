@@ -34,7 +34,8 @@ import {
   getXrayLogTail,
   spawnTempXray,
 } from "./process.js";
-import { testProxy, testProxyLatency, isSocksPortOpen } from "./tester.js";
+import { testProxy, testProxyLatency, isSocksPortOpen, testProxyExitIpWithUri } from "./tester.js";
+import { startFilterXray, stopFilterXray, probeConfigViaApi } from "./apiFilter.js";
 import {
   getSelectedXrayConfig,
   getXrayConfigById,
@@ -661,8 +662,103 @@ function normalizeModelFilterConcurrency(concurrency = 2) {
   return Math.max(1, Math.min(Number(concurrency) || 2, 16));
 }
 
+/**
+ * Build the probe function used by api-mode filter. Each call:
+ *  1. Adds the config's outbound + a user-routing rule to the shared filter xray.
+ *  2. Probes the model endpoint via handleChatCore through the routed SOCKS.
+ *  3. Records the exit IP observed through that SOCKS.
+ *  4. Tears down rule + outbound (atomic).
+ *
+ * Returns the same shape as testSingleConfigWithModel so the rest of the
+ * pipeline (cache, prune, results) is unchanged.
+ */
+function makeApiProbeFn(apiHandle, modelInfo, modelStr, timeoutMs) {
+  return async (config, workerIdx) => {
+    if (!modelInfo?.provider || !modelInfo?.model) {
+      throw new Error(`Invalid model for api probe: ${modelStr}`);
+    }
+    return probeConfigViaApi(apiHandle, config, workerIdx, {
+      timeoutMs,
+      probeExitIp: async ({ socksUri, timeoutMs: tm }) => testProxyExitIpWithUri(socksUri, tm),
+      probeModel: async ({ socksUri, timeoutMs: tm }) =>
+        probeModelViaChatCore(modelInfo, socksUri, tm),
+    });
+  };
+}
+
+/**
+ * Probe the model endpoint through a given SOCKS URI by invoking handleChatCore
+ * with a minimal "hi" request, mirroring testSingleConfigWithModel's chat path
+ * but without spawning a temp xray (the SOCKS is already routed by api-mode).
+ * Returns { ok, status, error }.
+ */
+async function probeModelViaChatCore(modelInfo, socksUri, timeoutMs) {
+  const baseCredentials = await getProviderCredentials(modelInfo.provider, new Set(), modelInfo.model);
+  if (!baseCredentials || baseCredentials.allRateLimited) {
+    return { ok: false, status: 503, error: "No active credentials for provider" };
+  }
+  const refreshed = await checkAndRefreshToken(modelInfo.provider, baseCredentials);
+  const credentials = {
+    ...refreshed,
+    providerSpecificData: {
+      ...(refreshed.providerSpecificData || {}),
+      connectionProxyEnabled: true,
+      connectionProxyUrl: socksUri,
+      connectionNoProxy: "",
+      connectionProxyPoolId: "xray-model-filter-api",
+      strictProxy: true,
+    },
+  };
+  const settings = await getSettings();
+  const startedAt = Date.now();
+  const result = await handleChatCore({
+    body: {
+      model: `${modelInfo.provider}/${modelInfo.model}`,
+      max_tokens: 1,
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    },
+    modelInfo,
+    credentials,
+    log: silentProbeLog,
+    clientRawRequest: {
+      endpoint: "/api/xray/configs/model-test",
+      body: { model: `${modelInfo.provider}/${modelInfo.model}`, max_tokens: 1, stream: false, messages: [{ role: "user", content: "hi" }] },
+      headers: { accept: "application/json", "content-type": "application/json", "x-9r-internal": "xray-model-filter" },
+    },
+    connectionId: baseCredentials.connectionId,
+    userAgent: "9router-xray-model-filter-api/1.0",
+    apiKey: null,
+    ccFilterNaming: false,
+    rtkEnabled: false,
+    headroomEnabled: false,
+    headroomUrl: settings.headroomUrl || DEFAULT_HEADROOM_URL,
+    headroomCompressUserMessages: false,
+    cavemanEnabled: false,
+    cavemanLevel: "full",
+    ponytailEnabled: false,
+    ponytailLevel: "full",
+    pxpipeEnabled: false,
+    pxpipeMinChars: settings.pxpipeMinChars,
+    pxpipeTimeoutMs: settings.pxpipeTimeoutMs,
+    pxpipeTransform: null,
+    providerThinking: null,
+    sourceFormatOverride: "openai",
+  });
+  if (!result.success) {
+    return { ok: false, status: result.status || 502, error: result.error || "probe failed" };
+  }
+  if (!result.response.ok) {
+    const text = await result.response.text().catch(() => "");
+    return { ok: false, status: result.response.status, error: summarizeProbeBody(text) || `HTTP ${result.response.status}` };
+  }
+  return { ok: true, status: result.response.status, error: null, _ttft: Date.now() - startedAt };
+}
+
 export async function filterConfigsByModel({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 2, pauseOnTraffic = true, quietMs = 15000, onProgress = null, forceRetest = false } = {}) {
   const configs = await getXrayConfigs({ isActive: true });
+  // Resolve model info up front — api-mode needs it to build probe credentials.
+  const modelInfo = await getModelInfo(model).catch(() => null);
   const settings = await getSettings();
   const runningActiveConfigId = getManagedPid()
     ? (state.activeConfigId || settings.xraySelectedConfigId || null)
@@ -786,7 +882,7 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     }
   };
 
-  const testConfig = async (config) => {
+  const testConfig = async (config, probeFn, workerIdx) => {
     const shouldPauseForTraffic = () => (modelFilterRunning ? modelFilterState.pauseOnTraffic : pauseOnTraffic === true);
     if (shouldPauseForTraffic()) {
       modelFilterState.trafficWaiters += 1;
@@ -801,7 +897,7 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
       }
     }
     try {
-      const probe = await testSingleConfigWithModel(config.id, { model, timeoutMs });
+      const probe = await probeFn(config, workerIdx);
       let result = { configId: config.id, name: config.name, host: config.host, country: config.country, ...probe };
       result = await maybePruneConfig(config, result);
       results.push(result);
@@ -826,14 +922,48 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     }
   };
 
-  const workers = Array.from({ length: workerCount }, async () => {
+  // Probe function + filter-xray lifecycle. api-mode keeps one long-lived xray
+  // and swaps outbounds via the gRPC API; spawn-mode spawns a fresh temp xray
+  // per config. api-mode falls back to spawn if the filter instance can't start
+  // (binary too old, port conflict, etc.). forceRetest/prune always use spawn
+  // mode (they need fully isolated temp xray state).
+  const wantApiMode = settings.xrayFilterMode === "api" && !forceRetest && !prune;
+  let apiHandle = null;
+  let probeFn = null;
+  let apiMode = false;
+  if (wantApiMode) {
+    try {
+      apiHandle = await startFilterXray({
+        socksPort: Number(settings.xrayFilterApiSocksPort) || 53080,
+        apiPort: Number(settings.xrayFilterApiPort) || 15491,
+        accountCount: Math.min(Math.max(Number(settings.xrayFilterApiAccounts) || 16, 1), Math.max(workerCount, 1)),
+      });
+      probeFn = makeApiProbeFn(apiHandle, modelInfo, model, timeoutMs);
+      apiMode = true;
+      console.log(`[Xray] model filter running in api-mode (socks=${apiHandle.socksPort} api=${apiHandle.apiPort} pid=${apiHandle.pid})`);
+    } catch (e) {
+      console.warn(`[Xray] api-mode filter start failed, falling back to spawn mode: ${e.message}`);
+      apiHandle = null;
+    }
+  }
+  if (!apiMode) {
+    probeFn = (config) => testSingleConfigWithModel(config.id, { model, timeoutMs });
+  }
+
+  const workers = Array.from({ length: workerCount }, async (_, workerIdx) => {
     while (cursor < toTest.length) {
       const index = cursor;
       cursor += 1;
-      await testConfig(toTest[index]);
+      await testConfig(toTest[index], probeFn, workerIdx);
     }
   });
-  await Promise.all(workers);
+  try {
+    await Promise.all(workers);
+  } finally {
+    if (apiHandle) {
+      await stopFilterXray(apiHandle).catch(() => {});
+    }
+  }
 
   const cachedCount = results.filter((r) => r.cached).length;
   return {
@@ -841,6 +971,7 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     all: normalized.all,
     limit: normalized.all ? "all" : normalized.limit,
     concurrency: workerCount,
+    filterMode: apiMode ? "api" : "spawn",
     tested: results.length,
     passed: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok).length,
