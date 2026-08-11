@@ -67,6 +67,8 @@ const DEFAULT_SETTINGS = {
   xraySocksPort: 10808,
   xrayHttpPort: 10809,
   xraySubscriptionUrl: "https://raw.githubusercontent.com/Danialsamadi/v2go/main/AllConfigsSub.txt",
+  // Subscription auto-sync interval in minutes. 0 = manual-only (scheduler off,
+  // sync runs only via the "Sync Now" button). Positive values are clamped to >= 5.
   xraySyncIntervalMin: 60,
   xrayStaleRetentionDays: 7,
   xrayAutoRotate: false,

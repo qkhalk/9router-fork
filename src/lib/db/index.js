@@ -77,6 +77,14 @@ export {
   getXraySyncState, setXraySyncState,
 } from "./repos/xrayRepo.js";
 
+// v2go/xray model proxy filter — cached probe results
+export {
+  getModelFilterResult, getModelFilterResultsByConfigIds, getModelFilterCacheStats,
+  upsertModelFilterResult,
+  clearModelFilterResultsByModel, clearAllModelFilterResults,
+  deleteModelFilterResultsByConfigIds, pruneOrphanModelFilterResults,
+} from "./repos/modelFilterResultsRepo.js";
+
 // Export/import full DB
 export async function exportDb() {
   const db = await getAdapter();

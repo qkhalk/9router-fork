@@ -77,6 +77,18 @@ export async function PATCH(request) {
       }
     }
 
+    // xraySyncIntervalMin: 0 = manual-only mode, otherwise clamp to >= 5 min
+    // so users can't accidentally hammer an upstream subscription. Non-numeric
+    // or negative values fall back to manual-only.
+    if (Object.prototype.hasOwnProperty.call(body, "xraySyncIntervalMin")) {
+      const raw = Number(body.xraySyncIntervalMin);
+      if (!Number.isFinite(raw) || raw <= 0) {
+        body.xraySyncIntervalMin = 0;
+      } else {
+        body.xraySyncIntervalMin = Math.max(5, Math.floor(raw));
+      }
+    }
+
     const settings = await updateSettings(body);
 
     // Apply outbound proxy settings immediately (no restart required)
@@ -103,6 +115,15 @@ export async function PATCH(request) {
       Object.prototype.hasOwnProperty.call(body, "ds2apiEnabled")
     ) {
       applyDs2apiUrl(settings.ds2apiUrl);
+    }
+
+    // Restart the xray subscription sync scheduler when its interval changes.
+    // startSyncScheduler is idempotent (clears the previous timer first) and
+    // honors interval = 0 by stopping the scheduler entirely (manual mode).
+    if (Object.prototype.hasOwnProperty.call(body, "xraySyncIntervalMin")) {
+      import("@/lib/xray/sync.js")
+        .then(({ startSyncScheduler }) => startSyncScheduler())
+        .catch((error) => console.warn("[XraySync] restart failed:", error.message));
     }
 
     if (

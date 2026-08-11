@@ -23,5 +23,9 @@ export {
   markStaleXrayConfigs, deleteStaleXrayConfigs, cleanupStaleXrayConfigs, deleteXrayConfig, clearXrayConfigs,
   setSelectedXrayConfig, getSelectedXrayConfig, updateXrayTestResult,
   getXraySyncState, setXraySyncState,
+  getModelFilterResult, getModelFilterResultsByConfigIds, getModelFilterCacheStats,
+  upsertModelFilterResult,
+  clearModelFilterResultsByModel, clearAllModelFilterResults,
+  deleteModelFilterResultsByConfigIds, pruneOrphanModelFilterResults,
   exportDb, importDb,
 } from "@/lib/db/index.js";

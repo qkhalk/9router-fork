@@ -16,8 +16,9 @@ export async function POST(request) {
     const quietMs = Math.max(3000, Math.min(Number(body.quietMs) || 15000, 120000));
     const timeoutMs = Math.max(5000, Math.min(Number(body.timeoutMs) || 20000, 60000));
     const prune = body.prune === true;
+    const forceRetest = body.forceRetest === true;
 
-    const result = await runModelFilterJob({ model, limit, all, prune, timeoutMs, concurrency, pauseOnTraffic, quietMs, source: "manual" });
+    const result = await runModelFilterJob({ model, limit, all, prune, timeoutMs, concurrency, pauseOnTraffic, quietMs, source: "manual", forceRetest });
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     const status =

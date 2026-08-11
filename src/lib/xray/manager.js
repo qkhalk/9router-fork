@@ -43,6 +43,13 @@ import {
   deleteXrayConfig,
 } from "../db/repos/xrayRepo.js";
 import {
+  getModelFilterResultsByConfigIds,
+  getModelFilterCacheStats,
+  upsertModelFilterResult,
+  clearModelFilterResultsByModel,
+  deleteModelFilterResultsByConfigIds,
+} from "../db/repos/modelFilterResultsRepo.js";
+import {
   getProxyPoolById,
   createProxyPool,
   updateProxyPool,
@@ -103,8 +110,33 @@ const modelFilterState = {
   passed: 0,
   failed: 0,
   pruned: 0,
+  cached: 0,
   error: null,
 };
+
+// Mirror of getModelFilterCacheStats(), refreshed at job boundaries and on
+// cache mutations. Kept in-memory so the (sync) status reader can surface it
+// without making the status endpoint async.
+let modelFilterCacheStats = { total: 0, byModel: {} };
+// Whether the snapshot has been seeded since boot. getStatus() kicks off a
+// background refresh once so the cache badge is correct on first page load.
+let modelFilterCacheStatsSeeded = false;
+
+async function refreshModelFilterCacheStats() {
+  try {
+    modelFilterCacheStats = await getModelFilterCacheStats();
+  } catch {
+    // leave the previous snapshot in place on failure
+  }
+}
+
+export { refreshModelFilterCacheStats };
+
+// True while a filter job is mid-flight. Used by the clear-cache endpoint to
+// reject concurrent cache wipes that would race with in-progress writes.
+export function isModelFilterRunning() {
+  return modelFilterRunning != null;
+}
 
 let modelFilterRunning = null;
 const allocatedTempSocksPorts = new Set();
@@ -121,6 +153,13 @@ export function getStatus() {
   // in-memory status says "stopped" (e.g. after Next.js HMR reset module state),
   // report "running". Ports are read from settings as a fallback.
   const effectiveStatus = pid && state.status === "stopped" ? "running" : (pid ? state.status : "stopped");
+  // Lazy-seed the cache-stats snapshot once after boot so the badge reflects
+  // rows persisted from prior sessions (survives restarts). Fire-and-forget;
+  // the next poll picks up the refreshed numbers.
+  if (!modelFilterCacheStatsSeeded) {
+    modelFilterCacheStatsSeeded = true;
+    refreshModelFilterCacheStats();
+  }
   return {
     status: effectiveStatus,
     pid,
@@ -138,7 +177,7 @@ export function getStatus() {
 }
 
 export function getModelFilterStatus() {
-  return { ...modelFilterState };
+  return { ...modelFilterState, cache: { ...modelFilterCacheStats } };
 }
 
 /**
@@ -588,7 +627,7 @@ function normalizeModelFilterConcurrency(concurrency = 2) {
   return Math.max(1, Math.min(Number(concurrency) || 2, 16));
 }
 
-export async function filterConfigsByModel({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 2, pauseOnTraffic = true, quietMs = 15000, onProgress = null } = {}) {
+export async function filterConfigsByModel({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 2, pauseOnTraffic = true, quietMs = 15000, onProgress = null, forceRetest = false } = {}) {
   const configs = await getXrayConfigs({ isActive: true });
   const settings = await getSettings();
   const runningActiveConfigId = getManagedPid()
@@ -596,8 +635,49 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     : null;
   const normalized = normalizeModelFilterLimit({ limit, all });
   const selected = normalized.all ? configs : configs.slice(0, normalized.limit);
-  const workerCount = Math.min(normalizeModelFilterConcurrency(concurrency), selected.length || 1);
+
+  // Cache layer: configs with a fresh cached result for this model are reused
+  // instead of re-probed. forceRetest bypasses the cache entirely (the caller
+  // also clears the model's cache before invoking). The cache key is the
+  // (configId, model) pair — configId is a sha1 of the canonical link, so a
+  // config whose underlying server/credentials change is naturally a new id
+  // and therefore a fresh cache entry.
+  let toTest = selected;
+  // Bypass the cache entirely when forceRetest or prune is on:
+  //  - forceRetest: caller already cleared this model's cache; nothing to hit.
+  //  - prune: destructive mode — always re-probe fresh so maybePruneConfig
+  //    gets the chance to run on every selected config. Otherwise a cached
+  //    failed row would be reused and silently skip deletion.
+  const useCache = !forceRetest && !prune;
+  const cacheMap = useCache
+    ? await getModelFilterResultsByConfigIds(selected.map((c) => c.id), model)
+    : new Map();
+
   const results = [];
+  for (const config of selected) {
+    const cached = cacheMap.get(config.id);
+    if (!cached) continue;
+    const result = {
+      configId: config.id,
+      name: config.name,
+      host: config.host,
+      country: config.country,
+      ok: cached.ok,
+      latencyMs: cached.latencyMs,
+      status: cached.status,
+      exitIp: cached.exitIp,
+      error: cached.error,
+      cached: true,
+      testedAt: cached.testedAt,
+    };
+    results.push(result);
+    onProgress?.(result);
+  }
+  toTest = selected.filter((c) => !cacheMap.has(c.id));
+
+  // When every selected config is cached (toTest empty) the worker pool is a
+  // no-op; keep at least 1 worker so the pool initializes harmlessly.
+  const workerCount = Math.min(normalizeModelFilterConcurrency(concurrency), toTest.length || 1);
   let cursor = 0;
 
   const maybePruneConfig = async (config, result) => {
@@ -606,7 +686,30 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
       return { ...result, pruned: false, pruneSkipped: "active_config_running" };
     }
     await deleteXrayConfig(config.id);
+    // Cascade: the config row is gone, so its cache entries are meaningless.
+    await deleteModelFilterResultsByConfigIds([config.id]).catch(() => {});
     return { ...result, pruned: true };
+  };
+
+  // Persist a fresh probe result so subsequent runs (incl. after a restart or
+  // re-sync that leaves the config unchanged) can skip it. Skipped when the
+  // config was pruned — the row no longer exists. Awaited so the post-job
+  // cache-stats snapshot reflects this run's writes.
+  const recordCache = async (config, result) => {
+    if (result.pruned === true || result.pruneSkipped) return;
+    try {
+      await upsertModelFilterResult({
+        configId: config.id,
+        model,
+        ok: !!result.ok,
+        latencyMs: result.latencyMs,
+        status: result.status,
+        exitIp: result.exitIp,
+        error: result.error,
+      });
+    } catch {
+      // cache write failure is non-fatal — next run will re-probe
+    }
   };
 
   const testConfig = async (config) => {
@@ -618,6 +721,7 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
       let result = { configId: config.id, name: config.name, host: config.host, country: config.country, ...probe };
       result = await maybePruneConfig(config, result);
       results.push(result);
+      await recordCache(config, result);
       onProgress?.(result);
     } catch (error) {
       let failed = {
@@ -633,19 +737,21 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
       await updateXrayTestResult(config.id, { ok: false }).catch(() => {});
       failed = await maybePruneConfig(config, failed);
       results.push(failed);
+      await recordCache(config, failed);
       onProgress?.(failed);
     }
   };
 
   const workers = Array.from({ length: workerCount }, async () => {
-    while (cursor < selected.length) {
+    while (cursor < toTest.length) {
       const index = cursor;
       cursor += 1;
-      await testConfig(selected[index]);
+      await testConfig(toTest[index]);
     }
   });
   await Promise.all(workers);
 
+  const cachedCount = results.filter((r) => r.cached).length;
   return {
     model,
     all: normalized.all,
@@ -656,11 +762,12 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     failed: results.filter((r) => !r.ok).length,
     pruned: results.filter((r) => r.pruned === true).length,
     pruneSkipped: results.filter((r) => r.pruneSkipped).length,
+    cached: cachedCount,
     results,
   };
 }
 
-export async function runModelFilterJob({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 2, pauseOnTraffic = true, quietMs = 15000, source = "manual" } = {}) {
+export async function runModelFilterJob({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 2, pauseOnTraffic = true, quietMs = 15000, source = "manual", forceRetest = false } = {}) {
   if (modelFilterRunning) {
     return { skipped: true, reason: "already_running", ...getModelFilterStatus() };
   }
@@ -684,10 +791,17 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
       passed: 0,
       failed: 0,
       pruned: 0,
+      cached: 0,
       error: null,
     });
 
     try {
+      // forceRetest wipes the cache for this model so every selected config is
+      // re-probed fresh. Done before the probe loop so the splitter in
+      // filterConfigsByModel finds nothing to skip.
+      if (forceRetest) await clearModelFilterResultsByModel(model).catch(() => {});
+      await refreshModelFilterCacheStats();
+
       const result = await filterConfigsByModel({
         model,
         limit: normalized.limit,
@@ -697,8 +811,10 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
         concurrency: normalizedConcurrency,
         pauseOnTraffic,
         quietMs,
+        forceRetest,
         onProgress: (result) => {
           modelFilterState.tested += 1;
+          if (result.cached) modelFilterState.cached += 1;
           if (result.ok) modelFilterState.passed += 1;
           else modelFilterState.failed += 1;
           if (result.pruned === true) modelFilterState.pruned += 1;
@@ -711,6 +827,7 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
         passed: result.passed,
         failed: result.failed,
         pruned: result.pruned,
+        cached: result.cached,
         error: null,
       });
       return result;
@@ -723,6 +840,7 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
       throw error;
     } finally {
       modelFilterRunning = null;
+      await refreshModelFilterCacheStats();
     }
   })();
 

@@ -33,6 +33,85 @@ function latencyVariant(ms) {
   return "default";
 }
 
+// "2h ago" / "3d ago" / "just now" — used by the per-config model-filter badge.
+function formatTimeAgo(iso) {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
+// Sync interval presets in minutes. 0 = manual-only (scheduler stopped).
+// The select also offers "custom" which reveals a number+unit input pair.
+const SYNC_INTERVAL_PRESETS = [
+  { value: "0", label: "Never (manual only)" },
+  { value: "10", label: "Every 10 min" },
+  { value: "15", label: "Every 15 min" },
+  { value: "30", label: "Every 30 min" },
+  { value: "60", label: "Every hour" },
+  { value: "180", label: "Every 3 hours" },
+  { value: "360", label: "Every 6 hours" },
+  { value: "720", label: "Every 12 hours" },
+  { value: "1440", label: "Every day" },
+  { value: "4320", label: "Every 3 days" },
+  { value: "10080", label: "Every week" },
+];
+
+// Map a raw minute value to either a preset value or "custom".
+function intervalToPresetValue(min) {
+  const m = Number(min);
+  if (!Number.isFinite(m) || m <= 0) return "0";
+  return SYNC_INTERVAL_PRESETS.some((p) => p.value === String(m)) ? String(m) : "custom";
+}
+
+// Split a raw minute value into { value, unit } for the custom inputs.
+function intervalToCustomParts(min) {
+  const m = Number(min);
+  if (!Number.isFinite(m) || m <= 0) return { value: 30, unit: "minutes" };
+  if (m >= 10080 && m % 10080 === 0) return { value: m / 10080, unit: "days" };
+  if (m >= 1440 && m % 1440 === 0) return { value: m / 1440, unit: "days" };
+  if (m >= 60 && m % 60 === 0) return { value: m / 60, unit: "hours" };
+  return { value: m, unit: "minutes" };
+}
+
+// Convert { value, unit } back into minutes.
+function customPartsToMinutes(value, unit) {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const factor = unit === "hours" ? 60 : unit === "days" ? 1440 : 1;
+  return n * factor;
+}
+
+// Human-readable label for the interval badge.
+function formatInterval(min) {
+  const m = Number(min);
+  if (!Number.isFinite(m) || m <= 0) return "manual only";
+  if (m < 60) return `every ${m} min`;
+  if (m % 10080 === 0 && m >= 10080) {
+    const w = m / 10080;
+    return `every ${w} week${w > 1 ? "s" : ""}`;
+  }
+  if (m % 1440 === 0 && m >= 1440) {
+    const d = m / 1440;
+    return `every ${d} day${d > 1 ? "s" : ""}`;
+  }
+  if (m % 60 === 0) {
+    const h = m / 60;
+    return `every ${h} h`;
+  }
+  return `every ${m} min`;
+}
+
 export default function XrayProxyPage() {
   const [status, setStatus] = useState(null);
   const [configs, setConfigs] = useState([]);
@@ -57,6 +136,12 @@ export default function XrayProxyPage() {
   });
   const [modelFilterBusy, setModelFilterBusy] = useState(false);
   const [modelFilterResult, setModelFilterResult] = useState(null);
+  const [customInterval, setCustomInterval] = useState({ value: 30, unit: "minutes" });
+  // True when the user has picked "Custom…" in the dropdown, regardless of the
+  // persisted value. We keep this separate from settings.xraySyncIntervalMin so
+  // the custom inputs stay visible while the user is editing them, even before
+  // (or without) saving.
+  const [customMode, setCustomMode] = useState(false);
   const notify = useNotificationStore();
   const pollRef = useRef(null);
 
@@ -89,7 +174,7 @@ export default function XrayProxyPage() {
           ...prev,
           xrayAutoStart: data.xrayAutoStart === true,
           xrayAutoRotate: data.xrayAutoRotate === true,
-          xraySyncIntervalMin: data.xraySyncIntervalMin ?? prev.xraySyncIntervalMin,
+          xraySyncIntervalMin: data.xraySyncIntervalMin ?? prev.xraySyncIntervalMin ?? 60,
           xrayStaleRetentionDays: data.xrayStaleRetentionDays ?? 7,
           xraySocksPort: data.xraySocksPort ?? prev.xraySocksPort,
           xrayHttpPort: data.xrayHttpPort ?? prev.xrayHttpPort,
@@ -113,6 +198,12 @@ export default function XrayProxyPage() {
           pauseOnTraffic: data.xrayModelFilterPauseOnTraffic !== false,
           quietMs: data.xrayModelFilterQuietMs ?? prev.quietMs ?? 15000,
         }));
+        // Seed the custom interval inputs whenever the persisted value isn't a
+        // known preset, so the "Custom…" option shows the right value/unit.
+        const intervalMin = data.xraySyncIntervalMin ?? 60;
+        if (intervalToPresetValue(intervalMin) === "custom") {
+          setCustomInterval(intervalToCustomParts(intervalMin));
+        }
       }
     } catch (e) {
       console.log("settings fetch error:", e.message);
@@ -267,7 +358,8 @@ export default function XrayProxyPage() {
     }
   };
 
-  const runModelFilter = async () => {
+  const runModelFilter = async (opts = {}) => {
+    const forceRetest = opts.forceRetest === true;
     const model = modelFilter.model.trim();
     if (!model) {
       notify.error("Model is required");
@@ -278,7 +370,7 @@ export default function XrayProxyPage() {
       setModelFilterBusy(true);
       setModelFilterResult(null);
       try {
-        notify.info(`Testing Xray servers with ${model}...`);
+        notify.info(forceRetest ? `Re-testing all Xray servers with ${model}...` : `Testing Xray servers with ${model}...`);
         const res = await fetch("/api/xray/configs/model-filter", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -290,12 +382,14 @@ export default function XrayProxyPage() {
             concurrency: Number(modelFilter.concurrency) || 2,
             pauseOnTraffic: modelFilter.pauseOnTraffic === true,
             quietMs: Number(modelFilter.quietMs) || 15000,
+            forceRetest,
           }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         setModelFilterResult(data);
-        notify.success(`Model filter done: ${data.passed}/${data.tested} usable${data.pruned ? ` · removed ${data.pruned}` : ""}`);
+        const cachedNote = data.cached ? ` · ${data.cached} cached` : "";
+        notify.success(`Model filter done: ${data.passed}/${data.tested} usable${data.pruned ? ` · removed ${data.pruned}` : ""}${cachedNote}`);
         await fetchConfigs();
         await fetchStatus();
       } catch (e) {
@@ -317,6 +411,31 @@ export default function XrayProxyPage() {
     }
 
     await execute();
+  };
+
+  // Clear cached model-filter results (all models). Next filter run re-probes
+  // everything fresh.
+  const handleClearCache = () => {
+    setConfirmState({
+      message: "Clear all cached filter results? Servers will be re-tested on the next filter run.",
+      onConfirm: async () => {
+        setConfirmState(null);
+        try {
+          const res = await fetch("/api/xray/configs/model-filter/clear-cache", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          notify.success(`Cleared ${data.cleared} cached result${data.cleared === 1 ? "" : "s"}`);
+          await fetchStatus();
+          await fetchConfigs();
+        } catch (e) {
+          notify.error(`Clear cache failed: ${e.message}`);
+        }
+      },
+    });
   };
 
   const handleSaveSetting = async (key, value) => {
@@ -341,6 +460,19 @@ export default function XrayProxyPage() {
       setSettings((s) => ({ ...s, [key]: previousValue }));
       notify.error(`Save failed: ${e.message}`);
     }
+  };
+
+  // Persist the sync interval. Accepts either a preset value ("0", "60", ...)
+  // or the literal string "custom" — in which case the customInterval state is
+  // converted to minutes. The backend clamps to [0] ∪ [5, ∞).
+  const handleSaveSyncInterval = (presetValue) => {
+    let minutes;
+    if (presetValue === "custom") {
+      minutes = customPartsToMinutes(customInterval.value, customInterval.unit);
+    } else {
+      minutes = Number(presetValue) || 0;
+    }
+    handleSaveSetting("xraySyncIntervalMin", minutes);
   };
 
   const saveModelFilterSettings = async (extra = {}) => {
@@ -437,7 +569,7 @@ export default function XrayProxyPage() {
               {!status.binaryInstalled && (
                 <li><strong>Install</strong> the Xray binary (one-time, ~20MB download)</li>
               )}
-              <li><strong>Sync</strong> configs from v2go (auto-runs hourly after first sync)</li>
+              <li><strong>Sync</strong> configs from v2go (auto-runs {formatInterval(settings.xraySyncIntervalMin ?? 60)} after first sync — configure below)</li>
               <li><strong>Start</strong> the proxy — a SOCKS5 proxy opens on <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1 rounded">127.0.0.1:10808</code></li>
               <li>Go to <Link href="/dashboard/providers" className="text-blue-600 hover:underline font-medium">Providers</Link>, pick a connection, and assign the <strong>“V2Ray Proxy (v2go)”</strong> pool — requests to that provider now route through the proxy</li>
             </ol>
@@ -529,7 +661,7 @@ export default function XrayProxyPage() {
       <Card className="p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold">Subscription Sync</h2>
-          <Badge>auto-update every {settings.xraySyncIntervalMin || 60} min</Badge>
+          <Badge>auto-update {formatInterval(settings.xraySyncIntervalMin ?? 60)}</Badge>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
           <div>
@@ -586,6 +718,77 @@ export default function XrayProxyPage() {
             Sync marks missing servers inactive first, then this setting decides when inactive rows are deleted.
           </div>
         </div>
+        <div className="grid sm:grid-cols-[220px_1fr] gap-3 items-end text-sm">
+          <div>
+            <label className="text-xs text-zinc-500 block mb-1">Auto-sync interval</label>
+            <select
+              className="w-full text-sm border rounded px-2 py-2 bg-transparent"
+              value={(() => {
+                if (customMode) return "custom";
+                const preset = intervalToPresetValue(settings.xraySyncIntervalMin ?? 60);
+                return preset; // either a known preset or "custom" (value not in list)
+              })()}
+              onChange={(e) => {
+                if (e.target.value === "custom") {
+                  // Seed the custom inputs from the current value, then reveal them.
+                  setCustomInterval(intervalToCustomParts(settings.xraySyncIntervalMin ?? 60));
+                  setCustomMode(true);
+                  return;
+                }
+                setCustomMode(false);
+                handleSaveSyncInterval(e.target.value);
+              }}
+            >
+              {SYNC_INTERVAL_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+              <option value="custom">
+                Custom…{!customMode && intervalToPresetValue(settings.xraySyncIntervalMin ?? 60) === "custom"
+                  ? ` (${formatInterval(settings.xraySyncIntervalMin)})`
+                  : ""}
+              </option>
+            </select>
+          </div>
+          <div className="text-xs text-zinc-500 pb-2">
+            How often the subscription is re-fetched automatically. Choose “Never” for manual-only syncs.
+          </div>
+        </div>
+        {(customMode || intervalToPresetValue(settings.xraySyncIntervalMin ?? 60) === "custom") && (
+          <div className="flex gap-2 items-end flex-wrap">
+            <div>
+              <label className="text-xs text-zinc-500 block mb-1">Custom interval</label>
+              <Input
+                type="number"
+                min={1}
+                className="w-28"
+                value={customInterval.value}
+                onChange={(e) => setCustomInterval((c) => ({ ...c, value: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-zinc-500 block mb-1">Unit</label>
+              <select
+                className="text-sm border rounded px-2 py-2 bg-transparent"
+                value={customInterval.unit}
+                onChange={(e) => setCustomInterval((c) => ({ ...c, unit: e.target.value }))}
+              >
+                <option value="minutes">minutes</option>
+                <option value="hours">hours</option>
+                <option value="days">days</option>
+              </select>
+            </div>
+            <Button
+              variant="ghost"
+              onClick={() => handleSaveSyncInterval("custom")}
+              disabled={busy}
+            >
+              Save
+            </Button>
+            <div className="text-xs text-zinc-500 pb-2">
+              Minimum 5 minutes. Equivalent to {formatInterval(customPartsToMinutes(customInterval.value, customInterval.unit))}.
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Settings card */}
@@ -621,11 +824,25 @@ export default function XrayProxyPage() {
           {visibleModelFilterResult && (
             <Badge variant={visibleModelFilterResult.status === "running" ? "warning" : visibleModelFilterResult.failed === 0 ? "success" : "warning"}>
               {visibleModelFilterResult.status === "running"
-                ? `${visibleModelFilterResult.tested || 0} tested...`
-                : `${visibleModelFilterResult.passed}/${visibleModelFilterResult.tested} usable`}
+                ? `${visibleModelFilterResult.tested || 0} tested${visibleModelFilterResult.cached ? ` · ${visibleModelFilterResult.cached} cached` : ""}...`
+                : `${visibleModelFilterResult.passed}/${visibleModelFilterResult.tested} usable${visibleModelFilterResult.cached ? ` · ${visibleModelFilterResult.cached} cached` : ""}`}
             </Badge>
           )}
         </div>
+
+        {(() => {
+          const cache = status?.modelFilter?.cache;
+          const total = cache?.total || 0;
+          if (!total) return null;
+          const modelKey = modelFilter.model.trim();
+          const modelCount = modelKey ? (cache.byModel?.[modelKey] || 0) : 0;
+          return (
+            <div className="text-xs text-zinc-500 dark:text-zinc-400 -mt-1">
+              Cache: {total} result{total === 1 ? "" : "s"}
+              {modelCount ? ` · ${modelCount} for current model (skipped until sync)` : ""}
+            </div>
+          );
+        })()}
 
         <div className="flex items-center justify-between rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm">
           <div>
@@ -726,14 +943,30 @@ export default function XrayProxyPage() {
         {runningModelFilter && (
           <div className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 p-3">
             Filtering {status.modelFilter.all ? "all active configs" : `up to ${status.modelFilter.limit}`} with {status.modelFilter.concurrency || 2} threads:
-            {" "}{status.modelFilter.tested || 0} tested, {status.modelFilter.passed || 0} usable, {status.modelFilter.failed || 0} failed.
+            {" "}{status.modelFilter.tested || 0} tested, {status.modelFilter.passed || 0} usable, {status.modelFilter.failed || 0} failed{status.modelFilter.cached ? `, ${status.modelFilter.cached} cached` : ""}.
             {status.modelFilter.pauseOnTraffic ? " Pauses when live traffic is active." : ""}
           </div>
         )}
 
-        <div>
-          <Button onClick={runModelFilter} disabled={modelFilterBusy || runningModelFilter || busy || !status.binaryInstalled}>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => runModelFilter()} disabled={modelFilterBusy || runningModelFilter || busy || !status.binaryInstalled}>
             {modelFilterBusy || runningModelFilter ? "Testing..." : "Run Filter Now"}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => runModelFilter({ forceRetest: true })}
+            disabled={modelFilterBusy || runningModelFilter || busy || !status.binaryInstalled}
+            title="Wipe cached results for this model and re-probe every selected server"
+          >
+            {modelFilterBusy || runningModelFilter ? "Testing..." : "Force Re-test All"}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={handleClearCache}
+            disabled={modelFilterBusy || runningModelFilter || busy}
+            title="Clear cached results for all models (next run re-tests everything)"
+          >
+            Clear Cache
           </Button>
         </div>
 
@@ -838,6 +1071,13 @@ export default function XrayProxyPage() {
                       {c.isSelected && <span className="w-2 h-2 rounded-full bg-green-500" title="active" />}
                       <span className="truncate max-w-xs">{c.name || c.host}</span>
                       {c.isActive === false && <Badge>inactive</Badge>}
+                      {c.modelFilterResult ? (
+                        <Badge variant={c.modelFilterResult.ok ? "success" : "error"} title={`Last model probe: ${c.modelFilterResult.ok ? "usable" : "failed"}${c.modelFilterResult.latencyMs != null && c.modelFilterResult.latencyMs >= 0 ? ` · ${c.modelFilterResult.latencyMs}ms` : ""}`}>
+                          {c.modelFilterResult.ok ? "✓" : "✗"} {formatTimeAgo(c.modelFilterResult.testedAt)}
+                        </Badge>
+                      ) : (
+                        <Badge title="Not yet probed against the current filter model">untested</Badge>
+                      )}
                     </div>
                   </td>
                   <td className="py-2 px-3"><Badge>{c.protocol?.toUpperCase()}</Badge></td>
