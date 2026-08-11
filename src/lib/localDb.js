@@ -24,6 +24,7 @@ export {
   setSelectedXrayConfig, getSelectedXrayConfig, updateXrayTestResult,
   getXraySyncState, setXraySyncState,
   getModelFilterResult, getModelFilterResultsByConfigIds, getModelFilterCacheStats,
+  getNextHealthyConfigsForModel,
   upsertModelFilterResult,
   clearModelFilterResultsByModel, clearAllModelFilterResults,
   deleteModelFilterResultsByConfigIds, pruneOrphanModelFilterResults,

@@ -6,21 +6,51 @@
  *  - testProxyExitIp:  GET cloudflare cdn-cgi/trace through the SOCKS proxy,
  *    parse the egress IP (ports the fetchExitIP logic from v2go's tester.go).
  *
- * Both use the global fetch with a SocksProxyAgent dispatcher, matching how
- * 9router's proxyAwareFetch works at request time.
+ * Both use the global fetch with an undici ProxyAgent passed as `dispatcher`,
+ * matching how 9router's proxyAwareFetch applies SOCKS proxies at request time.
+ *
+ * NOTE: undici-backed fetch ignores the legacy `agent` option — the proxy MUST
+ * be supplied via `dispatcher`, otherwise the request silently goes direct.
+ * This is why we previously saw exit IPs equal to the host IP (going direct)
+ * instead of the proxy's egress IP. See open-sse/utils/proxyFetch.js.
  */
 
-import { SocksProxyAgent } from "socks-proxy-agent";
 import net from "node:net";
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const LATENCY_URL = "http://gstatic.com/generate_204";
 const TRACE_URL = "http://www.cloudflare.com/cdn-cgi/trace";
 
-function socksAgent(socksPort) {
-  // SocksProxyAgent speaks the http.Agent API; pass as `agent` for node-fetch-
-  // style. For the global fetch (undici-backed), we wrap via dispatcher.
-  return new SocksProxyAgent(`socks5://127.0.0.1:${socksPort}`);
+// LRU-ish cache of undici ProxyAgent dispatchers keyed by proxy URI, so we
+// don't construct a new agent (and a fresh connection pool) on every probe.
+// Mirrors open-sse/utils/proxyFetch.js getDispatcher().
+const dispatcherCache = new Map();
+const DISPATCHER_CACHE_MAX = 32;
+
+async function getDispatcher(proxyUri) {
+  if (!proxyUri) return null;
+  const cached = dispatcherCache.get(proxyUri);
+  if (cached) {
+    // Move to end (most-recently used).
+    dispatcherCache.delete(proxyUri);
+    dispatcherCache.set(proxyUri, cached);
+    return cached;
+  }
+  // undici ships with Node 24 (experimental SOCKS5 in 7.x). It natively
+  // understands socks5:// URIs when passed to ProxyAgent.
+  const { ProxyAgent } = await import("undici");
+  const dispatcher = new ProxyAgent({ uri: proxyUri });
+  if (dispatcherCache.size >= DISPATCHER_CACHE_MAX) {
+    // Evict oldest entry.
+    const firstKey = dispatcherCache.keys().next().value;
+    dispatcherCache.delete(firstKey);
+  }
+  dispatcherCache.set(proxyUri, dispatcher);
+  return dispatcher;
+}
+
+function proxyUriForPort(socksPort) {
+  return `socks5://127.0.0.1:${socksPort}`;
 }
 
 /**
@@ -30,9 +60,9 @@ function socksAgent(socksPort) {
 export async function testProxyLatency(socksPort, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const start = Date.now();
   try {
-    const agent = socksAgent(socksPort);
+    const dispatcher = await getDispatcher(proxyUriForPort(socksPort));
     const res = await fetch(LATENCY_URL, {
-      agent,
+      dispatcher,
       // Disable compression/redirect so the timing reflects a single round-trip.
       redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
@@ -56,9 +86,9 @@ export async function testProxyLatency(socksPort, timeoutMs = DEFAULT_TIMEOUT_MS
  */
 export async function testProxyExitIp(socksPort, timeoutMs = 4000) {
   try {
-    const agent = socksAgent(socksPort);
+    const dispatcher = await getDispatcher(proxyUriForPort(socksPort));
     const res = await fetch(TRACE_URL, {
-      agent,
+      dispatcher,
       signal: AbortSignal.timeout(timeoutMs),
       headers: { "User-Agent": "9router-xray-test/1.0" },
     });

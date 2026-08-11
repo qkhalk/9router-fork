@@ -30,6 +30,8 @@ import { getProxyPoolById } from "@/models";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { beginLiveModelTraffic, wrapLiveModelResponse } from "@/lib/xray/modelFilterTraffic.js";
+import { triggerManagedRotationOnProxyError } from "@/lib/xray/managedRotation.js";
+import { MANAGED_POOL_ID } from "@/lib/xray/manager.js";
 
 /**
  * Handle chat completion request
@@ -333,6 +335,20 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const usedPoolId = psd.connectionProxyPoolId || null;
     const usedEntryId = psd.connectionProxyEntryId || null;
     const rotatable = isProxyRotatableError(result.status, result.error);
+
+    // Managed pool (v2go-xray-managed) is a single-URL pool backed by one
+    // running xray instance. It has no per-entry rotation, so on a rotatable
+    // error (e.g. 429 rate-limit on the current egress IP) kick off a
+    // background switchConfig() to a different healthy outbound for this
+    // model. Fire-and-forget: we don't block the request (switching tears
+    // down the shared SOCKS port) — the client retries and hits the new IP.
+    if (rotatable && usedPoolId === MANAGED_POOL_ID) {
+      triggerManagedRotationOnProxyError({
+        status: result.status,
+        error: typeof result.error === "string" ? result.error : "",
+        model: `${provider}/${model}`,
+      }).catch(() => {});
+    }
 
     if (rotatable && usedPoolId && usedEntryId) {
       // Cool down the entry that just failed.

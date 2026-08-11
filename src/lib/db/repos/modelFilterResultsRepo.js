@@ -65,6 +65,61 @@ export async function getModelFilterResultsByConfigIds(configIds = [], model) {
   return out;
 }
 
+/**
+ * Find the next healthy config for a given model, excluding the currently
+ * active config. Used by the managed-pool rotation (src/lib/xray/
+ * managedRotation.js) to pick a replacement outbound server when the active
+ * one hits a 429 / rate-limit.
+ *
+ * Joins xrayModelFilterResults with xrayConfigs so we only ever return a
+ * config that is (a) still in the catalog (isActive = 1) and (b) most
+ * recently verified to reach `model`. Ordered by probe latency ascending so
+ * callers naturally prefer the fastest known-good server.
+ *
+ * @param {string} model           e.g. "oc/deepseek-v4-flash-free"
+ * @param {string} excludeConfigId the currently active config id to skip
+ * @param {object} [opts]
+ * @param {number} [opts.limit=1]  how many candidates to return (1 = the best)
+ * @returns {Promise<Array<{configId, latencyMs, exitIp, testedAt, name, protocol, country, host, port}>>}
+ *          Empty array if no healthy candidate is available.
+ */
+export async function getNextHealthyConfigsForModel(model, excludeConfigId, { limit = 1 } = {}) {
+  if (!model) return [];
+  const db = await getAdapter();
+  const rows = db.all(
+    `SELECT
+        r.configId AS configId,
+        r.latencyMs AS latencyMs,
+        r.exitIp    AS exitIp,
+        r.testedAt  AS testedAt,
+        c.name      AS name,
+        c.protocol  AS protocol,
+        c.country   AS country,
+        c.host      AS host,
+        c.port      AS port
+      FROM xrayModelFilterResults r
+      JOIN xrayConfigs c ON c.id = r.configId
+      WHERE r.model = ?
+        AND r.ok = 1
+        AND c.isActive = 1
+        AND (? IS NULL OR r.configId != ?)
+      ORDER BY r.latencyMs IS NULL DESC, r.latencyMs ASC, r.testedAt DESC
+      LIMIT ?`,
+    [model, excludeConfigId ?? null, excludeConfigId ?? null, Math.max(1, Math.min(Number(limit) || 1, 50))]
+  );
+  return rows.map((r) => ({
+    configId: r.configId,
+    latencyMs: r.latencyMs,
+    exitIp: r.exitIp,
+    testedAt: r.testedAt,
+    name: r.name,
+    protocol: r.protocol,
+    country: r.country,
+    host: r.host,
+    port: r.port,
+  }));
+}
+
 /** Aggregate counts for the UI status badge. */
 export async function getModelFilterCacheStats() {
   const db = await getAdapter();
