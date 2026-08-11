@@ -29,6 +29,7 @@ import {
   getXraySyncState,
   setXraySyncState,
 } from "../db/repos/xrayRepo.js";
+import { pruneOrphanModelFilterResults } from "../db/repos/modelFilterResultsRepo.js";
 import { getSettings } from "../db/repos/settingsRepo.js";
 
 export const DEFAULT_V2GO_SUBSCRIPTION =
@@ -84,6 +85,10 @@ export async function syncSubscription(opts = {}) {
   const count = await bulkUpsertXrayConfigs(entries);
   await markStaleXrayConfigs(keepIds);
   const stalePruned = await cleanupStaleXrayConfigs(settings.xrayStaleRetentionDays);
+  // Drop cached model-filter results for configs that are no longer active
+  // (dropped from the subscription or aged out). Keeps the cache in lockstep
+  // with the catalog so the "skip if cached" path never trusts a dead row.
+  await pruneOrphanModelFilterResults().catch(() => {});
 
   // Re-apply selection if the previously-selected config is still present.
   if (selected) {
@@ -144,26 +149,66 @@ async function getSelectedBeforeSync(keepIds) {
 // ─── scheduler ────────────────────────────────────────────────────────────
 
 let syncTimer = null;
+let initialTimer = null;
+
+// Minimum interval the scheduler will actually run at. Anything strictly
+// positive but below this is clamped up so users can't accidentally hammer an
+// upstream subscription. 0 means "Never" (manual-only mode) and is honored
+// as-is by NOT starting any timer.
+const MIN_SYNC_INTERVAL_MIN = 5;
+
+/**
+ * Resolve the effective sync interval (in minutes) from an explicit override,
+ * persisted settings, or the built-in default. Returns 0 for manual-only
+ * mode. Strictly positive results are clamped to at least MIN_SYNC_INTERVAL_MIN.
+ */
+function resolveIntervalMin(explicit, settings) {
+  let min = explicit;
+  if (min == null || min === "" || Number.isNaN(Number(min))) {
+    min = settings?.xraySyncIntervalMin;
+  }
+  min = Number(min);
+  if (!Number.isFinite(min) || min <= 0) return 0; // Never / manual-only
+  return Math.max(MIN_SYNC_INTERVAL_MIN, Math.floor(min));
+}
 
 /**
  * Start (or restart) the periodic sync scheduler. Safe to call multiple times;
  * the previous timer is cleared first. Uses .unref() so it never keeps the
  * process alive on its own.
+ *
+ * Pass an explicit `intervalMin` (in minutes) to override persisted settings,
+ * or omit it to read `settings.xraySyncIntervalMin`. A value of 0 (or any
+ * non-positive value) puts the scheduler into manual-only mode: no timer is
+ * scheduled and syncs only happen via explicit `syncSubscription()` calls.
  */
 export async function startSyncScheduler(intervalMin) {
   if (syncTimer) {
     clearInterval(syncTimer);
     syncTimer = null;
   }
+  if (initialTimer) {
+    clearTimeout(initialTimer);
+    initialTimer = null;
+  }
   const settings = await getSettings();
-  const min = intervalMin || settings.xraySyncIntervalMin || 60;
-  // Do an initial sync shortly after boot so the catalog isn't empty for an
-  // hour on first run, then settle into the configured interval.
-  setTimeout(() => {
+  const min = resolveIntervalMin(intervalMin, settings);
+
+  if (min <= 0) {
+    console.log("[XraySync] scheduler stopped: manual-only mode (interval = 0)");
+    return;
+  }
+
+  // Do an initial sync shortly after (re)start so the catalog isn't empty for
+  // a full interval on first run, then settle into the configured interval.
+  initialTimer = setTimeout(() => {
+    initialTimer = null;
     syncSubscription({ filterSource: "initial-sync" }).catch((e) =>
       console.error("[XraySync] initial sync failed:", e.message)
     );
-  }, 5000).unref();
+  }, 5000);
+  if (initialTimer.unref) initialTimer.unref();
+
   syncTimer = setInterval(() => {
     syncSubscription({ filterSource: "scheduled-sync" }).catch((e) =>
       console.error("[XraySync] scheduled sync failed:", e.message)
@@ -177,6 +222,10 @@ export function stopSyncScheduler() {
   if (syncTimer) {
     clearInterval(syncTimer);
     syncTimer = null;
+  }
+  if (initialTimer) {
+    clearTimeout(initialTimer);
+    initialTimer = null;
   }
 }
 

@@ -1,3 +1,17 @@
+# v0.6.10 (2026-08-11)
+
+## Features
+- **V2Ray Proxy**: make the subscription auto-sync interval user-configurable
+  on `/dashboard/xray` instead of a hardcoded hourly schedule. The Sync card
+  now exposes a dropdown with presets (10 min / 15 min / 30 min / hourly /
+  every 3/6/12 hours / daily / every 3 days / weekly), a "Never (manual only)"
+  option that fully stops the scheduler, and a "Custom…" mode that accepts any
+  value in minutes, hours, or days. Values are clamped to a 5-minute minimum
+  (no upper bound, so external subscriptions can use longer intervals), and
+  changing the interval live-restarts the scheduler via the settings API with
+  no server restart required. The header badge and the quick-start guide now
+  reflect the active interval dynamically.
+
 # v0.6.9 (2026-08-11)
 
 ## Fixes

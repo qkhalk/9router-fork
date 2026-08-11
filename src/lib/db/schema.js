@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -187,6 +187,28 @@ export const TABLES = {
       lastSyncError: "TEXT",
       totalSyncRuns: "INTEGER DEFAULT 0",
     },
+  },
+  // v2go/xray model proxy filter — cached per-(config, model) probe results.
+  // configId mirrors xrayConfigs.id (a sha1 of the canonical link, so it is a
+  // natural fingerprint: configs whose underlying link changes get a new id
+  // and therefore a fresh cache row). TTL is the subscription sync cycle —
+  // rows are dropped when their config disappears from the active catalog.
+  xrayModelFilterResults: {
+    columns: {
+      configId: "TEXT NOT NULL",
+      model: "TEXT NOT NULL",
+      ok: "INTEGER NOT NULL",
+      latencyMs: "INTEGER",
+      status: "INTEGER",
+      exitIp: "TEXT",
+      error: "TEXT",
+      testedAt: "TEXT NOT NULL",
+    },
+    primaryKey: "PRIMARY KEY (configId, model)",
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_xmfr_model ON xrayModelFilterResults(model)",
+      "CREATE INDEX IF NOT EXISTS idx_xmfr_configId ON xrayModelFilterResults(configId)",
+    ],
   },
 };
 
