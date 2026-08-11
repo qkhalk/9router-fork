@@ -47,20 +47,33 @@ export async function getModelFilterResult(configId, model) {
  * Returns a Map<configId, result>. Chunked defensively for big catalogs
  * (SQLite's parameter limit is generous, but IN (?,?,...) with thousands of
  * ids can still bite).
+ *
+ * @param {string[]} configIds
+ * @param {string} model
+ * @param {object} [opts]
+ * @param {number} [opts.maxAgeMs] - if set, rows older than this (by testedAt)
+ *   are excluded so the caller re-tests them. 0/undefined = no age limit.
  */
-export async function getModelFilterResultsByConfigIds(configIds = [], model) {
+export async function getModelFilterResultsByConfigIds(configIds = [], model, { maxAgeMs = 0 } = {}) {
   const out = new Map();
   if (!configIds.length || !model) return out;
   const db = await getAdapter();
   const CHUNK = 500;
+  const ageCutoff = maxAgeMs > 0 ? new Date(Date.now() - maxAgeMs).toISOString() : null;
   for (let i = 0; i < configIds.length; i += CHUNK) {
     const slice = configIds.slice(i, i + CHUNK);
     const placeholders = slice.map(() => "?").join(",");
-    const rows = db.all(
-      `SELECT * FROM xrayModelFilterResults WHERE model = ? AND configId IN (${placeholders})`,
-      [model, ...slice]
-    );
-    for (const row of rows) out.set(row.configId, rowToResult(row));
+    const params = ageCutoff
+      ? db.all(
+          `SELECT * FROM xrayModelFilterResults
+           WHERE model = ? AND configId IN (${placeholders}) AND testedAt > ?`,
+          [model, ...slice, ageCutoff]
+        )
+      : db.all(
+          `SELECT * FROM xrayModelFilterResults WHERE model = ? AND configId IN (${placeholders})`,
+          [model, ...slice]
+        );
+    for (const row of params) out.set(row.configId, rowToResult(row));
   }
   return out;
 }
