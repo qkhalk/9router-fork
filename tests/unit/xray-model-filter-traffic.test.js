@@ -31,4 +31,24 @@ describe("xray model filter live traffic tracker", () => {
     expect(settled).toBe(true);
     expect(getActiveLiveTrafficCount()).toBe(0);
   });
+
+  it("stops waiting when the caller disables pause-on-traffic", async () => {
+    vi.useFakeTimers();
+    const finish = beginLiveModelTraffic();
+    let pauseEnabled = true;
+
+    const wait = waitForLiveTrafficQuiet({
+      quietMs: 15000,
+      maxWaitMs: 5000,
+      shouldContinue: () => pauseEnabled,
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    pauseEnabled = false;
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(wait).resolves.toMatchObject({ timedOut: false, cancelled: true });
+    finish();
+    expect(getActiveLiveTrafficCount()).toBe(0);
+  });
 });

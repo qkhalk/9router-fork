@@ -60,7 +60,11 @@ import { getProviderCredentials } from "@/sse/services/auth.js";
 import { checkAndRefreshToken } from "@/sse/services/tokenRefresh.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
-import { waitForLiveTrafficQuiet } from "./modelFilterTraffic.js";
+import {
+  getActiveLiveTrafficCount,
+  getLiveTrafficQuietForMs,
+  waitForLiveTrafficQuiet,
+} from "./modelFilterTraffic.js";
 
 // Fixed pool id so re-runs update the same row rather than creating dupes.
 const MANAGED_POOL_ID = "v2go-xray-managed";
@@ -111,6 +115,7 @@ const modelFilterState = {
   failed: 0,
   pruned: 0,
   cached: 0,
+  trafficWaiters: 0,
   error: null,
 };
 
@@ -177,7 +182,26 @@ export function getStatus() {
 }
 
 export function getModelFilterStatus() {
-  return { ...modelFilterState, cache: { ...modelFilterCacheStats } };
+  const quietForMs = getLiveTrafficQuietForMs();
+  return {
+    ...modelFilterState,
+    liveTraffic: {
+      active: getActiveLiveTrafficCount(),
+      quietForMs: Number.isFinite(quietForMs) ? quietForMs : null,
+    },
+    cache: { ...modelFilterCacheStats },
+  };
+}
+
+export function updateRunningModelFilterOptions(options = {}) {
+  if (!modelFilterRunning) return false;
+  if (Object.prototype.hasOwnProperty.call(options, "pauseOnTraffic")) {
+    modelFilterState.pauseOnTraffic = options.pauseOnTraffic === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(options, "quietMs")) {
+    modelFilterState.quietMs = Math.max(3000, Math.min(Number(options.quietMs) || 15000, 120000));
+  }
+  return true;
 }
 
 /**
@@ -713,8 +737,18 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
   };
 
   const testConfig = async (config) => {
-    if (pauseOnTraffic) {
-      await waitForLiveTrafficQuiet({ quietMs, maxWaitMs: 10 * 60 * 1000 });
+    const shouldPauseForTraffic = () => (modelFilterRunning ? modelFilterState.pauseOnTraffic : pauseOnTraffic === true);
+    if (shouldPauseForTraffic()) {
+      modelFilterState.trafficWaiters += 1;
+      try {
+        await waitForLiveTrafficQuiet({
+          quietMs: modelFilterRunning ? modelFilterState.quietMs : quietMs,
+          maxWaitMs: 10 * 60 * 1000,
+          shouldContinue: shouldPauseForTraffic,
+        });
+      } finally {
+        modelFilterState.trafficWaiters = Math.max(0, modelFilterState.trafficWaiters - 1);
+      }
     }
     try {
       const probe = await testSingleConfigWithModel(config.id, { model, timeoutMs });
@@ -792,6 +826,7 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
       failed: 0,
       pruned: 0,
       cached: 0,
+      trafficWaiters: 0,
       error: null,
     });
 
@@ -828,6 +863,7 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
         failed: result.failed,
         pruned: result.pruned,
         cached: result.cached,
+        trafficWaiters: 0,
         error: null,
       });
       return result;
@@ -835,6 +871,7 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
       Object.assign(modelFilterState, {
         status: "error",
         finishedAt: new Date().toISOString(),
+        trafficWaiters: 0,
         error: error.message,
       });
       throw error;

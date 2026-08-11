@@ -67,6 +67,8 @@ const SYNC_INTERVAL_PRESETS = [
   { value: "10080", label: "Every week" },
 ];
 
+const SERVER_PAGE_SIZE = 200;
+
 // Map a raw minute value to either a preset value or "custom".
 function intervalToPresetValue(min) {
   const m = Number(min);
@@ -121,6 +123,7 @@ export default function XrayProxyPage() {
   const [busy, setBusy] = useState(false);
   const [testingId, setTestingId] = useState(null);
   const [filter, setFilter] = useState({ protocol: "", country: "", status: "active", healthyOnly: false });
+  const [serverPage, setServerPage] = useState(1);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState({ runtime: "", install: "" });
   const [settings, setSettings] = useState({});
@@ -539,6 +542,18 @@ export default function XrayProxyPage() {
 
   const activeConfig = configs.find((c) => c.id === status.activeConfigId);
   const runningModelFilter = status.modelFilter?.status === "running";
+  const modelFilterTrafficWaiters = status.modelFilter?.trafficWaiters || 0;
+  const modelFilterLiveTraffic = status.modelFilter?.liveTraffic?.active || 0;
+  const serverTotalPages = Math.max(1, Math.ceil(configs.length / SERVER_PAGE_SIZE));
+  const safeServerPage = Math.min(serverPage, serverTotalPages);
+  const serverPageStart = (safeServerPage - 1) * SERVER_PAGE_SIZE;
+  const serverPageEnd = Math.min(serverPageStart + SERVER_PAGE_SIZE, configs.length);
+  const pagedConfigs = configs.slice(serverPageStart, serverPageEnd);
+  const jumpToServerPage = (value) => {
+    const page = Math.floor(Number(value));
+    if (!Number.isFinite(page)) return;
+    setServerPage(Math.max(1, Math.min(serverTotalPages, page)));
+  };
   const visibleModelFilterResult = modelFilterResult || (
     status.modelFilter?.status && status.modelFilter.status !== "idle"
       ? status.modelFilter
@@ -913,7 +928,7 @@ export default function XrayProxyPage() {
             <input
               type="checkbox"
               checked={modelFilter.pauseOnTraffic}
-              onChange={(e) => setModelFilter((s) => ({ ...s, pauseOnTraffic: e.target.checked }))}
+              onChange={(e) => saveModelFilterSettings({ pauseOnTraffic: e.target.checked })}
             />
             Pause while live traffic is active
           </label>
@@ -945,6 +960,9 @@ export default function XrayProxyPage() {
             Filtering {status.modelFilter.all ? "all active configs" : `up to ${status.modelFilter.limit}`} with {status.modelFilter.concurrency || 2} threads:
             {" "}{status.modelFilter.tested || 0} tested, {status.modelFilter.passed || 0} usable, {status.modelFilter.failed || 0} failed{status.modelFilter.cached ? `, ${status.modelFilter.cached} cached` : ""}.
             {status.modelFilter.pauseOnTraffic ? " Pauses when live traffic is active." : ""}
+            {modelFilterTrafficWaiters > 0
+              ? ` Waiting for live traffic to go quiet (${modelFilterLiveTraffic} active request${modelFilterLiveTraffic === 1 ? "" : "s"}).`
+              : ""}
           </div>
         )}
 
@@ -1012,13 +1030,17 @@ export default function XrayProxyPage() {
             <h2 className="font-semibold">Servers ({configs.length})</h2>
             <div className="text-xs text-zinc-500 mt-1">
               Active {configCounts.active || 0} · Inactive {configCounts.inactive || 0} · Total {configCounts.total || 0}
+              {configs.length > 0 ? ` · Showing ${serverPageStart + 1}-${serverPageEnd}` : ""}
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
             <select
               className="text-sm border rounded px-2 py-1 bg-transparent"
               value={filter.status}
-              onChange={(e) => setFilter((f) => ({ ...f, status: e.target.value, country: "", protocol: "" }))}
+              onChange={(e) => {
+                setServerPage(1);
+                setFilter((f) => ({ ...f, status: e.target.value, country: "", protocol: "" }));
+              }}
             >
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
@@ -1027,7 +1049,10 @@ export default function XrayProxyPage() {
             <select
               className="text-sm border rounded px-2 py-1 bg-transparent"
               value={filter.protocol}
-              onChange={(e) => setFilter((f) => ({ ...f, protocol: e.target.value }))}
+              onChange={(e) => {
+                setServerPage(1);
+                setFilter((f) => ({ ...f, protocol: e.target.value }));
+              }}
             >
               <option value="">All protocols</option>
               {facets.protocols.map((p) => <option key={p} value={p}>{p.toUpperCase()}</option>)}
@@ -1035,7 +1060,10 @@ export default function XrayProxyPage() {
             <select
               className="text-sm border rounded px-2 py-1 bg-transparent"
               value={filter.country}
-              onChange={(e) => setFilter((f) => ({ ...f, country: e.target.value }))}
+              onChange={(e) => {
+                setServerPage(1);
+                setFilter((f) => ({ ...f, country: e.target.value }));
+              }}
             >
               <option value="">All countries</option>
               {facets.countries.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -1044,12 +1072,64 @@ export default function XrayProxyPage() {
               <input
                 type="checkbox"
                 checked={filter.healthyOnly}
-                onChange={(e) => setFilter((f) => ({ ...f, healthyOnly: e.target.checked }))}
+                onChange={(e) => {
+                  setServerPage(1);
+                  setFilter((f) => ({ ...f, healthyOnly: e.target.checked }));
+                }}
               />
               Healthy only
             </label>
           </div>
         </div>
+
+        {configs.length > SERVER_PAGE_SIZE && (
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <div className="text-xs text-zinc-500">
+              Page {safeServerPage} of {serverTotalPages} · {SERVER_PAGE_SIZE} servers per page
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setServerPage((page) => Math.max(1, page - 1))}
+                disabled={safeServerPage <= 1}
+              >
+                Previous
+              </Button>
+              <div className="flex items-center gap-1">
+                <Input
+                  key={`server-page-top-${safeServerPage}-${serverTotalPages}`}
+                  type="number"
+                  min="1"
+                  max={serverTotalPages}
+                  defaultValue={safeServerPage}
+                  className="w-20 h-8 text-sm"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") jumpToServerPage(e.currentTarget.value);
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={(e) => {
+                    const input = e.currentTarget.parentElement?.querySelector("input");
+                    jumpToServerPage(input?.value);
+                  }}
+                >
+                  Go
+                </Button>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setServerPage((page) => Math.min(serverTotalPages, page + 1))}
+                disabled={safeServerPage >= serverTotalPages}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -1064,7 +1144,7 @@ export default function XrayProxyPage() {
               </tr>
             </thead>
             <tbody>
-              {configs.slice(0, 200).map((c) => (
+              {pagedConfigs.map((c) => (
                 <tr key={c.id} className={`border-b last:border-0 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 ${c.isActive === false ? "opacity-60" : ""}`}>
                   <td className="py-2 pr-3">
                     <div className="flex items-center gap-2">
@@ -1113,8 +1193,47 @@ export default function XrayProxyPage() {
             </div>
           )}
           {configs.length > 200 && (
-            <div className="text-center py-3 text-xs text-zinc-500">
-              Showing first 200 of {configs.length}. Use filters to narrow down.
+            <div className="flex items-center justify-center gap-3 py-3 text-xs text-zinc-500">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setServerPage((page) => Math.max(1, page - 1))}
+                disabled={safeServerPage <= 1}
+              >
+                Previous
+              </Button>
+              <span>Showing {serverPageStart + 1}-{serverPageEnd} of {configs.length}</span>
+              <div className="flex items-center gap-1">
+                <Input
+                  key={`server-page-bottom-${safeServerPage}-${serverTotalPages}`}
+                  type="number"
+                  min="1"
+                  max={serverTotalPages}
+                  defaultValue={safeServerPage}
+                  className="w-20 h-8 text-sm"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") jumpToServerPage(e.currentTarget.value);
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={(e) => {
+                    const input = e.currentTarget.parentElement?.querySelector("input");
+                    jumpToServerPage(input?.value);
+                  }}
+                >
+                  Go
+                </Button>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setServerPage((page) => Math.min(serverTotalPages, page + 1))}
+                disabled={safeServerPage >= serverTotalPages}
+              >
+                Next
+              </Button>
             </div>
           )}
         </div>

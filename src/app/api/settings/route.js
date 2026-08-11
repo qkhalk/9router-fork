@@ -127,6 +127,21 @@ export async function PATCH(request) {
     }
 
     if (
+      Object.prototype.hasOwnProperty.call(body, "xrayModelFilterPauseOnTraffic") ||
+      Object.prototype.hasOwnProperty.call(body, "xrayModelFilterQuietMs")
+    ) {
+      try {
+        const { updateRunningModelFilterOptions } = await import("@/lib/xray/manager.js");
+        updateRunningModelFilterOptions({
+          pauseOnTraffic: settings.xrayModelFilterPauseOnTraffic === true,
+          quietMs: settings.xrayModelFilterQuietMs,
+        });
+      } catch (error) {
+        console.warn("[XrayModelFilter] live settings update failed:", error.message);
+      }
+    }
+
+    if (
       Object.prototype.hasOwnProperty.call(body, "claudeAutoPing") ||
       Object.prototype.hasOwnProperty.call(body, "codexAutoPing")
     ) {
