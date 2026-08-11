@@ -80,6 +80,7 @@ export {
 // v2go/xray model proxy filter — cached probe results
 export {
   getModelFilterResult, getModelFilterResultsByConfigIds, getModelFilterCacheStats,
+  getNextHealthyConfigsForModel,
   upsertModelFilterResult,
   clearModelFilterResultsByModel, clearAllModelFilterResults,
   deleteModelFilterResultsByConfigIds, pruneOrphanModelFilterResults,

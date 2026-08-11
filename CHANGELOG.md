@@ -1,3 +1,28 @@
+# v0.6.13 (2026-08-11)
+
+## Fixes
+- **V2Ray Proxy (critical)**: Model Proxy Filter, health checks, and the per-row
+  Server "Test" button were silently bypassing the SOCKS5 proxy and connecting
+  direct. The probes passed `SocksProxyAgent` as the legacy `agent` option,
+  which undici-backed `fetch` ignores — so `testProxyLatency` / `testProxyExitIp`
+  / `testProxy` always measured the host's own IP, never the proxy egress. This
+  made the filter's reported exit IP always equal the server IP, and worse, it
+  disabled `xrayAutoRotate`: the latency probe reported healthy even when the
+  real proxy was dead. Switched to undici `ProxyAgent` passed as `dispatcher`
+  (matching `proxyAwareFetch`), with an LRU dispatcher cache. Exit IPs now
+  reflect the real proxy.
+- **V2Ray Proxy (critical)**: the `v2go-xray-managed` proxy pool never rotated
+  on 429 / rate-limit errors. The pool is single-URL (one running xray
+  outbound), and the existing proxy-group rotation in the chat loop requires a
+  per-entry id that single-URL pools never set — so a rate-limited egress IP
+  caused infinite 429 loops until the account burned out. Added a managed-pool
+  rotation path that, on a rotatable error, fire-and-forget switches the active
+  xray outbound to the next config known-healthy for that model via
+  `switchConfig`, guarded by single-flight + a 30s cooldown + a recently-tried
+  history. Also fixes a model-key mismatch (chat passed `opencode/...` while
+  the filter cache keys on the `oc/...` alias) via prefix normalization. Rotation
+  events are persisted to `~/.9router/logs/managed-rotation.log`.
+
 # v0.6.12 (2026-08-11)
 
 ## Fixes
