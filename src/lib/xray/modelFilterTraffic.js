@@ -30,9 +30,16 @@ export function getLiveTrafficQuietForMs(now = Date.now()) {
   return lastLiveTrafficAt > 0 ? now - lastLiveTrafficAt : Infinity;
 }
 
-export async function waitForLiveTrafficQuiet({ quietMs = DEFAULT_QUIET_MS, maxWaitMs = DEFAULT_MAX_WAIT_MS } = {}) {
+export async function waitForLiveTrafficQuiet({
+  quietMs = DEFAULT_QUIET_MS,
+  maxWaitMs = DEFAULT_MAX_WAIT_MS,
+  shouldContinue = null,
+} = {}) {
   const startedAt = Date.now();
   while (getLiveTrafficQuietForMs() < quietMs) {
+    if (typeof shouldContinue === "function" && shouldContinue() === false) {
+      return { waitedMs: Date.now() - startedAt, timedOut: false, cancelled: true };
+    }
     if (Date.now() - startedAt >= maxWaitMs) {
       return { waitedMs: Date.now() - startedAt, timedOut: true };
     }

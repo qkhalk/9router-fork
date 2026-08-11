@@ -1,3 +1,19 @@
+# v0.6.12 (2026-08-11)
+
+## Fixes
+- **V2Ray Proxy**: make the Model Proxy Filter pause toggle take effect while
+  a filter job is already running. The dashboard setting now updates the live
+  runtime state as well as persisted settings, and workers waiting for live
+  traffic can resume immediately when pause is turned off.
+- **V2Ray Proxy**: expose live-traffic wait state in the model filter status
+  and show a clear dashboard message when workers are waiting for model
+  traffic to go quiet.
+
+## Changed
+- **V2Ray Proxy**: add pagination controls to the Servers table while keeping
+  the existing 200-server page size. Users can move with Previous/Next or jump
+  directly to any page number from the top or bottom pager.
+
 # v0.6.11 (2026-08-11)
 
 ## Features
