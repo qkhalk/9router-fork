@@ -1,3 +1,28 @@
+# v0.6.14 (2026-08-12)
+
+## Fixes
+- **V2Ray Proxy**: reap orphaned temp-probe xray processes and config files at
+  app boot. Previously, if the app crashed or was restarted while a Model Proxy
+  Filter job was running, the spawned `xray run -c config.json.model-test-*`
+  processes and their temp config files were never cleaned up (the `finally`
+  cleanup only runs when the Node process is alive). Each restart mid-job
+  leaked processes + RAM + ports permanently. Added a dependency-free reaper
+  module (`src/lib/xray/reaper.js`) statically imported at boot; it kills any
+  xray whose cmdline references `config.json.model-test-*` and unlinks the
+  matching files. Never touches the main `config.json` or the managed PID.
+- **V2Ray Proxy**: Model Proxy Filter cache now has a freshness TTL. Cached
+  SUCCESS results older than `xrayModelFilterCacheTtlH` (default 24h, 0 =
+  forever) are treated as misses and re-probed, so a server that was reachable
+  yesterday but broken today is re-verified instead of trusted forever.
+- **V2Ray Proxy**: cached FAIL results are no longer permanent. A failed probe
+  is retried once it ages past `xrayModelFilterRetryFailAfterH` (default 1h,
+  0 = never retry), so a server that was temporarily down isn't blacklisted
+  forever — the filter rediscovers it when it recovers.
+
+## Changed
+- **V2Ray Proxy**: `getModelFilterResultsByConfigIds` accepts a `maxAgeMs`
+  option to exclude rows older than a cutoff (used by the new TTL gate).
+
 # v0.6.13 (2026-08-11)
 
 ## Fixes

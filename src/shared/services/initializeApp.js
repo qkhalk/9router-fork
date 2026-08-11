@@ -19,6 +19,7 @@ import { getInstallStatus } from "@/lib/ds2api/install";
 import { startManagedDS2API } from "@/lib/ds2api/lifecycle";
 import { DEFAULT_DS2API_URL, isLoopbackDS2APIUrl } from "@/lib/ds2api/detect";
 import { killAllBridges } from "@/lib/mcp/stdioSseBridge";
+import { reapOrphanedTempProbes } from "@/lib/xray/reaper.js";
 
 // Inject correct paths and DB hooks into manager.js (CJS) from ESM context
 (function bootstrapMitm() {
@@ -87,6 +88,19 @@ export async function initializeApp() {
 async function runHeavyStartup() {
   await cleanupProviderConnections();
   const settings = await getSettings();
+
+  // Reap orphaned temp-probe xray processes + files from any previous filter
+  // job that was interrupted (crash/restart mid-job). Runs on every boot,
+  // independent of xrayAutoStart, so orphans are cleared even when the managed
+  // xray is already running and startXrayService early-returns.
+  try {
+    const reaped = await reapOrphanedTempProbes();
+    if (reaped.unlinked > 0) {
+      console.log(`[InitApp] Reaped ${reaped.unlinked} orphaned temp-probe config file(s)`);
+    }
+  } catch (e) {
+    console.warn(`[InitApp] Reaper failed (non-fatal): ${e?.message || e}`);
+  }
 
   // Auto-resume tunnel (once per process)
   if (settings.tunnelEnabled && !g.tunnelAutoResumed) {

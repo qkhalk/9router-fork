@@ -14,7 +14,9 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { buildClientConfig, validateLink } from "./configBuilder.js";
+import { reapOrphanedTempProbes } from "./reaper.js";
 import { convertLink } from "./parser.js";
 import {
   isXrayInstalled,
@@ -216,6 +218,10 @@ function writeConfig(outbound, { socksPort, httpPort }) {
   return configPath;
 }
 
+// Re-export the orphan reaper (defined in ./reaper.js, a dependency-free module
+// so it can be statically imported at app boot without pulling manager.js).
+export { reapOrphanedTempProbes };
+
 /**
  * Create or refresh the managed proxy pool so the rest of 9router can route
  * through the local SOCKS port like any other proxy pool. The pool is marked
@@ -255,6 +261,10 @@ export async function startXrayService(opts = {}) {
     e.code = "NOT_INSTALLED";
     throw e;
   }
+
+  // Note: orphan reaping runs at app boot in initializeApp.runHeavyStartup,
+  // independent of this function, so it fires even when the managed xray is
+  // already running and we early-return below.
 
   const settings = await getSettings();
   const socksPort = Number(settings.xraySocksPort) || 10808;
@@ -666,6 +676,11 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
   // (configId, model) pair — configId is a sha1 of the canonical link, so a
   // config whose underlying server/credentials change is naturally a new id
   // and therefore a fresh cache entry.
+  //
+  // Two freshness knobs (settings, in hours, 0 = legacy/forever):
+  //  - xrayModelFilterCacheTtlH: a SUCCESS row older than this is re-tested.
+  //  - xrayModelFilterRetryFailAfterH: a FAIL row older than this is retried,
+  //    so a server that was temporarily down isn't blacklisted forever.
   let toTest = selected;
   // Bypass the cache entirely when forceRetest or prune is on:
   //  - forceRetest: caller already cleared this model's cache; nothing to hit.
@@ -673,14 +688,41 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
   //    gets the chance to run on every selected config. Otherwise a cached
   //    failed row would be reused and silently skip deletion.
   const useCache = !forceRetest && !prune;
-  const cacheMap = useCache
-    ? await getModelFilterResultsByConfigIds(selected.map((c) => c.id), model)
+  const cacheTtlMs = (Number(settings.xrayModelFilterCacheTtlH) || 0) * 3600 * 1000;
+  // For the cache lookup, honor the success TTL: rows older than cacheTtlMs are
+  // excluded entirely. Failed-row retry is handled separately below (fail rows
+  // within retryFailAfterH are NOT in the success-TTL-gated map, so they'll be
+  // treated as "to test" naturally; but fail rows older than the success TTL
+  // would also drop out — which is fine, they need re-test anyway).
+  const retryFailMs = (Number(settings.xrayModelFilterRetryFailAfterH) || 0) * 3600 * 1000;
+  // Build TWO maps: success-only (for reuse), and all-recent (for fail-retry gating).
+  // For reuse we want successes that are still within the success TTL.
+  // For fail-retry we need to know which fails are old enough to re-test.
+  const reuseMap = useCache
+    ? await getModelFilterResultsByConfigIds(selected.map((c) => c.id), model, {
+        maxAgeMs: cacheTtlMs > 0 ? cacheTtlMs : 0,
+      })
     : new Map();
+  const failMap = useCache
+    ? await getModelFilterResultsByConfigIds(selected.map((c) => c.id), model, { maxAgeMs: 0 })
+    : new Map();
+
+  const now = Date.now();
+  const isFailRetryDue = (configId) => {
+    if (retryFailMs <= 0) return false; // policy disabled
+    const row = failMap.get(configId);
+    if (!row || row.ok) return false;
+    const testedAt = row.testedAt ? Date.parse(row.testedAt) : 0;
+    if (!testedAt) return true; // unparseable/missing timestamp → re-test
+    return now - testedAt >= retryFailMs;
+  };
 
   const results = [];
   for (const config of selected) {
-    const cached = cacheMap.get(config.id);
-    if (!cached) continue;
+    const cached = reuseMap.get(config.id);
+    // Only reuse SUCCESS rows whose TTL is still valid. Fail rows are never
+    // reused — they're either re-tested (if retry due) or skipped this pass.
+    if (!cached || !cached.ok) continue;
     const result = {
       configId: config.id,
       name: config.name,
@@ -697,7 +739,15 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     results.push(result);
     onProgress?.(result);
   }
-  toTest = selected.filter((c) => !cacheMap.has(c.id));
+  // Re-test: configs with no reuse success AND (no row at all OR fail-retry due).
+  toTest = selected.filter((c) => {
+    if (reuseMap.has(c.id) && reuseMap.get(c.id).ok) return false; // reused
+    const anyRow = failMap.get(c.id);
+    if (!anyRow) return true; // never tested
+    // Has a row but not reused (fail, or success-expired). Re-test.
+    if (anyRow.ok) return true; // success but expired past TTL
+    return isFailRetryDue(c.id); // fail: only re-test if retry policy due
+  });
 
   // When every selected config is cached (toTest empty) the worker pool is a
   // no-op; keep at least 1 worker so the pool initializes harmlessly.

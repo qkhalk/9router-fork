@@ -84,6 +84,13 @@ const DEFAULT_SETTINGS = {
   xrayModelFilterTimeoutMs: 20000,
   xrayModelFilterPauseOnTraffic: true,
   xrayModelFilterQuietMs: 15000,
+  // Cache freshness: rows older than this (by testedAt) are treated as misses
+  // and re-probed. 0 = cache forever (legacy behavior). Default 24h.
+  xrayModelFilterCacheTtlH: 24,
+  // Failed-row re-test: a cached FAIL is retried once it ages past this window,
+  // so a server that was temporarily down isn't blacklisted forever.
+  // 0 = never retry fails (legacy behavior). Default 1h.
+  xrayModelFilterRetryFailAfterH: 1,
 };
 
 async function readRaw() {
