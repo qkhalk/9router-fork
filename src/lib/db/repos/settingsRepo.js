@@ -91,6 +91,20 @@ const DEFAULT_SETTINGS = {
   // so a server that was temporarily down isn't blacklisted forever.
   // 0 = never retry fails (legacy behavior). Default 1h.
   xrayModelFilterRetryFailAfterH: 1,
+  // Filter execution mode:
+  //  - "spawn" (default, legacy): spawn a fresh xray process per config-under-test.
+  //  - "api": keep one long-lived xray + swap outbounds via the gRPC API. Much
+  //    lighter on forks/RAM; falls back to "spawn" automatically if the api
+  //    instance can't start (old binary, port conflict, etc.).
+  xrayFilterMode: "spawn",
+  // Ports for api-mode filter instance. Must not collide with the managed
+  // xray (10808/10809) or each other across concurrent jobs.
+  xrayFilterApiSocksPort: 53080,
+  xrayFilterApiPort: 15491,
+  // Pre-declared SOCKS5 account count for api-mode = max concurrency supported
+  // by one filter instance. SOCKS accounts cannot be added dynamically (xray
+  // Issue #6199), so this is fixed at boot of the filter xray.
+  xrayFilterApiAccounts: 16,
 };
 
 async function readRaw() {
