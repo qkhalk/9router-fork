@@ -1,3 +1,31 @@
+# v0.6.11 (2026-08-11)
+
+## Features
+- **V2Ray Proxy**: persist Model Proxy Filter probe results so re-runs skip
+  already-tested servers. Each (config, model) result is cached in the DB and
+  reused until the config changes (the config id is a sha1 of the canonical
+  share link, so it doubles as a fingerprint — a config whose server or
+  credentials change is naturally a new id and a fresh cache entry). This
+  means restarting the server no longer forces a full re-probe: a filter run
+  after a restart completes in milliseconds when nothing has synced in between,
+  and the next subscription sync only re-probes configs that are actually new
+  or changed.
+- **V2Ray Proxy**: add a **Force Re-test All** button to the Model Proxy Filter
+  card. It clears the cache for the current model and re-probes every selected
+  server from scratch — for when you suspect a cached result has gone stale and
+  want a fresh pass. Prune mode always bypasses the cache so the destructive
+  pass sees every config's current state.
+- **V2Ray Proxy**: add a **Clear Cache** button (with confirmation) and a
+  matching `POST /api/xray/configs/model-filter/clear-cache` endpoint that
+  wipes cached results — either for a single model (`{ model }`) or for all
+  models. The endpoint refuses to run while a filter job is in progress
+  (`409`) to avoid racing with in-progress writes.
+- **V2Ray Proxy**: surface per-server model-filter status in the server list.
+  Each row now shows a `✓ <time>` / `✗ <time>` / `untested` badge indicating
+  the most recent probe outcome for the currently-configured filter model, and
+  the Model Proxy Filter card shows an aggregate cache summary
+  (`Cache: N results · M for current model`).
+
 # v0.6.10 (2026-08-11)
 
 ## Features
