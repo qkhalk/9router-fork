@@ -13,6 +13,8 @@
 - **V2Ray Proxy**: add pagination controls to the Servers table while keeping
   the existing 200-server page size. Users can move with Previous/Next or jump
   directly to any page number from the top or bottom pager.
+- **Release**: keep the root app and CLI package versions in lockstep so the
+  GitHub Release tarball reports `v0.6.12` after install/update.
 
 # v0.6.11 (2026-08-11)
 
