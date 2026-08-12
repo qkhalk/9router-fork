@@ -99,3 +99,7 @@ graphify-out/*
 .PR/
 .next-analyze/*
 .zcode/
+
+# npm pack tarballs (build artifacts for server deploys — 50MB+, belong in
+# GitHub Release assets, NOT in the git tree which can't evict blobs).
+*.tgz
