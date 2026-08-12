@@ -20,10 +20,15 @@
  *   - Single-flight: at most one rotation in flight; concurrent triggers are
  *     coalesced into the running promise.
  *   - Cooldown: do not rotate again within ROTATION_COOLDOWN_MS of the last
- *     successful switch, to avoid thrashing under a burst of 429s.
+ *     switch, to avoid thrashing under a burst of 429s.
+ *   - Adaptive bypass: if errors keep coming from the config we JUST rotated
+ *     to (the new IP is also bad), the cooldown is bypassed so we rotate
+ *     again immediately instead of pinning the user on a known-bad IP.
+ *     `recentlyTried` still prevents re-picking the same IP.
  *   - Fire-and-forget from the request loop: the caller does NOT await; the
  *     current request returns its 429 while the outbound is swapped in the
- *     background. The next request picks up the new IP.
+ *     background. The next request picks up the new IP. (A victim request that
+ *     hits the SOCKS-port-down window is retried by the chat loop, not here.)
  *   - Never rotates to the same active config, and skips configs already
  *     tried within the current cooldown window.
  */
@@ -106,12 +111,13 @@ function logRotation(level, message, extra = {}) {
   }
 }
 
-const ROTATION_COOLDOWN_MS = 30 * 1000;       // min gap between rotations
+const ROTATION_COOLDOWN_MS = 8 * 1000;        // min gap between rotations
 const RECENT_SWITCH_SKIP_MS = 5 * 60 * 1000;  // skip configs rotated-to recently
 const MAX_RECENTLY_TRIED = 8;                  // cap the in-memory try history
 
 let inflight = null;        // Promise<{rotated:boolean, reason:string}> | null
 let lastRotateAt = 0;       // epoch ms of last successful rotation
+let lastRotatedToConfigId = null; // the configId we most recently rotated TO
 const recentlyTried = new Map(); // configId -> epoch ms it was rotated to
 
 function nowMs() { return Date.now(); }
@@ -129,6 +135,51 @@ function pruneRecentlyTried() {
  */
 export function canRotate() {
   return !inflight && nowMs() - lastRotateAt >= ROTATION_COOLDOWN_MS;
+}
+
+/**
+ * The in-flight rotation promise, or null when idle. Side-effect-free (unlike
+ * triggerManagedRotationOnProxyError, which would START a rotation if idle).
+ * Used by the request-retry path to await an ongoing switch before retrying.
+ */
+export function getInflightRotation() {
+  return inflight;
+}
+
+/**
+ * Read-only snapshot of rotation bookkeeping (cooldown remaining, last rotated
+ * config, etc.) for observability and the retry path's heuristics.
+ */
+export function getRotationState() {
+  const now = nowMs();
+  return {
+    inflight: !!inflight,
+    lastRotateAt,
+    lastRotatedToConfigId,
+    cooldownRemainingMs: Math.max(0, ROTATION_COOLDOWN_MS - (now - lastRotateAt)),
+    canRotate: canRotate(),
+  };
+}
+
+/**
+ * Wait for any in-flight rotation to settle (resolve/reject), up to maxWaitMs.
+ * Resolves with the rotation result if it completed in time, else {timedOut:true}.
+ * Never throws. Used by the chat-loop retry path so a victim request doesn't
+ * fire into the SOCKS-port-down window of an ongoing switch.
+ */
+export async function waitForManagedRotationSettle({ maxWaitMs = 6000 } = {}) {
+  const current = inflight;
+  if (!current) return { idle: true };
+  const timeout = new Promise((resolve) => {
+    const t = setTimeout(() => resolve({ timedOut: true }), maxWaitMs);
+    t.unref?.();
+  });
+  try {
+    const result = await Promise.race([current, timeout]);
+    return { settled: true, result };
+  } catch (e) {
+    return { settled: true, error: e?.message || String(e) };
+  }
 }
 
 /**
@@ -168,6 +219,8 @@ async function doRotate({ status, errorText, model }) {
 
   if (!candidates.length) {
     logRotation("warn", "managed-pool rotation aborted: no healthy candidate", { model, activeId });
+    // Enter cooldown so we don't spam the (empty) filter cache on every 429.
+    lastRotateAt = nowMs();
     return { rotated: false, reason: "no-healthy-candidate" };
   }
 
@@ -188,6 +241,7 @@ async function doRotate({ status, errorText, model }) {
         recentlyTried.delete(oldest[0]);
       }
       lastRotateAt = nowMs();
+      lastRotatedToConfigId = cand.configId;
       logRotation("info", "managed-pool rotated on proxy error", {
         status,
         model,
@@ -205,32 +259,51 @@ async function doRotate({ status, errorText, model }) {
     }
   }
   logRotation("warn", "managed-pool rotation exhausted all candidates", { triedCount: candidates.length });
+  // All candidates failed to switch — enter cooldown to avoid hot-spinning.
+  lastRotateAt = nowMs();
   return { rotated: false, reason: "all-candidates-failed" };
 }
 
 /**
  * Public entry point. Fire-and-forget by design: returns a promise that the
  * caller may ignore (or `.catch(() => {})`). Concurrent calls during an
- * in-flight rotation or inside the cooldown window are no-ops.
+ * in-flight rotation or inside the cooldown window are coalesced/no-ops.
+ *
+ * ADAPTIVE COOLDOWN: the base cooldown (ROTATION_COOLDOWN_MS) is bypassed when
+ * the error is coming from the SAME config we most recently rotated TO — i.e.
+ * the new IP is *also* bad, so rotating again immediately is the right move
+ * (not waiting out the full window). This is what keeps a burst of 429s from
+ * pinning the user on a known-bad freshly-rotated IP for the whole window.
  *
  * @param {{status?: number|string, error?: string, model?: string}} info
  * @returns {Promise<{rotated:boolean, reason:string}>}
  *   - When a rotation is already in flight, resolves to that same promise.
- *   - During cooldown, resolves immediately with {rotated:false, reason:"cooldown"}.
+ *   - During cooldown, resolves immediately with {rotated:false, reason:"cooldown"}
+ *     (or "cooldown-bypassed-then-rotated" if the adaptive rule fires).
  */
-export function triggerManagedRotationOnProxyError({ status, error, model } = {}) {
+export async function triggerManagedRotationOnProxyError({ status, error, model } = {}) {
   if (inflight) {
     logRotation("debug", "managed-pool rotation skipped: already in flight", { status, model });
     return inflight;
   }
   if (nowMs() - lastRotateAt < ROTATION_COOLDOWN_MS) {
-    logRotation("debug", "managed-pool rotation skipped: cooldown", {
-      status,
-      model,
-      sinceLastRotateMs: nowMs() - lastRotateAt,
-      cooldownMs: ROTATION_COOLDOWN_MS,
-    });
-    return Promise.resolve({ rotated: false, reason: "cooldown" });
+    // Adaptive bypass: if the CURRENT active config is the one we just rotated
+    // to, the new IP is also erroring — don't make the user wait out cooldown,
+    // rotate again immediately. recentlyTried prevents re-picking the same IP.
+    if (await shouldBypassCooldown()) {
+      logRotation("info", "managed-pool rotation cooldown bypassed (active == last rotated-to)", {
+        status, model, sinceLastRotateMs: nowMs() - lastRotateAt, cooldownMs: ROTATION_COOLDOWN_MS,
+      });
+      // Fall through to start a new rotation below.
+    } else {
+      logRotation("debug", "managed-pool rotation skipped: cooldown", {
+        status,
+        model,
+        sinceLastRotateMs: nowMs() - lastRotateAt,
+        cooldownMs: ROTATION_COOLDOWN_MS,
+      });
+      return { rotated: false, reason: "cooldown" };
+    }
   }
   inflight = doRotate({ status, errorText: typeof error === "string" ? error : "", model })
     .catch((e) => ({ rotated: false, reason: `exception:${e?.message || String(e)}` }))
@@ -238,9 +311,23 @@ export function triggerManagedRotationOnProxyError({ status, error, model } = {}
   return inflight;
 }
 
+/**
+ * Adaptive-cooldown predicate. True when we are inside the cooldown window AND
+ * the currently-active xray outbound is exactly the config we last rotated to.
+ * In that case the freshly-rotated IP is itself erroring, so there's no point
+ * holding back — allow another rotation (the candidate picker excludes both the
+ * active config and recentlyTried, so we won't loop on the same bad IP).
+ */
+async function shouldBypassCooldown() {
+  if (!lastRotatedToConfigId) return false;
+  const active = await getSelectedXrayConfig().catch(() => null);
+  return !!active && active.id === lastRotatedToConfigId;
+}
+
 /** Reset all in-memory state. Intended for tests. */
 export function _resetManagedRotationState() {
   inflight = null;
   lastRotateAt = 0;
+  lastRotatedToConfigId = null;
   recentlyTried.clear();
 }

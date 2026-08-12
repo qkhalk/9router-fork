@@ -142,3 +142,19 @@ export function isSocksPortOpen(port, host = "127.0.0.1", timeoutMs = 1500) {
     socket.connect(port, host);
   });
 }
+
+/**
+ * Poll the SOCKS port until it accepts connections, or until maxWaitMs elapses.
+ * Used by the chat-loop retry path to wait out the ~1-10s teardown/respawn
+ * window of a managed-pool rotation before retrying a victim request.
+ *
+ * @returns {Promise<boolean>} true if the port came up before the deadline
+ */
+export async function waitForSocksPortOpen(port, maxWaitMs = 6000, host = "127.0.0.1") {
+  const deadline = Date.now() + Math.max(0, maxWaitMs);
+  while (Date.now() < deadline) {
+    if (await isSocksPortOpen(port, host, 800)) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}

@@ -1,3 +1,38 @@
+# v0.6.18 (2026-08-12)
+
+## Changed
+- **Managed-pool rotation — adaptive cooldown**: reduced the rotation cooldown
+  from 30s to 8s so a 429'd egress IP is swapped out much sooner. On top of
+  the flat window, an **adaptive bypass** now fires when errors keep coming
+  from the config we *just* rotated to (i.e. the new IP is also bad): the
+  cooldown is bypassed and another rotation runs immediately, so a burst of
+  429s no longer pins you on a known-bad freshly-rotated IP for the whole
+  window. `recentlyTried` (5-min skip, cap 8) still prevents re-picking the
+  same IP, and when the usable candidate pool is exhausted the rotation enters
+  cooldown to avoid hot-spinning an empty filter cache. Selection itself is
+  unchanged — it still picks Model-Filter-verified `ok=1` IPs ordered by
+  latency, excluding the active + recently-tried.
+
+## Fixes
+- **Managed-pool 502 during rotation (victim requests)**: concurrent requests
+  that hit the ~1-10s SOCKS-port-down window of a `switchConfig` kill+respawn
+  previously failed with `502 fetch failed` and — worse — were treated as
+  account errors (marking the account unavailable / triggering fallback). These
+  are now recognised as transient connection failures: the chat loop waits for
+  any in-flight rotation to settle, polls the SOCKS port back up (≤6s), then
+  retries the SAME account up to 2 times **without** marking it unavailable.
+  Classification is by low-level socket signature in the error text
+  (`fetch failed` / `ECONNREFUSED` / `UND_ERR_SOCKET` / `socket hang up` /
+  `cause: ECONN…`), so genuine upstream 502s are unaffected. Mid-stream aborts
+  keep their existing graceful-terminal path.
+
+## Added
+- `getInflightRotation()`, `getRotationState()`, `waitForManagedRotationSettle()`
+  exports in managedRotation.js (observability + the retry path).
+- `waitForSocksPortOpen(port, maxWaitMs)` in tester.js (port readiness poll).
+- `isConnectionFailure(errorText)` in proxyRotation.js (connection vs upstream
+  error classifier).
+
 # v0.6.17 (2026-08-12)
 
 ## Added
