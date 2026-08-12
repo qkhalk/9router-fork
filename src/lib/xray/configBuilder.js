@@ -54,6 +54,25 @@ export function buildClientConfig(outbound, opts = {}) {
       { tag: "direct", protocol: "freedom" },
       { tag: "block", protocol: "blackhole" },
     ],
+    // Policy: xray's default level-0 `downlinkOnly` is 5s. For LLM API traffic
+    // that means once the request body finishes uploading, xray starts a 5s
+    // countdown — if the server pauses longer than that between SSE chunks
+    // (typical during model thinking/TTFT), xray closes the connection and the
+    // client sees an undici `TypeError: terminated` mid-stream. Raise the
+    // direction-idle timers well above realistic LLM generation pauses and keep
+    // the connection alive across slow upstream output. Applied to every xray
+    // instance this builder produces (managed active proxy, temp probes, filter
+    // api-mode instance).
+    policy: {
+      levels: {
+        "0": {
+          handshake: 30,      // TLS handshake timeout (s)
+          connIdle: 300,      // idle connection lifetime (s)
+          uplinkOnly: 60,     // no-upload -> close (s)
+          downlinkOnly: 300,  // no-download -> close (s) — xray default 5s kills SSE streams
+        },
+      },
+    },
   };
 }
 
