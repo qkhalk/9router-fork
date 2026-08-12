@@ -1,3 +1,20 @@
+# v0.6.16 (2026-08-12)
+
+## Fixes
+- **V2Ray Proxy (critical)**: streaming requests through the managed SOCKS5
+  proxy intermittently aborted mid-response with an undici
+  `TypeError: terminated` after 3-13s. Root cause: xray-core's default level-0
+  `downlinkOnly` policy is 5 seconds — once the request body finishes uploading,
+  xray starts a 5s countdown and closes the connection if the server pauses
+  longer than that between SSE chunks (typical during model thinking/TTFT).
+  Fixed by emitting a `policy.levels.0` block in every config built by
+  `buildClientConfig` (managed active proxy, temp probes, api-mode filter
+  instance): `handshake: 30, connIdle: 300, uplinkOnly: 60, downlinkOnly: 300`.
+  Verified: 5 large streaming requests (23-66s, 250-534KB each) completed with
+  zero terminates, vs intermittent failure before. The bundled undici 7.29.0
+  SOCKS5 stack itself was exonerated — the terminate was undici correctly
+  propagating the TCP close that xray initiated.
+
 # v0.6.15 (2026-08-12)
 
 ## Added
