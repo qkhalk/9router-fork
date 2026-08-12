@@ -53,6 +53,27 @@ export function isProxyRotatableError(status, errorText) {
   return false;
 }
 
+// Signatures of a *connection-level* proxy failure (the proxy itself was
+// unreachable / dropped the connection), as opposed to an upstream HTTP error
+// the proxy successfully forwarded. `formatProviderError` surfaces the undici /
+// socket cause in the `(cause: ...)` suffix, so we can tell a SOCKS-port-down
+// event (rotation teardown) from a genuine upstream 502.
+const CONNECTION_FAILURE_RE =
+  /fetch failed|socket hang up|und_err_socket|other side closed|cause:\s*e(connrefused|connreset|timedout|pipe|connaborted|eof)/i;
+
+/**
+ * Is this error a connection-level proxy failure (proxy unreachable / dropped),
+ * rather than an upstream response the proxy forwarded? Used by the managed-pool
+ * retry path: such failures during a rotation's teardown/respawn window are
+ * transient and worth retrying once the SOCKS port is back up — they are NOT a
+ * reason to mark the account unavailable.
+ */
+export function isConnectionFailure(errorText) {
+  if (!errorText) return false;
+  const text = typeof errorText === "string" ? errorText : String(errorText);
+  return CONNECTION_FAILURE_RE.test(text);
+}
+
 // --- cooldown durations ---------------------------------------------------
 
 const PROXY_COOLDOWN_MS = {

@@ -25,13 +25,21 @@ import {
   isProxyRotatableError,
   proxyCooldownForError,
   groupHasAvailableEntry,
+  isConnectionFailure,
 } from "@/lib/network/proxyRotation.js";
 import { getProxyPoolById } from "@/models";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { beginLiveModelTraffic, wrapLiveModelResponse } from "@/lib/xray/modelFilterTraffic.js";
-import { triggerManagedRotationOnProxyError } from "@/lib/xray/managedRotation.js";
+import { triggerManagedRotationOnProxyError, waitForManagedRotationSettle } from "@/lib/xray/managedRotation.js";
 import { MANAGED_POOL_ID } from "@/lib/xray/manager.js";
+import { waitForSocksPortOpen } from "@/lib/xray/tester.js";
+
+// Max times a single request will retry after a managed-pool *connection*
+// failure (SOCKS port down during a rotation's teardown/respawn window). These
+// are transient infra errors, not account errors — we wait for the port to come
+// back and retry the same account rather than burning it.
+const MAX_MANAGED_CONN_RETRIES = 2;
 
 /**
  * Handle chat completion request
@@ -249,6 +257,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const excludedProxyEntryIds = new Set();
   let lastError = null;
   let lastStatus = null;
+  // Retries used so far for managed-pool connection failures (port-down during
+  // rotation). Bounded by MAX_MANAGED_CONN_RETRIES per request.
+  let managedConnRetries = 0;
 
   while (true) {
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
@@ -326,16 +337,48 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (result.success) return result.response;
 
-    // --- Proxy-group rotation on rotatable errors (429/rate-limit/5xx/...) ---
+    const psd = refreshedCredentials?.providerSpecificData || {};
+    const usedPoolId = psd.connectionProxyPoolId || null;
+    const usedEntryId = psd.connectionProxyEntryId || null;
+
+    // --- Managed-pool connection-failure retry (rotation teardown window) ---
+    // When a request through the managed pool fails with a CONNECTION-level
+    // error (SOCKS port down during a switchConfig kill+respawn), the failure
+    // is transient infra noise — NOT an account problem. Wait for any in-flight
+    // rotation to settle, for the SOCKS port to come back, then retry the SAME
+    // account without marking it unavailable. Bounded by MAX_MANAGED_CONN_RETRIES.
+    if (
+      usedPoolId === MANAGED_POOL_ID &&
+      result.status === HTTP_STATUS.BAD_GATEWAY &&
+      isConnectionFailure(result.error) &&
+      managedConnRetries < MAX_MANAGED_CONN_RETRIES
+    ) {
+      managedConnRetries += 1;
+      const connSocksPort = Number(psd.connectionSocksPort) || Number((await getSettings().catch(() => ({})))?.xraySocksPort) || 10808;
+      log.warn("PROXY", `Managed-pool connection failure (likely mid-rotation); waiting for SOCKS port ${connSocksPort} then retry ${managedConnRetries}/${MAX_MANAGED_CONN_RETRIES}`);
+      // 1. Let any in-flight rotation finish (it may be the one that tore the port down).
+      await waitForManagedRotationSettle({ maxWaitMs: 6000 });
+      // 2. Wait for the port to accept connections again (≤6s).
+      const up = await waitForSocksPortOpen(connSocksPort, 6000);
+      if (up) {
+        // Port is back — retry the same account + body. Do NOT mark the
+        // account unavailable or exclude it; this was an infra blip.
+        lastError = result.error;
+        lastStatus = result.status;
+        continue;
+      }
+      // Port didn't come back in time — fall through to normal error handling.
+      log.warn("PROXY", `Managed-pool SOCKS port ${connSocksPort} did not come back within 6s; falling through to error handling`);
+    }
+
+    const rotatable = isProxyRotatableError(result.status, result.error);
+
+    // --- Proxy-group / managed-pool rotation on rotatable errors (429/rate-limit/5xx) ---
     // When a request fails through a proxy-group entry with an error that's
     // often IP-specific, cool down that entry and retry the SAME account with a
     // different proxy from the group — rather than burning the whole account.
     // Only fall back to the next account once the group has no entries left.
-    const psd = refreshedCredentials?.providerSpecificData || {};
-    const usedPoolId = psd.connectionProxyPoolId || null;
-    const usedEntryId = psd.connectionProxyEntryId || null;
-    const rotatable = isProxyRotatableError(result.status, result.error);
-
+    //
     // Managed pool (v2go-xray-managed) is a single-URL pool backed by one
     // running xray instance. It has no per-entry rotation, so on a rotatable
     // error (e.g. 429 rate-limit on the current egress IP) kick off a
