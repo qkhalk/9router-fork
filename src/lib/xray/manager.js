@@ -102,7 +102,7 @@ const state = {
 };
 
 const modelFilterState = {
-  status: "idle", // idle | running | done | error
+  status: "idle", // idle | running | done | cancelled | error
   startedAt: null,
   finishedAt: null,
   source: null,
@@ -147,6 +147,29 @@ export function isModelFilterRunning() {
 }
 
 let modelFilterRunning = null;
+
+// Cooperative cancel flag for the running model-filter job. Set by
+// requestModelFilterCancel() (the /stop endpoint); the worker loop checks it
+// between configs so in-flight probes finish naturally, then the job winds
+// down. Results already probed are persisted incrementally, so re-running
+// resumes from where it stopped (the cache splitter skips fresh successes).
+let modelFilterCancelRequested = false;
+
+/** True if a stop has been requested for the running job. */
+export function isModelFilterCancelRequested() {
+  return modelFilterCancelRequested;
+}
+
+/**
+ * Request a cooperative stop of the running model-filter job.
+ * @returns {boolean} true if a job was running and a stop was requested
+ */
+export function requestModelFilterCancel() {
+  if (!modelFilterRunning) return false;
+  modelFilterCancelRequested = true;
+  return true;
+}
+
 const allocatedTempSocksPorts = new Set();
 
 function setStatus(status, extra = {}) {
@@ -884,18 +907,24 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
 
   const testConfig = async (config, probeFn, workerIdx) => {
     const shouldPauseForTraffic = () => (modelFilterRunning ? modelFilterState.pauseOnTraffic : pauseOnTraffic === true);
-    if (shouldPauseForTraffic()) {
+    // A stop request also breaks the traffic-quiet wait so a cancelled job
+    // doesn't sit idle for up to 10 min waiting for traffic to clear.
+    const shouldContinueWait = () => shouldPauseForTraffic() && !modelFilterCancelRequested;
+    if (shouldContinueWait()) {
       modelFilterState.trafficWaiters += 1;
       try {
         await waitForLiveTrafficQuiet({
           quietMs: modelFilterRunning ? modelFilterState.quietMs : quietMs,
           maxWaitMs: 10 * 60 * 1000,
-          shouldContinue: shouldPauseForTraffic,
+          shouldContinue: shouldContinueWait,
         });
       } finally {
         modelFilterState.trafficWaiters = Math.max(0, modelFilterState.trafficWaiters - 1);
       }
     }
+    // If a stop came in while waiting for traffic, skip the probe for this
+    // config — it stays untested and will be picked up on the resume run.
+    if (modelFilterCancelRequested) return;
     try {
       const probe = await probeFn(config, workerIdx);
       let result = { configId: config.id, name: config.name, host: config.host, country: config.country, ...probe };
@@ -951,7 +980,7 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
   }
 
   const workers = Array.from({ length: workerCount }, async (_, workerIdx) => {
-    while (cursor < toTest.length) {
+    while (cursor < toTest.length && !modelFilterCancelRequested) {
       const index = cursor;
       cursor += 1;
       await testConfig(toTest[index], probeFn, workerIdx);
@@ -965,6 +994,7 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     }
   }
 
+  const cancelled = modelFilterCancelRequested;
   const cachedCount = results.filter((r) => r.cached).length;
   return {
     model,
@@ -978,6 +1008,7 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     pruned: results.filter((r) => r.pruned === true).length,
     pruneSkipped: results.filter((r) => r.pruneSkipped).length,
     cached: cachedCount,
+    cancelled,
     results,
   };
 }
@@ -990,6 +1021,7 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
   const normalized = normalizeModelFilterLimit({ limit, all });
   const normalizedConcurrency = normalizeModelFilterConcurrency(concurrency);
   const job = (async () => {
+    modelFilterCancelRequested = false;
     Object.assign(modelFilterState, {
       status: "running",
       startedAt: new Date().toISOString(),
@@ -1037,7 +1069,7 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
         },
       });
       Object.assign(modelFilterState, {
-        status: "done",
+        status: result.cancelled ? "cancelled" : "done",
         finishedAt: new Date().toISOString(),
         tested: result.tested,
         passed: result.passed,
@@ -1058,6 +1090,7 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
       throw error;
     } finally {
       modelFilterRunning = null;
+      modelFilterCancelRequested = false;
       await refreshModelFilterCacheStats();
     }
   })();
