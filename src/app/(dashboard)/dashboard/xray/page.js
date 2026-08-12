@@ -139,6 +139,10 @@ export default function XrayProxyPage() {
   });
   const [modelFilterBusy, setModelFilterBusy] = useState(false);
   const [modelFilterResult, setModelFilterResult] = useState(null);
+  // True after the user clicks "Stop Filter" until the running job actually
+  // winds down (status leaves "running"). Drives the "Stopping..." banner and
+  // keeps the button disabled to prevent duplicate stop requests.
+  const [stopRequested, setStopRequested] = useState(false);
   const [customInterval, setCustomInterval] = useState({ value: 30, unit: "minutes" });
   // True when the user has picked "Custom…" in the dropdown, regardless of the
   // persisted value. We keep this separate from settings.xraySyncIntervalMin so
@@ -249,6 +253,14 @@ export default function XrayProxyPage() {
       return () => clearInterval(pollRef.current);
     }
   }, [status?.status, status?.modelFilter?.status, fetchStatus]);
+
+  // Clear the "stopping" indicator once the job is no longer running (it has
+  // wound down — either fully stopped, errored, or completed).
+  useEffect(() => {
+    if (status?.modelFilter?.status !== "running") {
+      setStopRequested(false);
+    }
+  }, [status?.modelFilter?.status]);
 
   const api = async (path, method = "POST", body) => {
     setBusy(true);
@@ -392,7 +404,13 @@ export default function XrayProxyPage() {
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         setModelFilterResult(data);
         const cachedNote = data.cached ? ` · ${data.cached} cached` : "";
-        notify.success(`Model filter done: ${data.passed}/${data.tested} usable${data.pruned ? ` · removed ${data.pruned}` : ""}${cachedNote}`);
+        if (data.cancelled) {
+          notify.info(`Filter stopped: ${data.passed}/${data.tested} tested before stop. Re-run to resume from where it stopped.`);
+        } else if (data.skipped) {
+          notify.info("A filter run is already in progress.");
+        } else {
+          notify.success(`Model filter done: ${data.passed}/${data.tested} usable${data.pruned ? ` · removed ${data.pruned}` : ""}${cachedNote}`);
+        }
         await fetchConfigs();
         await fetchStatus();
       } catch (e) {
@@ -414,6 +432,32 @@ export default function XrayProxyPage() {
     }
 
     await execute();
+  };
+
+  // Request a cooperative stop of the running model filter. The job winds
+  // down after current probes finish; already-tested servers are kept in the
+  // DB, so re-running resumes from where it stopped. No separate "Resume"
+  // button is needed — "Run Filter Now" after a stop IS the resume.
+  const handleStopModelFilter = async () => {
+    if (stopRequested) return;
+    setStopRequested(true);
+    try {
+      const res = await fetch("/api/xray/configs/model-filter/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 409) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      notify.info(data.message || "Stop requested. The filter will wind down shortly.");
+      // Refresh now for immediate feedback; the in-flight runModelFilter POST
+      // resolves (and refreshes again) once the job actually stops.
+      await fetchStatus();
+    } catch (e) {
+      setStopRequested(false);
+      notify.error(`Stop failed: ${e.message}`);
+    }
   };
 
   // Clear cached model-filter results (all models). Next filter run re-probes
@@ -837,10 +881,10 @@ export default function XrayProxyPage() {
             </p>
           </div>
           {visibleModelFilterResult && (
-            <Badge variant={visibleModelFilterResult.status === "running" ? "warning" : visibleModelFilterResult.failed === 0 ? "success" : "warning"}>
+            <Badge variant={visibleModelFilterResult.status === "running" ? "warning" : visibleModelFilterResult.cancelled || visibleModelFilterResult.failed > 0 ? "warning" : "success"}>
               {visibleModelFilterResult.status === "running"
                 ? `${visibleModelFilterResult.tested || 0} tested${visibleModelFilterResult.cached ? ` · ${visibleModelFilterResult.cached} cached` : ""}...`
-                : `${visibleModelFilterResult.passed}/${visibleModelFilterResult.tested} usable${visibleModelFilterResult.cached ? ` · ${visibleModelFilterResult.cached} cached` : ""}`}
+                : `${visibleModelFilterResult.cancelled ? "Stopped · " : ""}${visibleModelFilterResult.passed}/${visibleModelFilterResult.tested} usable${visibleModelFilterResult.cached ? ` · ${visibleModelFilterResult.cached} cached` : ""}`}
             </Badge>
           )}
         </div>
@@ -957,16 +1001,29 @@ export default function XrayProxyPage() {
 
         {runningModelFilter && (
           <div className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 p-3">
-            Filtering {status.modelFilter.all ? "all active configs" : `up to ${status.modelFilter.limit}`} with {status.modelFilter.concurrency || 2} threads:
-            {" "}{status.modelFilter.tested || 0} tested, {status.modelFilter.passed || 0} usable, {status.modelFilter.failed || 0} failed{status.modelFilter.cached ? `, ${status.modelFilter.cached} cached` : ""}.
-            {status.modelFilter.pauseOnTraffic ? " Pauses when live traffic is active." : ""}
-            {modelFilterTrafficWaiters > 0
+            {stopRequested
+              ? <>Stopping — finishing current probes, then the filter will wind down. </>
+              : <>Filtering {status.modelFilter.all ? "all active configs" : `up to ${status.modelFilter.limit}`} with {status.modelFilter.concurrency || 2} threads:{" "}</>
+            }
+            {!stopRequested && <>{status.modelFilter.tested || 0} tested, {status.modelFilter.passed || 0} usable, {status.modelFilter.failed || 0} failed{status.modelFilter.cached ? `, ${status.modelFilter.cached} cached` : ""}.</>}
+            {!stopRequested && status.modelFilter.pauseOnTraffic ? " Pauses when live traffic is active." : ""}
+            {!stopRequested && modelFilterTrafficWaiters > 0
               ? ` Waiting for live traffic to go quiet (${modelFilterLiveTraffic} active request${modelFilterLiveTraffic === 1 ? "" : "s"}).`
               : ""}
           </div>
         )}
 
         <div className="flex flex-wrap gap-2">
+          {runningModelFilter && (
+            <Button
+              variant="danger"
+              onClick={handleStopModelFilter}
+              disabled={stopRequested}
+              title="Stop after the current probes finish. Already-tested servers are kept; re-running resumes from where it stopped."
+            >
+              {stopRequested ? "Stopping..." : "Stop Filter"}
+            </Button>
+          )}
           <Button onClick={() => runModelFilter()} disabled={modelFilterBusy || runningModelFilter || busy || !status.binaryInstalled}>
             {modelFilterBusy || runningModelFilter ? "Testing..." : "Run Filter Now"}
           </Button>

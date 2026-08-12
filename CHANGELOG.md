@@ -1,3 +1,39 @@
+# v0.6.17 (2026-08-12)
+
+## Added
+- **Model Proxy Filter — Stop button**: the dashboard now shows a red "Stop
+  Filter" button while a filter run is in progress. It requests a cooperative
+  stop: the worker loop checks a cancel flag between configs, so in-flight
+  probes finish naturally and the job winds down within a few seconds (the
+  traffic-quiet wait is also broken early so a cancelled job doesn't idle for
+  up to 10 min). New endpoint `POST /api/xray/configs/model-filter/stop`.
+  Results already probed are persisted incrementally (one DB upsert per
+  config), so they survive the stop — re-running "Run Filter Now" resumes from
+  where it stopped because the cache splitter skips configs with fresh success
+  rows. This is why no separate "Resume" button is needed: **Start after Stop
+  IS the resume.** Status badge and banner reflect a "Stopped · X/Y usable"
+  / "Stopping…" state.
+
+## Fixes
+- **Windows desktop cmd-window flood (critical UX)**: running the Model Proxy
+  Filter on Windows spammed hundreds of `cmd.exe` console windows, freezing
+  the desktop. Root cause was NOT the xray spawn (it already passed
+  `windowsHide: true`) — it was the per-test process teardown. Every temp xray
+  was killed via `child_process.exec('powershell.exe …Stop-Process…')`, which
+  routes through cmd.exe and opens a visible console per call; with one kill
+  per config, a run over hundreds of configs produced hundreds of windows.
+  The same defect also affected `stopXray()` and `restartXray()`. Fixed by
+  spawning `powershell.exe` directly (no shell) with `windowsHide: true` and
+  `stdio: "ignore"` in a new `killPidWindows()` helper, which creates the
+  process with `CREATE_NO_WINDOW` so nothing is ever visible. The unused
+  `exec`/`execFile` imports were removed from `process.js`.
+- **Cross-platform hardening (Windows console flashes)**: audited every
+  `child_process` call in the repo for missing `windowsHide`. Two additional
+  latent console-window leaks fixed (same class of bug, off the filter path):
+  the MCP stdio-plugin spawner (`src/lib/mcp/stdioSseBridge.js`) and the
+  updater's browser-open relaunch (`src/lib/updater/updater.js`, `shell: true`
+  spawn) now pass `windowsHide: true`, so neither pops a `cmd.exe` window.
+
 # v0.6.16 (2026-08-12)
 
 ## Fixes

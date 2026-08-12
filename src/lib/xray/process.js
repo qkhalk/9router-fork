@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, execFile, exec } from "node:child_process";
+import { spawn } from "node:child_process";
 import { DATA_DIR } from "@/lib/dataDir.js";
 import { getXrayBinaryPath, isXrayInstalled } from "./installer.js";
 
@@ -39,6 +39,41 @@ function writePid(pid) {
 
 function clearPid() {
   try { if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE); } catch { /* ignore */ }
+}
+
+/**
+ * Kill a PID on Windows WITHOUT flashing a cmd.exe console window.
+ *
+ * `child_process.exec(string)` routes the command through cmd.exe, which opens
+ * a visible console per call. During a model-filter run that spawns a temp
+ * xray per config, the per-test teardown fired one such kill — so hundreds of
+ * configs produced hundreds of cmd.exe windows flooding the desktop.
+ *
+ * Spawning powershell.exe directly (no shell) with `windowsHide: true` and
+ * `stdio: "ignore"` creates the process with CREATE_NO_WINDOW, so nothing is
+ * ever visible. Resolves once the kill returns (or after a safety timeout so
+ * the caller never hangs on a dead powershell).
+ *
+ * Only call this from win32 branches — it shells out to powershell.exe.
+ */
+function killPidWindows(pid) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    try {
+      const p = spawn(
+        "powershell.exe",
+        ["-NoProfile", "-NoLogo", "-Command", `Stop-Process -Id ${pid} -Force`],
+        { windowsHide: true, stdio: "ignore" }
+      );
+      p.once("exit", done);
+      p.once("error", done);
+      const t = setTimeout(done, 3000);
+      t.unref?.();
+    } catch {
+      done();
+    }
+  });
 }
 
 /** Probe whether a pid is alive (process.kill with signal 0 throws if dead). */
@@ -131,7 +166,9 @@ export function stopXray() {
     if (process.platform === "win32") {
       // PowerShell Stop-Process is more reliable than taskkill across shells.
       // /F equivalent = -Force. Fire and forget — the caller clears the PID file.
-      exec(`powershell.exe -NoProfile -Command "Stop-Process -Id ${pid} -Force"`, () => {});
+      // killPidWindows spawns powershell directly with CREATE_NO_WINDOW so no
+      // cmd.exe console flashes on screen.
+      killPidWindows(pid);
     } else {
       process.kill(pid, "SIGTERM");
       setTimeout(() => {
@@ -161,9 +198,7 @@ export async function restartXray({ configPath }) {
   const pid = getManagedPid();
   if (pid) {
     if (process.platform === "win32") {
-      await new Promise((resolve) =>
-        exec(`powershell.exe -NoProfile -Command "Stop-Process -Id ${pid} -Force"`, () => resolve())
-      );
+      await killPidWindows(pid);
       // Give the OS a moment to release the port.
       await new Promise((r) => setTimeout(r, 500));
     } else {
@@ -223,7 +258,10 @@ export async function spawnTempXray({ configPath }) {
     kill() {
       try {
         if (process.platform === "win32") {
-          exec(`powershell.exe -NoProfile -Command "Stop-Process -Id ${child.pid} -Force"`, () => {});
+          // Fire and forget — killPidWindows spawns powershell with
+          // CREATE_NO_WINDOW so per-test teardown doesn't flash a cmd console.
+          // (This kill fires once per config during a model-filter run.)
+          killPidWindows(child.pid);
         } else {
           process.kill(child.pid, "SIGKILL");
         }

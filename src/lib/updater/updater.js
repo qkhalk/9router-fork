@@ -177,7 +177,7 @@ function openBrowser(url) {
   const cmd = platform === "darwin" ? `open "${url}"`
     : platform === "win32" ? `start "" "${url}"`
     : `xdg-open "${url}"`;
-  try { spawn(cmd, { shell: true, detached: true, stdio: "ignore" }).unref(); } catch { /* ignore */ }
+  try { spawn(cmd, { shell: true, detached: true, stdio: "ignore", windowsHide: true }).unref(); } catch { /* ignore */ }
 }
 
 // Wait until app port is listening (server alive again), then open dashboard

@@ -114,7 +114,7 @@ function getOrSpawn(name) {
   const plugin = findPlugin(name);
   if (!plugin) throw new Error(`Unknown local plugin: ${name}`);
 
-  const proc = spawn(plugin.command, plugin.args, { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+  const proc = spawn(plugin.command, plugin.args, { stdio: ["pipe", "pipe", "pipe"], env: process.env, windowsHide: true });
   entry = { proc, sessions: new Map(), buffer: "" };
   store.set(name, entry);
 
