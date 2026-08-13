@@ -1,3 +1,59 @@
+# v0.6.19 (2026-08-13)
+
+## Added
+- **proxyxoay.org rotating-proxy provider**: a new pool type `proxyxoay` on the
+  Proxy Pools page. Paste one or more API keys (bulk-add, one per line); each
+  key becomes a rotating residential/4G proxy and the pool rotates across all
+  keys using the existing rotation modes (on-error / round-robin / random). The
+  manager polls `api.proxyxoay.org/api/key_xoay.php` shortly before each key's
+  `time_die` to keep its IP fresh, displays carrier (`nha_mang`), location
+  (`vi_tri`), exit IP and live countdowns, and honors the provider rate-limit
+  (`next_allowed_in_seconds`) on manual rotation. Provider calls go through the
+  global outbound proxy so the dashboard can reach proxyxoay even when itself
+  proxied. Per-key "Rotate now" + pool-level "Rotate all" controls are exposed,
+  and a dedicated status card polls every 5s. API: `POST /api/proxy-pools`
+  (`type:"proxyxoay"`), `POST /api/proxy-pools/:id/rotate`, `GET|POST
+  /api/proxy-pools/:id/forward`, `GET /api/proxy-pools/:id/status`.
+- **Local forwarding ports (proxyxoay)**: optionally expose a `127.0.0.1:<port>`
+  forwarding server (proxy-chain) per key so external tools can ride the current
+  rotating IP — mirroring the proxy.exe.exe reference tool. Ports bind localhost
+  only; never exposed externally.
+- **Multi-format proxy URL parser**: a single shared parser
+  (`src/lib/proxy/parseProxy.js`) now accepts the full spread of proxy formats
+  across the dashboard, API routes, and the request-time network layer. Newly
+  supported: **reversed order** `scheme://host:port@user:pass` (previously
+  mis-parsed by `new URL`), `user:pass:host:port`, `scheme://user:pass@host`
+  (default port), bare `host:port`, and IPv6 (`[::1]:8080:user:pass`). All forms
+  canonicalise to a standard URL undici's `ProxyAgent` accepts. Full unit-test
+  coverage in `tests/unit/proxy-parser.test.js` (28 cases).
+
+## Changed
+- proxy-pool create/update now canonicalise every proxy URL through the shared
+  parser, so pasting any supported format into the single-proxy field, the group
+  batch import, or a group entry all just works. Relay pools (vercel/cloudflare/
+  deno) keep their base URL untouched.
+- `proxyFetch.normalizeProxyUrl` routes through the shared parser, so legacy
+  connection-proxy URLs (which bypass creation-time normalisation) also accept
+  every format at request time.
+
+## Fixes
+- **proxyxoay forwarding server import**: `proxy-chain` is a transpiled CJS
+  module with no `.default`, so a default import resolved to `undefined` under
+  webpack and crashed pool registration. Switched to a namespace import.
+- **Deleting a proxyxoay pool no longer hangs**: the forwarding-server teardown
+  (`proxy-chain` `close`) is now fire-and-forget on delete with a 3s hard cap,
+  so removing a pool with active local ports can't stall the response.
+
+## Notes
+- proxyxoay filtering by carrier/location is display-only: the verified
+  `key_xoay.php` endpoint accepts only `key` + `live`, so `nha_mang`/`vi_tri`
+  are shown but not used as request filters.
+- proxyxoay success-schema (`proxyhttp`/`proxysocks5`/`nha_mang`/`vi_tri`/
+  `time_die`/`next_allowed_*`) follows the provider spec; the error path
+  (`{"error":"invalid_key","message":"Key không tồn tại"}`) was verified live,
+  and the success path + end-to-end forwarding were verified with a real key
+  (external request through `127.0.0.1:<forwardPort>` exited via the proxyxoay IP).
+
 # v0.6.18 (2026-08-12)
 
 ## Changed

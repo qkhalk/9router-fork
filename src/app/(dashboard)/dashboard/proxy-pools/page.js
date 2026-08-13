@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Badge, Button, Card, CardSkeleton, Input, Modal, Toggle, ConfirmModal } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
+import { normalizeProxyInput } from "@/lib/proxy/parseProxy";
+import ProxyXoayPoolCard from "./ProxyXoayPoolCard";
 
 function getStatusVariant(status) {
   if (status === "active") return "success";
@@ -26,6 +28,15 @@ function normalizeFormData(data = {}) {
     strictProxy: data.strictProxy === true,
     isGroup: data.isGroup === true,
     rotationMode: data.rotationMode || "on-error",
+    // proxyxoay.org provider config
+    type: data.type === "proxyxoay" ? "proxyxoay" : "",
+    pxKeysText: Array.isArray(data.keys)
+      ? data.keys.map((k) => (typeof k === "string" ? k : k.apiKey)).filter(Boolean).join("\n")
+      : "",
+    liveMinutes: data.liveMinutes || 5,
+    protocol: data.protocol === "socks5" ? "socks5" : "http",
+    autoRotate: data.autoRotate !== false,
+    forwardEnabled: data.forwardEnabled === true,
     entries: Array.isArray(data.entries) ? data.entries.map((e) => ({
       id: e.id || "",
       name: e.name || "",
@@ -142,13 +153,29 @@ export default function ProxyPoolsPage() {
         notify.error("A proxy group needs at least one entry");
         return;
       }
+    } else if (formData.type === "proxyxoay") {
+      const keys = formData.pxKeysText
+        .split(/\r?\n/)
+        .map((k) => k.trim())
+        .filter(Boolean);
+      if (keys.length === 0) {
+        notify.error("Enter at least one proxyxoay API key");
+        return;
+      }
+      payload.type = "proxyxoay";
+      payload.keys = keys;
+      payload.liveMinutes = Number(formData.liveMinutes) || 5;
+      payload.protocol = formData.protocol;
+      payload.autoRotate = formData.autoRotate;
+      payload.forwardEnabled = formData.forwardEnabled;
+      payload.rotationMode = formData.rotationMode;
     } else {
       payload.proxyUrl = formData.proxyUrl.trim();
       payload.isGroup = false;
     }
 
     if (!payload.name) return;
-    if (!formData.isGroup && !payload.proxyUrl) return;
+    if (!formData.isGroup && formData.type !== "proxyxoay" && !payload.proxyUrl) return;
 
     setSaving(true);
     try {
@@ -496,31 +523,20 @@ export default function ProxyPoolsPage() {
     const trimmed = line.trim();
     if (!trimmed) return null;
 
-    if (trimmed.includes("://")) {
-      const parsed = new URL(trimmed);
-      const hostLabel = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
-      return {
-        proxyUrl: parsed.toString(),
-        name: `Imported ${hostLabel}`,
-      };
-    }
+    // Delegate to the shared multi-format parser so all common shapes work:
+    //   scheme://user:pass@host:port   (standard)
+    //   scheme://host:port@user:pass   (reversed — new)
+    //   host:port:user:pass            (colon form, e.g. proxyxoay `proxyhttp`)
+    //   user:pass:host:port, host:port, IPv6 …
+    const result = normalizeProxyInput(trimmed);
+    if (!result.ok) throw new Error(result.error || "Unsupported format");
 
-    const parts = trimmed.split(":");
-    if (parts.length === 4) {
-      const [host, port, username, password] = parts;
-      if (!host || !port || !username || !password) {
-        throw new Error("Invalid host:port:user:pass format");
-      }
-
-      const proxyUrl = `http://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}`;
-      const parsed = new URL(proxyUrl);
-      return {
-        proxyUrl: parsed.toString(),
-        name: `Imported ${host}:${port}`,
-      };
-    }
-
-    throw new Error("Unsupported format");
+    const { parsed, canonicalUrl } = result;
+    const hostLabel = parsed.port ? `${parsed.host}:${parsed.port}` : parsed.host;
+    return {
+      proxyUrl: canonicalUrl,
+      name: `Imported ${hostLabel}`,
+    };
   };
 
   const handleBatchImport = async () => {
@@ -795,14 +811,22 @@ export default function ProxyPoolsPage() {
                     {pool.type === "cloudflare" && (
                       <Badge variant="default" size="sm">cloudflare relay</Badge>
                     )}
-                    {pool.isGroup && (
+                    {pool.type === "proxyxoay" && (
+                      <Badge variant="primary" size="sm">proxyxoay · {pool.keys?.length || 0} key(s)</Badge>
+                    )}
+                    {pool.isGroup && pool.type !== "proxyxoay" && (
                       <Badge variant="primary" size="sm">group · {pool.rotationMode} · {pool.entries?.length || 0} entries</Badge>
                     )}
                     <Badge variant="default" size="sm">
                       {pool.boundConnectionCount || 0} bound
                     </Badge>
                   </div>
-                  {pool.isGroup ? (
+                  {pool.type === "proxyxoay" ? (
+                    <p className="text-xs text-text-muted truncate mt-1">
+                      {(pool.protocol || "http").toUpperCase()} · {(pool.liveMinutes || 5)}m rotation · {pool.keys?.length || 0} key(s)
+                      {pool.forwardEnabled ? " · forwarding on" : ""}
+                    </p>
+                  ) : pool.isGroup ? (
                     <p className="text-xs text-text-muted truncate mt-1">
                       {pool.entries?.filter((e) => e.type === "direct").length || 0} direct + {pool.entries?.filter((e) => e.type !== "direct").length || 0} proxy
                       {pool.entries?.some((e) => e.cooldownUntil && e.cooldownUntil > Date.now()) ? ` · ${pool.entries.filter((e) => e.cooldownUntil && e.cooldownUntil > Date.now()).length} cooling down` : ""}
@@ -817,6 +841,7 @@ export default function ProxyPoolsPage() {
                     Last tested: {formatDateTime(pool.lastTestedAt)}
                     {pool.lastError ? ` · ${pool.lastError}` : ""}
                   </p>
+                  {pool.type === "proxyxoay" && <ProxyXoayPoolCard pool={pool} />}
                   </div>
                 </div>
 
@@ -1081,22 +1106,136 @@ export default function ProxyPoolsPage() {
             placeholder="Office Proxy"
           />
 
-          {/* Pool type toggle: single proxy vs rotating group */}
+          {/* Pool type: single proxy / rotating group / proxyxoay provider */}
           <div className="flex flex-col gap-2 rounded-lg border border-border/50 p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-sm">Rotating proxy group</p>
-                <p className="text-xs text-text-muted">Hold multiple proxies + rotate on rate-limit (429). Includes a &quot;direct&quot; option to use the server IP.</p>
-              </div>
-              <Toggle
-                checked={formData.isGroup === true}
-                onChange={() => setFormData((prev) => ({ ...prev, isGroup: !prev.isGroup }))}
-                disabled={saving}
-              />
+            <p className="font-medium text-sm">Pool type</p>
+            <div className="flex flex-wrap gap-1">
+              {[
+                { id: "single", label: "Single proxy" },
+                { id: "group", label: "Rotating group" },
+                { id: "proxyxoay", label: "proxyxoay.org" },
+              ].map((opt) => {
+                const active =
+                  (opt.id === "single" && !formData.isGroup && formData.type !== "proxyxoay") ||
+                  (opt.id === "group" && formData.isGroup) ||
+                  (opt.id === "proxyxoay" && formData.type === "proxyxoay");
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    disabled={saving}
+                    onClick={() =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        isGroup: opt.id === "group",
+                        type: opt.id === "proxyxoay" ? "proxyxoay" : "",
+                      }))
+                    }
+                    className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                      active
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border bg-transparent hover:bg-border/30"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
             </div>
+            <p className="text-xs text-text-muted">
+              {formData.type === "proxyxoay"
+                ? "Rotating residential/4G proxies from proxyxoay.org. Paste your API keys; each key rotates its IP automatically."
+                : formData.isGroup
+                ? "Hold multiple proxies + rotate on rate-limit (429). Includes a \"direct\" option to use the server IP."
+                : "A single HTTP/SOCKS proxy URL."}
+            </p>
           </div>
 
-          {formData.isGroup ? (
+          {formData.type === "proxyxoay" ? (
+            <div className="flex flex-col gap-3">
+              {/* proxyxoay provider config */}
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-text-muted">API keys (one per line) — bulk add</span>
+                <textarea
+                  value={formData.pxKeysText}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, pxKeysText: e.target.value }))}
+                  placeholder={"ICWvX6xzQQTDL9xj7yXY\nanother-key-here"}
+                  rows={4}
+                  className="text-sm rounded border border-border bg-transparent px-2 py-1.5 font-mono"
+                />
+                <span className="text-[11px] text-text-muted">
+                  {formData.pxKeysText.split(/\r?\n/).filter((l) => l.trim()).length} key(s). Each becomes a rotating proxy the pool rotates across.
+                </span>
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-text-muted">Rotation interval (live, minutes)</span>
+                  <select
+                    value={formData.liveMinutes}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, liveMinutes: Number(e.target.value) }))}
+                    className="text-sm rounded border border-border bg-transparent px-2 py-1.5"
+                  >
+                    {[1, 2, 3, 4, 5].map((m) => (
+                      <option key={m} value={m}>{m} min</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-text-muted">Protocol</span>
+                  <select
+                    value={formData.protocol}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, protocol: e.target.value }))}
+                    className="text-sm rounded border border-border bg-transparent px-2 py-1.5"
+                  >
+                    <option value="http">HTTP</option>
+                    <option value="socks5">SOCKS5</option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-text-muted">Rotation mode (across keys)</span>
+                <select
+                  value={formData.rotationMode}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, rotationMode: e.target.value }))}
+                  className="text-sm rounded border border-border bg-transparent px-2 py-1.5"
+                >
+                  <option value="on-error">Rotate on error (least-recently-used, default)</option>
+                  <option value="round-robin">Round-robin (cycle every request)</option>
+                  <option value="random">Random</option>
+                </select>
+              </label>
+
+              <div className="flex flex-col gap-2 rounded-lg border border-border/50 p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-sm">Auto-rotate</p>
+                    <p className="text-xs text-text-muted">Refresh each key&apos;s IP shortly before it expires (time_die).</p>
+                  </div>
+                  <Toggle
+                    checked={formData.autoRotate === true}
+                    onChange={() => setFormData((prev) => ({ ...prev, autoRotate: !prev.autoRotate }))}
+                    disabled={saving}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 rounded-lg border border-border/50 p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-sm">Local forwarding port</p>
+                    <p className="text-xs text-text-muted">Expose 127.0.0.1:&lt;port&gt; per key so external tools can ride the rotating IP.</p>
+                  </div>
+                  <Toggle
+                    checked={formData.forwardEnabled === true}
+                    onChange={() => setFormData((prev) => ({ ...prev, forwardEnabled: !prev.forwardEnabled }))}
+                    disabled={saving}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : formData.isGroup ? (
             <div className="flex flex-col gap-3">
               {/* Rotation mode */}
               <label className="flex flex-col gap-1">
@@ -1179,7 +1318,8 @@ export default function ProxyPoolsPage() {
               label="Proxy URL"
               value={formData.proxyUrl}
               onChange={(e) => setFormData((prev) => ({ ...prev, proxyUrl: e.target.value }))}
-              placeholder="http://127.0.0.1:7897"
+              placeholder="http://user:pass@host:port  ·  host:port:user:pass  ·  http://host:port@user:pass"
+              hint="Many formats accepted: scheme://user:pass@host:port, host:port:user:pass, reversed order, IPv6, etc."
             />
           )}
 
@@ -1219,7 +1359,7 @@ export default function ProxyPoolsPage() {
             <Button
               fullWidth
               onClick={handleSave}
-              disabled={!formData.name.trim() || (!formData.isGroup && !formData.proxyUrl.trim()) || saving}
+              disabled={!formData.name.trim() || (!formData.isGroup && formData.type !== "proxyxoay" && !formData.proxyUrl.trim()) || saving}
             >
               {saving ? "Saving..." : "Save"}
             </Button>
