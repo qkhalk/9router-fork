@@ -5,6 +5,8 @@ import {
   getProxyPoolById,
   updateProxyPool,
 } from "@/models";
+import { normalizeProxyInput } from "@/lib/proxy/parseProxy";
+import { registerPool, unregisterPool } from "@/lib/proxy/providers/proxyxoayManager.js";
 
 const VALID_PROXY_SCHEMES = ["http:", "https:", "socks5:", "socks5h:", "socks4:", "socks4a:"];
 
@@ -23,14 +25,17 @@ function normalizeGroupEntry(e, i) {
   }
   const entryUrl = typeof e?.proxyUrl === "string" ? e.proxyUrl.trim() : "";
   if (!entryUrl) return null;
-  let scheme = "";
-  try { scheme = new URL(entryUrl).protocol; } catch { return null; }
+  // Canonicalise through the multi-format parser (accepts reversed / colon
+  // forms) before scheme validation — mirrors the POST route.
+  const norm = normalizeProxyInput(entryUrl);
+  if (!norm.ok) return null;
+  const scheme = `${norm.parsed.scheme}:`;
   if (!VALID_PROXY_SCHEMES.includes(scheme)) return null;
   return {
     id: typeof e?.id === "string" && e.id ? e.id : `entry_${Date.now()}_${i}`,
     name: typeof e?.name === "string" && e.name.trim() ? e.name.trim() : entryUrl,
-    type: scheme.replace(":", ""),
-    proxyUrl: entryUrl,
+    type: norm.parsed.scheme,
+    proxyUrl: norm.canonicalUrl,
     isActive: e?.isActive !== false,
     cooldownUntil: e?.cooldownUntil ?? null,
     lastError: e?.lastError ?? null,
@@ -69,7 +74,7 @@ function normalizeProxyPoolUpdate(body = {}) {
 
   if (Object.prototype.hasOwnProperty.call(body, "type")) {
     // Fixed: "deno" was missing here, so editing a deno pool downgraded it to http.
-    const validTypes = ["http", "vercel", "cloudflare", "deno"];
+    const validTypes = ["http", "vercel", "cloudflare", "deno", "proxyxoay"];
     updates.type = validTypes.includes(body?.type) ? body.type : "http";
   }
 
@@ -84,10 +89,77 @@ function normalizeProxyPoolUpdate(body = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(body, "entries")) {
     const rawEntries = Array.isArray(body?.entries) ? body.entries : [];
-    updates.entries = rawEntries.map(normalizeGroupEntry).filter(Boolean);
+    // proxyxoay entries are manager-owned (their proxyUrl is filled by the
+    // rotation job); accept them verbatim without re-running the URL normaliser
+    // so we don't clobber the live `_px` metadata / empty placeholder URLs.
+    const isProxyXoay = body?.type === "proxyxoay";
+    updates.entries = isProxyXoay
+      ? rawEntries
+      : rawEntries.map(normalizeGroupEntry).filter(Boolean);
+  }
+
+  // proxyxoay provider-config fields (pass through; keys are normalised below).
+  if (Object.prototype.hasOwnProperty.call(body, "liveMinutes")) {
+    const n = parseInt(body?.liveMinutes, 10);
+    updates.liveMinutes = Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 5;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "protocol")) {
+    updates.protocol = body?.protocol === "socks5" ? "socks5" : "http";
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "autoRotate")) {
+    updates.autoRotate = body?.autoRotate === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "forwardEnabled")) {
+    updates.forwardEnabled = body?.forwardEnabled === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "keys")) {
+    const result = normalizeProxyXoayKeys(body.keys);
+    if (result.error) return { error: result.error };
+    updates.keys = result.keys;
+    // Re-seed entries 1:1 with the new keys (manager refills proxyUrl). Preserve
+    // any existing entry state for keys that survive.
+    updates.entries = result.keys.map((k) => ({
+      id: k.id,
+      name: k.label,
+      type: body?.protocol === "socks5" ? "socks5" : "http",
+      proxyUrl: "",
+      isActive: true,
+      cooldownUntil: null,
+      lastError: null,
+      lastUsedAt: null,
+      _px: null,
+    }));
   }
 
   return { updates };
+}
+
+// Normalise a bulk key list (strings or {apiKey,label}) into deduped key objects
+// with stable ids. Mirrors the POST route's logic so edits validate identically.
+function normalizeProxyXoayKeys(rawKeys) {
+  const seen = new Set();
+  const keys = [];
+  for (const k of Array.isArray(rawKeys) ? rawKeys : []) {
+    let apiKey = "";
+    let label = "";
+    let id;
+    if (typeof k === "string") {
+      apiKey = k.trim();
+    } else if (k && typeof k === "object") {
+      apiKey = String(k.apiKey || "").trim();
+      label = typeof k.label === "string" ? k.label.trim() : "";
+      if (typeof k.id === "string" && k.id) id = k.id;
+    }
+    if (!apiKey || seen.has(apiKey)) continue;
+    seen.add(apiKey);
+    keys.push({
+      id: id || `px_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      apiKey,
+      label: label || `key …${apiKey.slice(-5)}`,
+    });
+  }
+  if (keys.length === 0) return { error: "At least one proxyxoay API key is required" };
+  return { keys };
 }
 
 function countBoundConnections(connections = [], proxyPoolId) {
@@ -129,6 +201,13 @@ export async function PUT(request, { params }) {
     }
 
     const updated = await updateProxyPool(id, normalized.updates);
+    // For proxyxoay pools, re-register so the manager picks up key/config
+    // changes (timers + forwarding servers are rebuilt). Fire-and-forget.
+    if (updated?.type === "proxyxoay") {
+      registerPool(updated).catch((e) =>
+        console.warn("[proxyxoay] registerPool after update failed:", e?.message || e)
+      );
+    }
     return NextResponse.json({ proxyPool: updated });
   } catch (error) {
     console.log("Error updating proxy pool:", error);
@@ -167,6 +246,14 @@ export async function DELETE(request, { params }) {
         },
         { status: 409 }
       );
+    }
+
+    // Stop rotation timers + forwarding servers before removing a proxyxoay pool.
+    // Fire-and-forget: teardown (proxy-chain close) must not block or hang the
+    // delete response; the manager re-reads the pool from DB on any in-flight
+    // tick and bails out once the row is gone.
+    if (existing.type === "proxyxoay") {
+      unregisterPool(id).catch(() => {});
     }
 
     await deleteProxyPool(id);

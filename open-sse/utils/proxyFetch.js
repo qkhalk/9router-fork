@@ -1,6 +1,7 @@
 import { Readable } from "stream";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
+import { canonicalizeProxyUrl } from "@/lib/proxy/parseProxy.js";
 
 const originalFetch = globalThis.fetch;
 const proxyDispatchers = new Map();
@@ -184,20 +185,16 @@ function getEnvProxyUrl(targetUrl) {
 }
 
 /**
- * Normalize proxy URL (allow host:port)
+ * Normalize a proxy URL into a canonical form undici's ProxyAgent accepts.
+ * Handles every common shape — standard `scheme://user:pass@host:port`, reversed
+ * `scheme://host:port@user:pass`, and bare colon forms like `host:port:user:pass`
+ * (proxyxoay's `proxyhttp`) or `host:port` — by delegating to the shared parser.
+ * Returns null for empty / unparseable input.
  */
 function normalizeProxyUrl(proxyUrl) {
   const normalizedInput = normalizeString(proxyUrl);
   if (!normalizedInput) return null;
-
-  try {
-
-    new URL(normalizedInput);
-    return normalizedInput;
-  } catch {
-    // Allow "127.0.0.1:7890" style values
-    return `http://${normalizedInput}`;
-  }
+  return canonicalizeProxyUrl(normalizedInput);
 }
 
 function resolveConnectionProxyUrl(targetUrl, proxyOptions) {

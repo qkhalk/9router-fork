@@ -80,6 +80,21 @@ export async function createProxyPool(data) {
     pool.entries = Array.isArray(data.entries) ? data.entries : [];
     pool.rrCounter = 0;
   }
+  // proxyxoay.org rotating-provider pools: a group whose entries are synced
+  // 1:1 with API keys by the proxyxoay manager. Persist the provider config +
+  // runtime state (forwardPorts) so they survive restarts.
+  if (data.type === "proxyxoay") {
+    pool.isGroup = true;
+    pool.rotationMode = data.rotationMode || "on-error";
+    pool.entries = Array.isArray(data.entries) ? data.entries : [];
+    pool.rrCounter = data.rrCounter || 0;
+    pool.keys = Array.isArray(data.keys) ? data.keys : [];
+    pool.liveMinutes = data.liveMinutes || 5;
+    pool.protocol = data.protocol === "socks5" ? "socks5" : "http";
+    pool.autoRotate = data.autoRotate !== false;
+    pool.forwardEnabled = data.forwardEnabled === true;
+    pool.forwardPorts = data.forwardPorts || {};
+  }
   upsert(db, pool);
   return pool;
 }
