@@ -1,4 +1,5 @@
 import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { createSocksDispatcher, isSocksProxyUrl } from "@/lib/network/socksDispatcher";
 
 const DEFAULT_TEST_URL = "https://google.com/";
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -42,7 +43,11 @@ export async function testProxyUrl({ proxyUrl, testUrl, timeoutMs } = {}) {
 
   try {
     try {
-      dispatcher = new ProxyAgent({ uri: normalizedProxyUrl });
+      // ProxyAgent speaks HTTP CONNECT only — SOCKS proxies need a
+      // SOCKS-tunnelling connector instead.
+      dispatcher = isSocksProxyUrl(normalizedProxyUrl)
+        ? createSocksDispatcher(normalizedProxyUrl)
+        : new ProxyAgent({ uri: normalizedProxyUrl });
     } catch (err) {
       return {
         ok: false,

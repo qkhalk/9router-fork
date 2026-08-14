@@ -222,8 +222,15 @@ async function getDispatcher(proxyUrl) {
     if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
       proxyDispatchers.delete(proxyDispatchers.keys().next().value);
     }
-    const { ProxyAgent } = await import("undici");
-    proxyDispatchers.set(normalized, new ProxyAgent({ uri: normalized }));
+    // ProxyAgent speaks HTTP CONNECT only — SOCKS proxies (e.g. the local
+    // xray socks inbound) need a SOCKS-tunnelling connector instead.
+    const { createSocksDispatcher, isSocksProxyUrl } = await import("@/lib/network/socksDispatcher.js");
+    proxyDispatchers.set(
+      normalized,
+      isSocksProxyUrl(normalized)
+        ? createSocksDispatcher(normalized)
+        : new (await import("undici")).ProxyAgent({ uri: normalized })
+    );
   }
 
   return proxyDispatchers.get(normalized);
