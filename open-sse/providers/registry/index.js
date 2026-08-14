@@ -120,11 +120,12 @@ import p117 from "./selfhosted-stt.js";
 import p118 from "./selfhosted-tts.js";
 import p119 from "./selfhosted-embedding.js";
 import p120 from "./fish-audio.js";
-// Fork custom providers (appended after upstream p0–p120; renumbered from p120-122 to
-// p121-123 to avoid clashing with upstream's new p120 fish-audio slot)
-import p121 from "./gemini-web.js";
-import p122 from "./ds2api.js";
-import p123 from "./genspark-web.js";
+import p121 from "./alitp-intl.js";
+// Fork custom providers (appended after upstream p0–p121; renumbered from p120-122 to
+// p122-124 to avoid clashing with upstream's new p120 fish-audio + p121 alitp-intl slots)
+import p122 from "./gemini-web.js";
+import p123 from "./ds2api.js";
+import p124 from "./genspark-web.js";
 
 export default [
   p0,
@@ -246,8 +247,9 @@ export default [
   p118,
   p119,
   p120,
-  // Fork custom providers
   p121,
+  // Fork custom providers
   p122,
   p123,
+  p124,
 ];
