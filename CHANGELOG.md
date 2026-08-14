@@ -1,3 +1,20 @@
+# v0.6.20 (2026-08-14)
+
+## Fixes
+- **opencode (zen) free models — 429 `FreeUsageLimitError`**: opencode.ai now
+  classifies requests as anonymous unless they carry the same client-fingerprint
+  headers the official opencode CLI sends. 9router only sent
+  `x-opencode-client: desktop` (no session/request id, no project, no
+  `User-Agent`), so free-tier requests (`oc/...` models) were throttled with
+  `429 FreeUsageLimitError` after a few calls per day even when quota was
+  available — even though direct opencode CLI usage on the same IP worked fine.
+  `OpenCodeExecutor.buildHeaders()` now also sends:
+  - `x-opencode-session` / `x-opencode-request` — freshly generated `ses_` /
+    `req_` ids per request (24 random alphanumerics)
+  - `x-opencode-project: /opencode`
+  - `User-Agent: opencode/latest/1.18.18/cli` (required — without it `429`
+    still occurs; `desktop` remains a valid `x-opencode-client` value)
+
 # v0.6.19 (2026-08-13)
 
 ## Added
