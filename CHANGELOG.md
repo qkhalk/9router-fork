@@ -1,3 +1,90 @@
+# v0.6.22 (2026-08-14)
+
+Upstream `decolua/9router` v0.5.55 migration (26 upstream commits; upstream
+README changes intentionally not taken).
+
+## Added
+- **SAML 2.0 SSO (native)**: dashboard login now supports SAML alongside OIDC
+  and password — AuthnRequest generation, ACS assertion handling, SP metadata
+  export, admin config test, replay-protected via a `saml_state` cookie matched
+  against `InResponseTo`.
+- **Alibaba Token Plan provider** (`alitp-intl`, `token-plan.ap-southeast-1`):
+  the fourth Alibaba key type — Singapore region, OpenAI-compatible transport.
+- **Fish Audio TTS provider**: model id travels in an HTTP `model` header,
+  voice is a `reference_id` (preset or cloned voice model).
+- **Kimchi dual auth**: Kimchi now accepts API keys as well as OAuth
+  (`authModes: ["oauth", "apikey"]`), with a working Test Connection for both
+  modes.
+- **Gemini 3.7 Flash on Antigravity**: high/medium/low tiered variants, also
+  registered in the Gemini registry, with pricing and quota tracking.
+- **`glm-5.3`** added to GLM Coding and GLM (China) registries.
+- **Claude usage quota**: dedup + cache Claude quota calls (120s TTL keyed by
+  access token, in-flight promise dedup, last-good read on soft failure) so
+  multiple open tabs stop tripping 429; the manual refresh button sends
+  `force=1` to bypass the cache.
+
+## Fixes
+- **Claude passthrough cache anchoring** (upstream): the client's own
+  `cache_control` markers point at pre-normalization offsets, so the tail was
+  re-cached every request. Cache breakpoints are now re-anchored on the final
+  body — last system block and last tool pinned at 1h TTL, last assistant turn
+  at 5m — and mid-conversation system messages are folded into the neighbouring
+  user turn instead of hoisted into `body.system` (hoisting invalidated the
+  prefix cache every request).
+- **opencode (zen) official client fingerprint** — replaced our v0.6.20
+  workaround with the upstream implementation: session id now resolves
+  conversation-stable via `resolveSessionId` (client session → assistant-text
+  hash → connection) normalized into opencode `ses_` format to preserve prompt
+  caching, and a downstream opencode client's headers are forwarded as-is
+  instead of being regenerated per request.
+- **Kiro**: intercept chat via `x-amz-target` (Kiro IDE 1.0.228+ moved
+  `GenerateAssistantResponse` to `POST /` + header, bypassing MITM); emit the
+  now-mandatory initial-response frame; map the `auto` model slot; report real
+  output tokens and stop discarding usable turns.
+- **Antigravity**: read Gemini `usageMetadata` out of the antigravity
+  `{ response }` envelope — every non-streaming request previously logged
+  `IN 0 | OUT 0`. Also strip competitive system prompts (Zed IDE's
+  Claude-agent prompt) that Antigravity flags with 429 Quota Exhausted.
+- **Qoder**: detect billing blocks at stream start and return a synthetic 403
+  so combo/account fallback triggers instead of leaking the error into chat.
+- **OpenAI Responses**: don't close the message on an empty `tool_calls`
+  array; preserve `prompt_cache_key` when converting chat to responses.
+- **Vision Adapter**: detect images from Hermes and attachment payloads
+  (`images[]`, `experimental_attachments`, message-level
+  `image_url`/`audio_url`, inline `data:` URIs) so the auto-switch fires for
+  Hermes/Ollama/Vercel AI SDK shapes.
+- **Fusion combos**: strip `stream_options` from the panel fan-out (avoids a
+  DeepSeek 400); model-test probe budget raised to 1024 with a soft-pass for
+  reasoning-only responses (llm7 added to provider test support).
+- **`/v1/models`**: expose snake_case token limits.
+- **Hermes**: add the `api_key` parameter to the model block in YAML config.
+- **Docker**: ship `sql.js`'s `dist/sql-wasm.wasm` in the image so the pure-JS
+  DB fallback can start when no native driver is available.
+
+## Security
+- **Trusted-peer proof for `x-9r-real-ip`** (upstream GHSA-pjm4-8fpg-f9p6):
+  the real-IP header and the Host fallback were trusted from client-controlled
+  input whenever `custom-server.js` was not in the request path, letting a
+  remote caller pose as local to skip API-key auth and reach local-only routes
+  (`/api/mcp/*`, `/api/tunnel/enable`, `/api/auth/reset-password`). The server
+  now stamps a per-process `x-9r-peer-token` on every request it sanitizes and
+  only trusts `x-9r-real-ip` behind that proof — falling back to Host in
+  development and failing closed in production. `npm start` / `start:bun` now
+  route through `custom-server.js`. Fork tunnel/LAN-dashboard access paths are
+  preserved on top of the hardened loopback check.
+- **Search SSRF guard**: `resolveBaseUrl()` rejects client-supplied
+  non-public baseUrls on `/v1/search`.
+- **Login**: fresh-install remote login with the default password returns 403
+  without issuing a JWT.
+- **Usage**: `/api/usage/request-details` redacts request/response payloads.
+
+## Tests
+- Golden URL/header snapshot regenerated: upstream v0.5.55 entries (incl.
+  Kimchi dual-auth) plus fork providers (tokenrouter, ds2api, gemini-web,
+  genspark-web, kimi-coding) — fixes 3 pre-existing golden failures.
+- `translator-helpers-edge` updated to the new system-message folding
+  behavior.
+
 # v0.6.21 (2026-08-14)
 
 ## Added
