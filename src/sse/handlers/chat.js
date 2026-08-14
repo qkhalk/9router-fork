@@ -354,7 +354,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       managedConnRetries < MAX_MANAGED_CONN_RETRIES
     ) {
       managedConnRetries += 1;
-      const connSocksPort = Number(psd.connectionSocksPort) || Number((await getSettings().catch(() => ({})))?.xraySocksPort) || 10808;
+      // Derive the SOCKS port this request actually used: parse it from the
+      // resolved proxy URL (authoritative — a blue-green switch may have moved
+      // the active instance off the configured settings port).
+      const portMatch = /:\/\/127\.0\.0\.1:(\d+)/.exec(psd.connectionProxyUrl || "");
+      const connSocksPort = Number(portMatch?.[1]) || Number(psd.connectionSocksPort) || Number((await getSettings().catch(() => ({})))?.xraySocksPort) || 10808;
       log.warn("PROXY", `Managed-pool connection failure (likely mid-rotation); waiting for SOCKS port ${connSocksPort} then retry ${managedConnRetries}/${MAX_MANAGED_CONN_RETRIES}`);
       // 1. Let any in-flight rotation finish (it may be the one that tore the port down).
       await waitForManagedRotationSettle({ maxWaitMs: 6000 });
@@ -383,14 +387,25 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // running xray instance. It has no per-entry rotation, so on a rotatable
     // error (e.g. 429 rate-limit on the current egress IP) kick off a
     // background switchConfig() to a different healthy outbound for this
-    // model. Fire-and-forget: we don't block the request (switching tears
-    // down the shared SOCKS port) — the client retries and hits the new IP.
+    // model. Fire-and-forget: switchConfig is blue-green (new instance on a
+    // fresh port, pool repointed after health verification), so in-flight
+    // requests are unaffected — the next request resolves the pool and hits
+    // the new IP.
     if (rotatable && usedPoolId === MANAGED_POOL_ID) {
-      triggerManagedRotationOnProxyError({
-        status: result.status,
-        error: typeof result.error === "string" ? result.error : "",
-        model: `${provider}/${model}`,
-      }).catch(() => {});
+      // Connection-level failures (SOCKS port down, terminated streams) are
+      // infra noise — often self-inflicted by a rotation's teardown — NOT an
+      // IP-rate-limit signal. Rotating on them amplifies the outage: each
+      // switch tears down more streams, which fail as 502s, which trigger
+      // yet another rotation. They are handled by the retry path above.
+      if (isConnectionFailure(result.error)) {
+        log.warn("PROXY", "Managed-pool connection failure classified as non-rotatable (infra noise, not IP-specific)");
+      } else {
+        triggerManagedRotationOnProxyError({
+          status: result.status,
+          error: typeof result.error === "string" ? result.error : "",
+          model: `${provider}/${model}`,
+        }).catch(() => {});
+      }
     }
 
     if (rotatable && usedPoolId && usedEntryId) {

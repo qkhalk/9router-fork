@@ -17,7 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 // Best-effort persistent log (reaper runs at boot before the app logger is up;
 // next-server stdout is often /dev/null in headless deploys). Fail-open.
@@ -38,7 +38,7 @@ function reapLog(message, extra = {}) {
  *
  * @param {object} [opts]
  * @param {string} [opts.xrayDir] - override the xray config directory (tests)
- * @returns {Promise<{ unlinked: number, killed: number }>}
+ * @returns {Promise<{ unlinked: number, killed: number, drainedKilled: number }>}
  */
 export async function reapOrphanedTempProbes({ xrayDir } = {}) {
   const dir = xrayDir || getDefaultXrayDir();
@@ -77,6 +77,12 @@ export async function reapOrphanedTempProbes({ xrayDir } = {}) {
     }
   }
 
+  // 3. Kill orphaned DRAINING instances (blue-green retirees). After a Node
+  // restart their in-flight requests are gone, so there is nothing left to
+  // drain — terminate them and clear the registry. The ACTIVE instance
+  // (xray.pid) is never in this file, so it is never touched.
+  const drainedKilled = await reapDrainingInstances(dir);
+
   reapLog("reap complete", {
     dir,
     home: process.env.HOME,
@@ -84,9 +90,50 @@ export async function reapOrphanedTempProbes({ xrayDir } = {}) {
     matchCount,
     unlinked,
     killed,
+    drainedKilled,
     sample: matchNames.slice(0, 5),
   });
-  return { unlinked, killed };
+  return { unlinked, killed, drainedKilled };
+}
+
+/**
+ * Terminate xray processes listed in xray.pid.draining and remove the file.
+ * Guards against PID reuse by verifying the process cmdline is an xray
+ * process before killing (POSIX: /proc/<pid>/cmdline; Windows: skip the
+ * check-and-kill entirely, same tradeoff as the pkill step above).
+ */
+async function reapDrainingInstances(dir) {
+  const file = path.join(dir, "xray.pid.draining");
+  let entries;
+  try {
+    entries = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!Array.isArray(entries)) entries = [];
+  } catch {
+    return 0; // missing/corrupt file — nothing to reap
+  }
+  let killed = 0;
+  for (const entry of entries) {
+    const pid = Number(entry?.pid);
+    if (!Number.isFinite(pid)) continue;
+    try {
+      if (process.platform === "win32") {
+        // windowsHide powershell kill, mirroring process.js killPidWindows
+        // without importing it (reaper stays dependency-free).
+        spawnSync("powershell.exe", ["-NoProfile", "-NoLogo", "-Command", `Stop-Process -Id ${pid} -Force`], { windowsHide: true, stdio: "ignore", timeout: 5000 });
+        killed += 1;
+      } else {
+        let cmdline = "";
+        try { cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8"); } catch { /* gone */ }
+        if (cmdline && cmdline.includes("xray")) {
+          try { process.kill(pid, "SIGKILL"); killed += 1; } catch { /* gone */ }
+        }
+      }
+    } catch (e) {
+      reapLog("draining kill failed", { pid, error: e?.message || String(e) });
+    }
+  }
+  try { fs.unlinkSync(file); } catch { /* already gone */ }
+  return killed;
 }
 
 function getDefaultXrayDir() {

@@ -14,6 +14,7 @@
  */
 
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { buildClientConfig, validateLink } from "./configBuilder.js";
 import { reapOrphanedTempProbes } from "./reaper.js";
@@ -29,10 +30,15 @@ import {
 import {
   startManagedXray,
   stopXray,
-  restartXray,
   getManagedPid,
   getXrayLogTail,
   spawnTempXray,
+  spawnNextManagedXray,
+  setManagedPid,
+  terminateXrayPid,
+  getDrainingPids,
+  addDrainingPid,
+  removeDrainingPid,
 } from "./process.js";
 import { testProxy, testProxyLatency, isSocksPortOpen, testProxyExitIpWithUri } from "./tester.js";
 import { startFilterXray, stopFilterXray, probeConfigViaApi } from "./apiFilter.js";
@@ -171,6 +177,135 @@ export function requestModelFilterCancel() {
 }
 
 const allocatedTempSocksPorts = new Set();
+
+// ─── blue-green switch infrastructure ──────────────────────────────────────
+// switchConfig() no longer kills the active xray first. It spawns the NEXT
+// instance on a fresh ephemeral port pair, health-probes it, and only then
+// atomically repoints the managed pool at the new SOCKS port. The OLD
+// instance keeps serving the requests already riding its dispatcher for a
+// drain window before being terminated — this is what eliminates the
+// mid-stream `TypeError: terminated` casualties of a rotation.
+
+// Port range for switched (active) instances. Deliberately disjoint from the
+// model-test range (51808..52807) so filter probes can't collide with the
+// live proxy.
+const SWITCH_PORT_BASE = 53108;
+const SWITCH_PORT_SPAN = 300;
+// How long a retired instance stays alive for in-flight requests to drain.
+const XRAY_DRAIN_MS = Math.max(0, Number(process.env.NINEROUTER_XRAY_DRAIN_MS) || 90 * 1000);
+// Cap on simultaneously draining instances — beyond this the oldest is killed.
+const MAX_DRAINING_INSTANCES = 3;
+
+// pid -> { timer, port } for instances retired by a blue-green switch.
+const drainingInstances = new Map();
+
+/** Is a TCP port actually bindable right now (nothing listening on it)? */
+function tcpPortAvailable(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false));
+    srv.once("listening", () => srv.close(() => resolve(true)));
+    srv.listen(port, "127.0.0.1");
+  });
+}
+
+/**
+ * Pick a free port from [base, base+span): not currently reserved in the
+ * in-process registry AND actually bindable (pre-flight EADDRINUSE check —
+ * random collisions with a still-dying previous instance are the root cause
+ * of "bind: address already in use" test failures). The port is reserved in
+ * the registry the moment it is chosen so concurrent pickers can't take it.
+ * Returns null after `attempts` tries.
+ */
+async function pickFreePort({ base, span, attempts = 25 }) {
+  for (let i = 0; i < attempts; i++) {
+    const port = base + Math.floor(Math.random() * span);
+    if (allocatedTempSocksPorts.has(port)) continue;
+    allocatedTempSocksPorts.add(port);
+    if (await tcpPortAvailable(port)) return port;
+    allocatedTempSocksPorts.delete(port);
+  }
+  return null;
+}
+
+/**
+ * Release a registry-held port once its listener is really gone. The kill is
+ * asynchronous (Windows PowerShell / SIGKILL delivery lag), so releasing the
+ * reservation immediately lets the next spawn re-pick a port whose socket is
+ * still open — poll until the port stops accepting connections (bounded),
+ * then release. On timeout release anyway so the registry can't leak.
+ */
+function releasePortWhenClosed(port, maxWaitMs = 5000) {
+  const deadline = Date.now() + maxWaitMs;
+  const poll = async () => {
+    while (Date.now() < deadline) {
+      if (!(await isSocksPortOpen(port, "127.0.0.1", 400))) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    allocatedTempSocksPorts.delete(port);
+  };
+  poll().catch(() => allocatedTempSocksPorts.delete(port));
+}
+
+async function terminateDrainingInstance(pid) {
+  const entry = drainingInstances.get(pid);
+  if (entry?.timer) clearTimeout(entry.timer);
+  drainingInstances.delete(pid);
+  try {
+    await terminateXrayPid(pid);
+  } catch { /* already dead */ }
+  removeDrainingPid(pid);
+  if (entry?.port) allocatedTempSocksPorts.delete(entry.port);
+}
+
+/** Retire an instance: keep it draining for XRAY_DRAIN_MS, then kill it. */
+function scheduleDrain(pid, port) {
+  if (!pid || drainingInstances.has(pid)) return;
+  addDrainingPid(pid);
+  drainingInstances.set(pid, { port: port || null, timer: null });
+
+  // Enforce the concurrent-drain cap: kill the OLDEST retiree beyond it.
+  const sinceByPid = new Map(getDrainingPids().map((e) => [Number(e.pid), Number(e.since) || 0]));
+  const excess = [...drainingInstances.keys()]
+    .filter((p) => p !== pid)
+    .sort((a, b) => (sinceByPid.get(a) || 0) - (sinceByPid.get(b) || 0))
+    .slice(0, Math.max(0, drainingInstances.size - MAX_DRAINING_INSTANCES));
+  for (const old of excess) terminateDrainingInstance(old);
+
+  if (XRAY_DRAIN_MS <= 0) {
+    terminateDrainingInstance(pid);
+    return;
+  }
+  const timer = setTimeout(() => {
+    terminateDrainingInstance(pid);
+  }, XRAY_DRAIN_MS);
+  timer.unref?.();
+  drainingInstances.get(pid).timer = timer;
+}
+
+/** Kill every draining instance (stop service, tests). Fire-and-forget safe. */
+async function terminateAllDrainingInstances() {
+  for (const pid of [...drainingInstances.keys()]) {
+    await terminateDrainingInstance(pid);
+  }
+}
+
+/**
+ * The SOCKS port of the currently active instance. After a blue-green switch
+ * this is an ephemeral port recorded in the managed pool's proxyUrl; the
+ * settings value (10808) is only the cold-start port. Resolve: in-memory
+ * state → pool row (survives HMR / module-state resets) → settings default.
+ */
+async function getActiveSocksPort() {
+  if (state.socksPort) return state.socksPort;
+  try {
+    const pool = await getProxyPoolById(MANAGED_POOL_ID);
+    const m = /:\/\/127\.0\.0\.1:(\d+)/.exec(pool?.proxyUrl || "");
+    if (m) return Number(m[1]);
+  } catch { /* fall through */ }
+  const settings = await getSettings();
+  return Number(settings.xraySocksPort) || 10808;
+}
 
 function setStatus(status, extra = {}) {
   state.status = status;
@@ -320,12 +455,18 @@ export async function startXrayService(opts = {}) {
 
   try {
     const configPath = writeConfig(v.outbound, { socksPort, httpPort });
-    const { pid } = await startManagedXray({ configPath });
+    const { pid, alreadyRunning } = await startManagedXray({ configPath });
+
+    // Idempotent start: the existing instance keeps running the outbound it
+    // was started with — which after a blue-green switch lives on an
+    // ephemeral port, not the configured one. Probe/sync THAT port; writing
+    // the settings port into the pool here would break routing.
+    const effectiveSocksPort = alreadyRunning ? await getActiveSocksPort() : socksPort;
 
     // Wait for the SOCKS port to accept connections (process is up + inbound bound).
     let ready = false;
     for (let i = 0; i < 20; i++) {
-      if (await isSocksPortOpen(socksPort)) { ready = true; break; }
+      if (await isSocksPortOpen(effectiveSocksPort)) { ready = true; break; }
       await new Promise((r) => setTimeout(r, 300));
     }
     if (!ready) {
@@ -341,16 +482,16 @@ export async function startXrayService(opts = {}) {
     await updateSettings({ xraySelectedConfigId: config.id });
 
     // Health probe (non-fatal if it fails — the process is up).
-    const health = await testProxy(socksPort);
+    const health = await testProxy(effectiveSocksPort);
     if (health.ok) {
       await updateXrayTestResult(config.id, health);
     }
 
-    await syncManagedPool(true, socksPort, config.id);
+    await syncManagedPool(true, effectiveSocksPort, config.id);
     setStatus("running", {
       pid,
       activeConfigId: config.id,
-      socksPort,
+      socksPort: effectiveSocksPort,
       httpPort,
       lastHealth: health.ok ? health : null,
       lastHealthAt: new Date().toISOString(),
@@ -364,22 +505,45 @@ export async function startXrayService(opts = {}) {
   }
 }
 
-/** Stop the xray process and mark the managed pool inactive. */
+/** Stop the xray process (and any draining instances) and mark the pool inactive. */
 export async function stopXrayService() {
   const result = stopXray();
+  // Blue-green retirees: the user asked to stop — no point draining.
+  terminateAllDrainingInstances().catch(() => {});
   const settings = await getSettings();
   const socksPort = Number(settings.xraySocksPort) || 10808;
   await syncManagedPool(false, socksPort, null);
-  setStatus("stopped", { pid: null, activeConfigId: null, lastError: null });
+  setStatus("stopped", { pid: null, activeConfigId: null, socksPort: null, lastError: null });
   return result;
 }
 
 /**
- * Switch to a different server. Records the selection, restarts the process
- * with the new config, and refreshes health. Equivalent to startXrayService
- * with an explicit configId but uses restart instead of cold start.
+ * Switch to a different server — BLUE-GREEN, zero-downtime.
+ *
+ * Old behavior (kill + respawn on the same port) tore down the shared SOCKS
+ * port for 8-15s on every switch and destroyed every in-flight request with
+ * `TypeError: terminated`. New behavior:
+ *
+ *  1. Spawn the NEXT xray instance with the new outbound on a fresh
+ *     ephemeral port pair (readiness = port accepts connections, raced
+ *     against early exit — no fixed 8s gate).
+ *  2. Health-probe the new instance THROUGH its own port. A dead candidate
+ *     is killed here and the OLD instance keeps serving — the pool never
+ *     repoints at an unverified outbound.
+ *  3. Optionally reject candidates whose live exit IP is in `avoidExitIps`
+ *     (rotation on a per-IP rate limit must actually change the IP).
+ *  4. Atomically promote: PID file → new pid, DB selection, managed-pool
+ *     proxyUrl → new SOCKS port. New requests pick up the new IP on their
+ *     next credential/proxy resolution.
+ *  5. Retire the old instance on a drain timer (XRAY_DRAIN_MS): requests
+ *     already riding the old dispatcher finish naturally; only after the
+ *     window is the old process terminated.
+ *
+ * @param {string} configId
+ * @param {{ avoidExitIps?: Set<string> }} [opts] exit IPs the new instance
+ *   must NOT egress from (empty/unknown probe result passes).
  */
-export async function switchConfig(configId) {
+export async function switchConfig(configId, opts = {}) {
   const config = await getXrayConfigById(configId);
   if (!config) {
     const e = new Error(`Config ${configId} not found`);
@@ -394,44 +558,110 @@ export async function switchConfig(configId) {
   }
 
   const settings = await getSettings();
-  const socksPort = Number(settings.xraySocksPort) || 10808;
-  const httpPort = Number(settings.xrayHttpPort) || 10809;
+  const configuredSocksPort = Number(settings.xraySocksPort) || 10808;
+  const configuredHttpPort = Number(settings.xrayHttpPort) || 10809;
+
+  const prevPid = getManagedPid();
+  const prevSnapshot = { ...state };
+  if (!prevSnapshot.socksPort) prevSnapshot.socksPort = await getActiveSocksPort();
 
   setStatus("starting", { lastError: null });
-  try {
-    const configPath = writeConfig(v.outbound, { socksPort, httpPort });
-    const { pid } = await restartXray({ configPath });
 
-    let ready = false;
-    for (let i = 0; i < 20; i++) {
-      if (await isSocksPortOpen(socksPort)) { ready = true; break; }
-      await new Promise((r) => setTimeout(r, 300));
-    }
-    if (!ready) {
-      const e = new Error("SOCKS port did not open after switch");
+  const newSocksPort = await pickFreePort({ base: SWITCH_PORT_BASE, span: SWITCH_PORT_SPAN });
+  if (!newSocksPort) {
+    const e = new Error("No free SOCKS port available for switch");
+    e.code = "STARTUP_FAILED";
+    setStatus("error", { lastError: e.message });
+    throw e;
+  }
+  // Fresh HTTP inbound too — the old instance still owns the configured pair.
+  const newHttpPort = newSocksPort + 1;
+
+  let handle = null;
+  try {
+    const configPath = writeConfig(v.outbound, { socksPort: newSocksPort, httpPort: newHttpPort });
+    handle = await spawnNextManagedXray({ configPath });
+    // The new instance owns the PID file from here; restored below on failure.
+    setManagedPid(handle.pid);
+
+    // Readiness: port open (success) raced against early exit (bad config /
+    // port conflict) and a hard deadline.
+    const deadline = Date.now() + 10000;
+    const readiness = await Promise.race([
+      (async () => {
+        while (Date.now() < deadline) {
+          if (await isSocksPortOpen(newSocksPort)) return "ready";
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        return "timeout";
+      })(),
+      handle.exitPromise.then((code) => `exit:${code}`),
+    ]);
+    if (readiness !== "ready") {
+      const e = new Error(
+        readiness === "timeout"
+          ? "SOCKS port did not open after switch"
+          : `xray exited during switch (code=${readiness.slice(5)}) — see xray.log`
+      );
       e.code = "STARTUP_FAILED";
-      setStatus("error", { lastError: e.message });
       throw e;
     }
 
+    // Verify the candidate BEFORE repointing the pool at it.
+    const health = await testProxy(newSocksPort);
+    if (!health.ok) {
+      const e = new Error(`Candidate "${config.name}" failed health probe (latency/exit-ip unreachable)`);
+      e.code = "HEALTH_FAILED";
+      throw e;
+    }
+    if (opts.avoidExitIps && opts.avoidExitIps.size && health.exitIp && opts.avoidExitIps.has(health.exitIp)) {
+      const e = new Error(`Candidate "${config.name}" egresses from the same exit IP (${health.exitIp}) we are rotating away from`);
+      e.code = "SAME_EXIT_IP";
+      throw e;
+    }
+
+    // Promote: DB selection, test result, pool URL, runtime state.
     await setSelectedXrayConfig(config.id);
     await updateSettings({ xraySelectedConfigId: config.id });
-
-    const health = await testProxy(socksPort);
-    if (health.ok) await updateXrayTestResult(config.id, health);
-
-    await syncManagedPool(true, socksPort, config.id);
+    await updateXrayTestResult(config.id, health).catch(() => {});
+    await syncManagedPool(true, newSocksPort, config.id);
     setStatus("running", {
-      pid,
+      pid: handle.pid,
       activeConfigId: config.id,
-      socksPort,
-      httpPort,
-      lastHealth: health.ok ? health : null,
+      socksPort: newSocksPort,
+      httpPort: newHttpPort,
+      lastHealth: health,
       lastHealthAt: new Date().toISOString(),
     });
-    return { pid, configId: config.id, health };
+
+    // Retire the old instance — in-flight requests drain through it.
+    if (prevPid && prevPid !== handle.pid) {
+      scheduleDrain(prevPid, prevSnapshot.socksPort || configuredSocksPort);
+    }
+
+    return { pid: handle.pid, configId: config.id, health, replacedPid: prevPid || null };
   } catch (e) {
-    setStatus("error", { lastError: e.message });
+    // Roll back: kill the failed new instance and restore the previous one
+    // (which never stopped serving — unlike the old kill-first restart).
+    if (handle) {
+      try { await terminateXrayPid(handle.pid); } catch { /* already dead */ }
+    }
+    allocatedTempSocksPorts.delete(newSocksPort);
+    allocatedTempSocksPorts.delete(newHttpPort);
+    setManagedPid(prevPid);
+    if (prevPid) {
+      setStatus(prevSnapshot.status === "stopped" ? "stopped" : "running", {
+        pid: prevPid,
+        activeConfigId: prevSnapshot.activeConfigId,
+        socksPort: prevSnapshot.socksPort || configuredSocksPort,
+        httpPort: prevSnapshot.httpPort || configuredHttpPort,
+        lastHealth: prevSnapshot.lastHealth,
+        lastHealthAt: prevSnapshot.lastHealthAt,
+        lastError: null,
+      });
+    } else {
+      setStatus("error", { lastError: e.message, pid: null });
+    }
     throw e;
   }
 }
@@ -471,7 +701,15 @@ export async function testSingleConfig(configId) {
   }
 
   // Use an ephemeral high port unlikely to collide with the active instance.
-  const tempSocks = 51808 + Math.floor(Math.random() * 1000);
+  // Pre-flight availability check + registry coordination with the model
+  // filter's temp probes (shared range) — a random collision here fails the
+  // whole test with "bind: address already in use".
+  const tempSocks = await pickFreePort({ base: 51808, span: 1000 });
+  if (!tempSocks) {
+    const e = new Error("No free SOCKS port available for test");
+    e.code = "STARTUP_FAILED";
+    throw e;
+  }
   const tempHttp = tempSocks + 1;
   const tempConfigPath = getXrayConfigPath() + `.test-${configId}.json`;
   const tempConfig = buildClientConfig(v.outbound, { socksPort: tempSocks, httpPort: tempHttp });
@@ -492,6 +730,7 @@ export async function testSingleConfig(configId) {
     // Kill the isolated temp instance — does NOT touch the shared PID file.
     if (tempHandle) tempHandle.kill();
     try { fs.unlinkSync(tempConfigPath); } catch {}
+    releasePortWhenClosed(tempSocks);
   }
 }
 
@@ -508,47 +747,59 @@ async function spawnTempConfig(config, timeoutMs = 8000) {
     throw e;
   }
 
-  let tempSocks = 51808 + Math.floor(Math.random() * 1000);
-  for (let i = 0; i < 1200 && allocatedTempSocksPorts.has(tempSocks); i++) {
-    tempSocks = 51808 + Math.floor(Math.random() * 1000);
-  }
-  allocatedTempSocksPorts.add(tempSocks);
-  const tempHttp = tempSocks + 1;
-  const tempConfigPath = getXrayConfigPath() + `.model-test-${config.id}.json`;
-  const tempConfig = buildClientConfig(v.outbound, { socksPort: tempSocks, httpPort: tempHttp });
-  fs.writeFileSync(tempConfigPath, JSON.stringify(tempConfig, null, 2));
+  // One retry on "port did not open": with the pre-flight availability check
+  // this is now rare (a race with an external process binding between check
+  // and spawn), but retrying once with a fresh port beats failing the config
+  // and polluting the filter cache with a false negative.
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const tempSocks = await pickFreePort({ base: 51808, span: 1000 });
+    if (!tempSocks) {
+      const e = new Error("No free SOCKS port available for temp model test");
+      e.code = "STARTUP_FAILED";
+      throw e;
+    }
+    const tempHttp = tempSocks + 1;
+    const tempConfigPath = getXrayConfigPath() + `.model-test-${config.id}.json`;
+    const tempConfig = buildClientConfig(v.outbound, { socksPort: tempSocks, httpPort: tempHttp });
+    fs.writeFileSync(tempConfigPath, JSON.stringify(tempConfig, null, 2));
 
-  let tempHandle;
-  try {
-    tempHandle = await spawnTempXray({ configPath: tempConfigPath });
-  } catch (error) {
-    allocatedTempSocksPorts.delete(tempSocks);
-    try { fs.unlinkSync(tempConfigPath); } catch {}
-    throw error;
-  }
-  let ready = false;
-  for (let i = 0; i < 15; i++) {
-    if (await isSocksPortOpen(tempSocks)) { ready = true; break; }
-    await new Promise((r) => setTimeout(r, 300));
-  }
-  if (!ready) {
-    tempHandle.kill();
-    allocatedTempSocksPorts.delete(tempSocks);
-    try { fs.unlinkSync(tempConfigPath); } catch {}
-    const e = new Error("SOCKS port did not open for temp model test");
-    e.code = "STARTUP_FAILED";
-    throw e;
-  }
-
-  return {
-    socksPort: tempSocks,
-    cleanup() {
-      tempHandle.kill();
+    let tempHandle;
+    try {
+      tempHandle = await spawnTempXray({ configPath: tempConfigPath });
+    } catch (error) {
       allocatedTempSocksPorts.delete(tempSocks);
       try { fs.unlinkSync(tempConfigPath); } catch {}
-    },
-    timeoutMs,
-  };
+      throw error;
+    }
+    let ready = false;
+    for (let i = 0; i < 15; i++) {
+      if (await isSocksPortOpen(tempSocks)) { ready = true; break; }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    if (ready) {
+      return {
+        socksPort: tempSocks,
+        cleanup() {
+          tempHandle.kill();
+          // Hold the port reservation until the listener is really gone —
+          // the kill is async and the next probe could re-pick the port
+          // while the socket is still open ("bind: address already in use").
+          releasePortWhenClosed(tempSocks);
+          try { fs.unlinkSync(tempConfigPath); } catch {}
+        },
+        timeoutMs,
+      };
+    }
+    // Port never opened — either the process died (bad config / bind
+    // conflict) or it's wedged. Clean up and maybe retry on a fresh port.
+    tempHandle.kill();
+    try { fs.unlinkSync(tempConfigPath); } catch {}
+    releasePortWhenClosed(tempSocks);
+    lastError = new Error("SOCKS port did not open for temp model test");
+    lastError.code = "STARTUP_FAILED";
+  }
+  throw lastError;
 }
 
 function summarizeProbeBody(text) {
@@ -1128,7 +1379,7 @@ export async function runHealthCheck() {
   // alive, treat the service as running and read the port from settings.
   const pid = getManagedPid();
   if (!pid) return { skipped: true };
-  const socksPort = state.socksPort || Number(settings.xraySocksPort) || 10808;
+  const socksPort = await getActiveSocksPort();
   const activeConfigId = state.activeConfigId || settings.xraySelectedConfigId || null;
   if (state.status === "stopped") setStatus("running", { pid, socksPort, activeConfigId });
 

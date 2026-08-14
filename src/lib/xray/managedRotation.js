@@ -27,8 +27,10 @@
  *     `recentlyTried` still prevents re-picking the same IP.
  *   - Fire-and-forget from the request loop: the caller does NOT await; the
  *     current request returns its 429 while the outbound is swapped in the
- *     background. The next request picks up the new IP. (A victim request that
- *     hits the SOCKS-port-down window is retried by the chat loop, not here.)
+ *     background. The next request picks up the new IP. switchConfig is
+ *     blue-green (spawn new → verify → repoint pool → drain old), so the
+ *     swap never kills in-flight streams; the chat-loop connection-retry
+ *     path remains as a safety net for other infra blips.
  *   - Never rotates to the same active config, and skips configs already
  *     tried within the current cooldown window.
  */
@@ -36,7 +38,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getSelectedXrayConfig } from "../db/repos/xrayRepo.js";
-import { getNextHealthyConfigsForModel } from "../db/repos/modelFilterResultsRepo.js";
+import { getNextHealthyConfigsForModel, getModelFilterResult } from "../db/repos/modelFilterResultsRepo.js";
 
 /**
  * The Model Filter cache keys results by the model string the job was run
@@ -203,6 +205,19 @@ async function doRotate({ status, errorText, model }) {
   pruneRecentlyTried();
   const exclude = new Set([activeId, ...recentlyTried.keys()].filter(Boolean));
 
+  // Exit IPs we must rotate AWAY from. A 429/rate-limit is (mostly) per egress
+  // IP: switching the outbound to a server that egresses from the SAME IP is a
+  // no-op that just churns the pool. Collect every IP associated with the
+  // active config — its generic probe result and its model-specific filter
+  // row — and both pre-filter candidates by cached exit IP and live-verify
+  // after the swap (switchConfig rejects SAME_EXIT_IP candidates).
+  const avoidExitIps = new Set();
+  if (active?.lastExitIp) avoidExitIps.add(active.lastExitIp);
+  if (activeId) {
+    const activeRow = await getModelFilterResult(activeId, model).catch(() => null);
+    if (activeRow?.exitIp) avoidExitIps.add(activeRow.exitIp);
+  }
+
   // Pull a few healthy candidates (ordered by latency asc) so we can fall
   // through to the next one if switchConfig rejects the first. The lookup
   // tolerates alias/id prefix differences between the chat path and the
@@ -214,7 +229,8 @@ async function doRotate({ status, errorText, model }) {
     matchedModel,
     excludeCount: exclude.size,
     candidateCount: candidates.length,
-    candidates: candidates.map((c) => ({ id: c.configId, name: c.name, latencyMs: c.latencyMs })),
+    avoidExitIps: [...avoidExitIps],
+    candidates: candidates.map((c) => ({ id: c.configId, name: c.name, latencyMs: c.latencyMs, exitIp: c.exitIp })),
   });
 
   if (!candidates.length) {
@@ -224,14 +240,32 @@ async function doRotate({ status, errorText, model }) {
     return { rotated: false, reason: "no-healthy-candidate" };
   }
 
+  // Prefer candidates whose cached exit IP differs from the active one (or is
+  // unknown — switchConfig live-verifies those). Only fall back to the known
+  // same-IP leftovers when nothing else exists: a same-IP switch can still
+  // help non-IP-specific errors (5xx from a sick server).
+  const notExcluded = candidates.filter((c) => !exclude.has(c.configId));
+  const distinct = notExcluded.filter((c) => !c.exitIp || !avoidExitIps.has(c.exitIp));
+  const ordered = distinct.length ? distinct : notExcluded.filter((c) => !c.exitIp);
+  if (!ordered.length) {
+    logRotation("warn", "managed-pool rotation aborted: all candidates share the active exit IP", {
+      model, activeId, avoidExitIps: [...avoidExitIps], candidateCount: candidates.length,
+    });
+    lastRotateAt = nowMs();
+    return { rotated: false, reason: "no-distinct-exit-ip-candidate" };
+  }
+
   const manager = await loadManager();
   const { switchConfig } = manager;
 
-  for (const cand of candidates) {
+  for (const cand of ordered) {
     if (exclude.has(cand.configId)) continue;
     try {
-      logRotation("info", "managed-pool rotation attempting switchConfig", { toConfigId: cand.configId, name: cand.name });
-      await switchConfig(cand.configId);
+      logRotation("info", "managed-pool rotation attempting switchConfig", {
+        toConfigId: cand.configId, name: cand.name,
+        liveVerifyAvoidExitIps: avoidExitIps.size > 0,
+      });
+      await switchConfig(cand.configId, { avoidExitIps });
       // Success: record + update bookkeeping.
       recentlyTried.set(cand.configId, nowMs());
       // Keep the set bounded.
