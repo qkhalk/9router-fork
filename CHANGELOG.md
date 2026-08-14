@@ -1,3 +1,71 @@
+# v0.6.23 (2026-08-14)
+
+XRAY managed-pool rotation overhaul: zero-downtime blue-green outbound
+switching, exit-IP-aware candidate selection, and collision-free model-filter
+port allocation.
+
+## Fixes
+- **Zero-downtime managed-pool rotation (blue-green)**: `switchConfig` no
+  longer kills the active xray before respawning it on the same port — that
+  tore down the shared SOCKS port for 8-15s on every 429-triggered rotation
+  and destroyed every in-flight stream with `TypeError: terminated` (request
+  durations of 19-23s were dying mid-response). The switch now spawns the
+  NEXT instance on a fresh ephemeral port pair (53108+, disjoint from the
+  model-test range), races port-readiness against early exit (the fixed 8s
+  startup gate is gone), health-probes the candidate through its own port,
+  and only then atomically repoints the managed pool (`proxyUrl` → new SOCKS
+  port, PID file, DB selection). A failed candidate is killed while the OLD
+  instance keeps serving — the pool is never pointed at an unverified
+  outbound. The retired instance drains in-flight requests for 90s
+  (`NINEROUTER_XRAY_DRAIN_MS`, capped at 3 concurrent retirees) before being
+  terminated.
+- **Rotation amplification loop**: connection-level failures (SOCKS port
+  down, `terminated` streams) were classified as rotatable 502s, so each
+  rotation's teardown spawned new 502s that triggered yet another rotation.
+  The chat loop now skips managed-pool rotation for connection failures
+  (they are handled by the bounded same-account retry), and
+  `CONNECTION_FAILURE_RE` additionally recognizes undici's `terminated`
+  mid-body abort.
+- **Rotation no longer swaps to the same exit IP**: a per-IP rate limit
+  can't be dodged by switching to a node that egresses from the same IP.
+  Rotation now collects the active config's exit IPs (generic probe result +
+  model-specific filter row), skips candidates with a matching cached exit
+  IP, and live-verifies the winner's exit IP after the swap
+  (`switchConfig({ avoidExitIps })`, rejecting with `SAME_EXIT_IP`). When
+  every candidate shares the active IP, rotation aborts with
+  `no-distinct-exit-ip-candidate` instead of thrashing through the pool.
+- **Model-filter "bind: address already in use" false negatives**: temp
+  probes released their port reservation while the async kill was still in
+  flight, so the next probe could re-pick a port whose socket was still
+  open; xray failed to start, and after a 4.5s wait the config was recorded
+  FAILED in the filter cache even though the proxy was fine. Ports are now
+  pre-flight bind-checked before spawn, stay reserved until the listener is
+  confirmed gone, and a "port did not open" failure retries once on a fresh
+  port before failing. The per-row Test button uses the same allocator
+  instead of an uncoordinated random pick.
+- **Active SOCKS port resolution**: after a blue-green switch the live
+  instance no longer sits on the configured port (10808 is now only the
+  cold-start port). `startXrayService` (idempotent start),
+  `runHealthCheck`, and the chat-loop connection retry all resolve the real
+  port from in-memory state → the managed pool's `proxyUrl` (survives HMR /
+  module-state resets) → settings, so an idempotent start can no longer
+  overwrite the pool URL with a stale port.
+- **Hygiene for retired instances**: `stopXrayService` now terminates
+  blue-green retirees immediately, and the boot reaper kills orphaned
+  draining instances listed in `xray.pid.draining` (guarded against PID
+  reuse via a `/proc/<pid>/cmdline` xray check on POSIX).
+
+## Added
+- `NINEROUTER_XRAY_DRAIN_MS` env knob (default 90000) for the blue-green
+  drain window.
+- `switchConfig(configId, { avoidExitIps })` option plus `HEALTH_FAILED` /
+  `SAME_EXIT_IP` error codes, so rotation candidates are verified reachable
+  AND IP-distinct before traffic moves.
+- Draining-instance registry (`xray.pid.draining`) with boot-time cleanup.
+- Unit tests for exit-IP candidate ordering, same-IP abort, and
+  connection-failure (`terminated`) classification
+  (`tests/unit/xray-managed-rotation-exitip.test.js`).
+
 # v0.6.22 (2026-08-14)
 
 Upstream `decolua/9router` v0.5.55 migration (26 upstream commits; upstream
