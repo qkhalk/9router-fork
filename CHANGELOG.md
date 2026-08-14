@@ -1,3 +1,48 @@
+# v0.6.24 (2026-08-14)
+
+Proxy-pool editing overhaul: proxyxoay.org pool edits now actually save,
+a free-form rotation interval, and SOCKS proxies finally work in pool
+tests and proxied fetches.
+
+## Fixes
+- **proxyxoay pool edits were silently ignored**: proxyxoay pools are
+  stored as groups (`isGroup:true`), but the dashboard's save handler
+  checked the generic group branch first, so every edit sent
+  group-shaped fields and dropped `liveMinutes`, `keys`, `protocol`,
+  `autoRotate` and `forwardEnabled` entirely — changing the rotation
+  interval (or any provider field) did nothing. The branches are
+  reordered so the proxyxoay branch wins, surviving keys are re-sent
+  with their ids, and the PUT handler now detects proxyxoay by the
+  post-update type so manager-owned entries pass through verbatim and
+  keep their live `_px` state instead of being wiped and re-fetched
+  against the provider rate-limit. Converting a pool away from
+  proxyxoay now stops its rotation timers and forwarding servers, and
+  the pool-type selector no longer highlights both "group" and
+  "proxyxoay" when editing.
+- **SOCKS proxies failed pool tests and proxied fetches** (e.g. the v2go
+  xray pool `socks://127.0.0.1:10808`): undici's `ProxyAgent` speaks HTTP
+  CONNECT only, so it sent an HTTP CONNECT line to the SOCKS server,
+  which dropped the connection mid-TLS-handshake ("Client network socket
+  disconnected before secure TLS connection was established",
+  `ECONNRESET`). A shared SOCKS-capable dispatcher
+  (`src/lib/network/socksDispatcher.js`, socks4/4a/5/5h with optional
+  user/pass) tunnels each origin connection through the proxy and
+  performs the TLS upgrade itself for https targets; both `testProxyUrl`
+  and `proxyFetch`'s dispatcher cache now route socks:// URLs through it
+  (http(s) proxies keep using `ProxyAgent`). Verified end-to-end against
+  a local SOCKS5 server (https + http + pooled connections + dead-proxy
+  error path).
+
+## Added
+- **Custom proxyxoay rotation interval (1–60 min)**: the rotation
+  interval is now a free-form input instead of a fixed 1–5 dropdown,
+  snapped to 1–60 on blur, with the clamp widened consistently across
+  the UI, POST/PUT routes and the provider client. The provider doesn't
+  document a hard `live` maximum; rotation scheduling already follows
+  the `time_die` it returns, so a provider-side cap degrades gracefully.
+- `socks@^2.8.9` as an explicit dependency (was already in the tree
+  transitively via `socks-proxy-agent`).
+
 # v0.6.23 (2026-08-14)
 
 XRAY managed-pool rotation overhaul: zero-downtime blue-green outbound
