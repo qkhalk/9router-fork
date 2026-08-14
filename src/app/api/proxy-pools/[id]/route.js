@@ -43,8 +43,18 @@ function normalizeGroupEntry(e, i) {
   };
 }
 
-function normalizeProxyPoolUpdate(body = {}) {
+function normalizeProxyPoolUpdate(body = {}, existing = null) {
   const updates = {};
+  // A pool is proxyxoay-shaped when it already is one and this update doesn't
+  // convert it to another type. Its entries are manager-owned (proxyUrl filled
+  // by the rotation job) and must pass through verbatim — running them through
+  // the group normaliser would drop empty placeholders and strip live `_px`
+  // metadata.
+  const validTypes = ["http", "vercel", "cloudflare", "deno", "proxyxoay"];
+  const nextType = Object.prototype.hasOwnProperty.call(body, "type")
+    ? (validTypes.includes(body?.type) ? body.type : "http")
+    : (existing?.type || "http");
+  const isProxyXoay = nextType === "proxyxoay";
 
   if (Object.prototype.hasOwnProperty.call(body, "name")) {
     const name = typeof body?.name === "string" ? body.name.trim() : "";
@@ -74,7 +84,6 @@ function normalizeProxyPoolUpdate(body = {}) {
 
   if (Object.prototype.hasOwnProperty.call(body, "type")) {
     // Fixed: "deno" was missing here, so editing a deno pool downgraded it to http.
-    const validTypes = ["http", "vercel", "cloudflare", "deno", "proxyxoay"];
     updates.type = validTypes.includes(body?.type) ? body.type : "http";
   }
 
@@ -92,7 +101,6 @@ function normalizeProxyPoolUpdate(body = {}) {
     // proxyxoay entries are manager-owned (their proxyUrl is filled by the
     // rotation job); accept them verbatim without re-running the URL normaliser
     // so we don't clobber the live `_px` metadata / empty placeholder URLs.
-    const isProxyXoay = body?.type === "proxyxoay";
     updates.entries = isProxyXoay
       ? rawEntries
       : rawEntries.map(normalizeGroupEntry).filter(Boolean);
@@ -116,19 +124,40 @@ function normalizeProxyPoolUpdate(body = {}) {
     const result = normalizeProxyXoayKeys(body.keys);
     if (result.error) return { error: result.error };
     updates.keys = result.keys;
-    // Re-seed entries 1:1 with the new keys (manager refills proxyUrl). Preserve
-    // any existing entry state for keys that survive.
-    updates.entries = result.keys.map((k) => ({
-      id: k.id,
-      name: k.label,
-      type: body?.protocol === "socks5" ? "socks5" : "http",
-      proxyUrl: "",
-      isActive: true,
-      cooldownUntil: null,
-      lastError: null,
-      lastUsedAt: null,
-      _px: null,
-    }));
+    // Re-seed entries 1:1 with the new keys (manager refills proxyUrl). When a
+    // key keeps its id (frontend re-sends it), carry the existing entry over —
+    // live proxyUrl + `_px` metadata included — so an edit doesn't wipe every
+    // proxy and force a re-fetch of the whole pool against the provider
+    // rate-limit. Keys sent as plain strings always get fresh ids/entries.
+    const prevById = new Map(
+      (isProxyXoay && Array.isArray(existing?.entries) ? existing.entries : [])
+        .map((e) => [e?.id, e])
+    );
+    const nextProtocol = Object.prototype.hasOwnProperty.call(body, "protocol")
+      ? (body?.protocol === "socks5" ? "socks5" : "http")
+      : null;
+    updates.entries = result.keys.map((k) => {
+      const prev = prevById.get(k.id);
+      if (prev) {
+        // Keep the live proxy state; only the label (and protocol, when the
+        // edit changed it) is refreshed — the next rotation fetches with the
+        // new protocol anyway.
+        return nextProtocol
+          ? { ...prev, name: k.label, type: nextProtocol }
+          : { ...prev, name: k.label };
+      }
+      return {
+        id: k.id,
+        name: k.label,
+        type: nextProtocol || "http",
+        proxyUrl: "",
+        isActive: true,
+        cooldownUntil: null,
+        lastError: null,
+        lastUsedAt: null,
+        _px: null,
+      };
+    });
   }
 
   return { updates };
@@ -194,19 +223,25 @@ export async function PUT(request, { params }) {
     }
 
     const body = await request.json();
-    const normalized = normalizeProxyPoolUpdate(body);
+    const normalized = normalizeProxyPoolUpdate(body, existing);
 
     if (normalized.error) {
       return NextResponse.json({ error: normalized.error }, { status: 400 });
     }
 
     const updated = await updateProxyPool(id, normalized.updates);
-    // For proxyxoay pools, re-register so the manager picks up key/config
-    // changes (timers + forwarding servers are rebuilt). Fire-and-forget.
-    if (updated?.type === "proxyxoay") {
-      registerPool(updated).catch((e) =>
-        console.warn("[proxyxoay] registerPool after update failed:", e?.message || e)
-      );
+    if (existing.type === "proxyxoay") {
+      if (updated?.type === "proxyxoay") {
+        // Re-register so the manager picks up key/config changes (timers +
+        // forwarding servers are rebuilt). Fire-and-forget.
+        registerPool(updated).catch((e) =>
+          console.warn("[proxyxoay] registerPool after update failed:", e?.message || e)
+        );
+      } else {
+        // Converted to another pool type — stop the rotation timers and
+        // forwarding servers. Fire-and-forget (see DELETE).
+        unregisterPool(id).catch(() => {});
+      }
     }
     return NextResponse.json({ proxyPool: updated });
   } catch (error) {
