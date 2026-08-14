@@ -33,6 +33,9 @@ function normalizeFormData(data = {}) {
     pxKeysText: Array.isArray(data.keys)
       ? data.keys.map((k) => (typeof k === "string" ? k : k.apiKey)).filter(Boolean).join("\n")
       : "",
+    // Original key objects (id/label) so an edit can re-send surviving keys
+    // with their ids — the backend then keeps each entry's live proxy state.
+    pxKeys: Array.isArray(data.keys) ? data.keys.filter((k) => k && typeof k === "object") : [],
     liveMinutes: data.liveMinutes || 5,
     protocol: data.protocol === "socks5" ? "socks5" : "http",
     autoRotate: data.autoRotate !== false,
@@ -137,7 +140,39 @@ export default function ProxyPoolsPage() {
       strictProxy: formData.strictProxy === true,
     };
 
-    if (formData.isGroup) {
+    // Proxyxoay pools are stored as groups (isGroup:true), so this branch MUST
+    // be checked before the generic group branch — otherwise an edit would send
+    // group-shaped fields and silently drop every provider field (liveMinutes,
+    // keys, protocol, autoRotate, forwardEnabled).
+    if (formData.type === "proxyxoay") {
+      const keyLines = formData.pxKeysText
+        .split(/\r?\n/)
+        .map((k) => k.trim())
+        .filter(Boolean);
+      if (keyLines.length === 0) {
+        notify.error("Enter at least one proxyxoay API key");
+        return;
+      }
+      // Reuse the existing key's id for surviving keys so the backend keeps the
+      // entry's live proxy state instead of re-fetching every key on each edit.
+      const keyById = new Map(
+        (formData.pxKeys || []).map((k) => [String(k.apiKey || "").trim(), k])
+      );
+      payload.type = "proxyxoay";
+      payload.isGroup = true;
+      payload.keys = keyLines.map((apiKey) => {
+        const prev = keyById.get(apiKey);
+        return prev?.id ? { apiKey, id: prev.id, label: prev.label } : apiKey;
+      });
+      payload.liveMinutes = Number(formData.liveMinutes) || 5;
+      payload.protocol = formData.protocol;
+      payload.autoRotate = formData.autoRotate;
+      payload.forwardEnabled = formData.forwardEnabled;
+      payload.rotationMode = formData.rotationMode;
+    } else if (formData.isGroup) {
+      // Converting a proxyxoay pool into a plain group: tell the backend
+      // explicitly so it can stop the proxyxoay rotation timers.
+      if (editingProxyPool?.type === "proxyxoay") payload.type = "http";
       payload.isGroup = true;
       payload.rotationMode = formData.rotationMode;
       payload.entries = formData.entries
@@ -153,23 +188,8 @@ export default function ProxyPoolsPage() {
         notify.error("A proxy group needs at least one entry");
         return;
       }
-    } else if (formData.type === "proxyxoay") {
-      const keys = formData.pxKeysText
-        .split(/\r?\n/)
-        .map((k) => k.trim())
-        .filter(Boolean);
-      if (keys.length === 0) {
-        notify.error("Enter at least one proxyxoay API key");
-        return;
-      }
-      payload.type = "proxyxoay";
-      payload.keys = keys;
-      payload.liveMinutes = Number(formData.liveMinutes) || 5;
-      payload.protocol = formData.protocol;
-      payload.autoRotate = formData.autoRotate;
-      payload.forwardEnabled = formData.forwardEnabled;
-      payload.rotationMode = formData.rotationMode;
     } else {
+      if (editingProxyPool?.type === "proxyxoay") payload.type = "http";
       payload.proxyUrl = formData.proxyUrl.trim();
       payload.isGroup = false;
     }
@@ -1117,7 +1137,9 @@ export default function ProxyPoolsPage() {
               ].map((opt) => {
                 const active =
                   (opt.id === "single" && !formData.isGroup && formData.type !== "proxyxoay") ||
-                  (opt.id === "group" && formData.isGroup) ||
+                  // proxyxoay pools are stored with isGroup:true — exclude them
+                  // so "group" and "proxyxoay" don't both highlight on edit.
+                  (opt.id === "group" && formData.isGroup && formData.type !== "proxyxoay") ||
                   (opt.id === "proxyxoay" && formData.type === "proxyxoay");
                 return (
                   <button
