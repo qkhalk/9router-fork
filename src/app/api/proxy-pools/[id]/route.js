@@ -109,7 +109,7 @@ function normalizeProxyPoolUpdate(body = {}, existing = null) {
   // proxyxoay provider-config fields (pass through; keys are normalised below).
   if (Object.prototype.hasOwnProperty.call(body, "liveMinutes")) {
     const n = parseInt(body?.liveMinutes, 10);
-    updates.liveMinutes = Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 5;
+    updates.liveMinutes = Number.isFinite(n) ? Math.min(60, Math.max(1, n)) : 5;
   }
   if (Object.prototype.hasOwnProperty.call(body, "protocol")) {
     updates.protocol = body?.protocol === "socks5" ? "socks5" : "http";

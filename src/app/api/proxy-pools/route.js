@@ -134,7 +134,7 @@ function normalizeProxyXoayInput(body = {}, base = {}) {
 
   const liveMinutes = (() => {
     const n = parseInt(body?.liveMinutes, 10);
-    return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 5;
+    return Number.isFinite(n) ? Math.min(60, Math.max(1, n)) : 5;
   })();
   const protocol = body?.protocol === "socks5" ? "socks5" : "http";
   const rotationMode = ["on-error", "round-robin", "random"].includes(body?.rotationMode)
