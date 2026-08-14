@@ -1,3 +1,45 @@
+# v0.6.25 (2026-08-15)
+
+v2go resilience: a dead xray outbound can no longer wedge the managed pool
+— real traffic, the pool Test button, and manual health checks all
+trigger auto-rotation now, and probes run on the shared SOCKS dispatcher.
+
+## Fixes
+- **Dead v2go node wedged the managed pool forever**: a node that died
+  outside a rotation (xray process up, SOCKS port accepting, outbound
+  unable to reach anything) produced connection-level "fetch failed"
+  errors, which the chat loop deliberately classified as rotation-
+  teardown noise — two bounded retries through the same dead node, then
+  nothing. Health checks only run manually, so nothing ever rotated
+  (observed as 45+ minutes of 502s after a boot-time node death). The
+  chat loop now distinguishes teardown noise from a genuinely dead
+  outbound: when the managed-connection retries are exhausted while the
+  SOCKS port stayed open — or the port never came back with no rotation
+  in flight to blame — it fires a managed rotation to a healthy node
+  (`triggerManagedRotationOnProxyError`; its in-flight + cooldown guards
+  keep this safe to call per request).
+- **Testing the managed pool was passive and harmful**: POST
+  `/api/proxy-pools/v2go-xray-managed/test` only probed and recorded the
+  result — and a failure deactivated the pool, silently cutting bound
+  connections over to DIRECT (an IP leak under strictProxy intent). The
+  managed pool's lifecycle now belongs solely to the xray manager: a
+  failed test keeps the pool active, appends an actionable hint to the
+  recorded error ("auto-rotation triggered; re-test in a few seconds"),
+  and kicks a debounced background `runHealthCheck` which blue-green
+  switches to a healthy node when Auto-rotate is enabled. Non-managed
+  pools keep the previous active/inactive-on-test behaviour.
+- **xray probes used undici's experimental SOCKS5 support**: the latency
+  / exit-IP probes in `tester.js` still went through `ProxyAgent` with a
+  `socks5://` URI — experimental, unreliable for https targets, and the
+  source of the boot-time `ExperimentalWarning: SOCKS5 proxy support is
+  experimental`. Probes now use the shared SOCKS dispatcher
+  (`socksDispatcher.js`), matching the pool-test and runtime fetch
+  paths.
+
+## Chores
+- Removed one-off Gemini Web integration scripts, an obsolete ds2api
+  plan, and a stale `.bak` file from the repo.
+
 # v0.6.24 (2026-08-14)
 
 Proxy-pool editing overhaul: proxyxoay.org pool edits now actually save,
