@@ -6,7 +6,7 @@
  *  - testProxyExitIp:  GET cloudflare cdn-cgi/trace through the SOCKS proxy,
  *    parse the egress IP (ports the fetchExitIP logic from v2go's tester.go).
  *
- * Both use the global fetch with an undici ProxyAgent passed as `dispatcher`,
+ * Both use the global fetch with an undici dispatcher passed as `dispatcher`,
  * matching how 9router's proxyAwareFetch applies SOCKS proxies at request time.
  *
  * NOTE: undici-backed fetch ignores the legacy `agent` option — the proxy MUST
@@ -16,14 +16,15 @@
  */
 
 import net from "node:net";
+import { createSocksDispatcher, isSocksProxyUrl } from "@/lib/network/socksDispatcher";
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const LATENCY_URL = "http://gstatic.com/generate_204";
 const TRACE_URL = "http://www.cloudflare.com/cdn-cgi/trace";
 
-// LRU-ish cache of undici ProxyAgent dispatchers keyed by proxy URI, so we
-// don't construct a new agent (and a fresh connection pool) on every probe.
-// Mirrors open-sse/utils/proxyFetch.js getDispatcher().
+// LRU-ish cache of dispatchers keyed by proxy URI, so we don't construct a new
+// agent (and a fresh connection pool) on every probe. Mirrors
+// open-sse/utils/proxyFetch.js getDispatcher().
 const dispatcherCache = new Map();
 const DISPATCHER_CACHE_MAX = 32;
 
@@ -36,10 +37,17 @@ async function getDispatcher(proxyUri) {
     dispatcherCache.set(proxyUri, cached);
     return cached;
   }
-  // undici ships with Node 24 (experimental SOCKS5 in 7.x). It natively
-  // understands socks5:// URIs when passed to ProxyAgent.
-  const { ProxyAgent } = await import("undici");
-  const dispatcher = new ProxyAgent({ uri: proxyUri });
+  // SOCKS URIs go through the shared SOCKS-tunnelling dispatcher: undici's
+  // ProxyAgent SOCKS5 support is experimental and unreliable for https
+  // targets (mid-TLS disconnects), and it emits an ExperimentalWarning per
+  // process. Mirrors proxyTest.js / proxyFetch.js.
+  let dispatcher;
+  if (isSocksProxyUrl(proxyUri)) {
+    dispatcher = createSocksDispatcher(proxyUri);
+  } else {
+    const { ProxyAgent } = await import("undici");
+    dispatcher = new ProxyAgent({ uri: proxyUri });
+  }
   if (dispatcherCache.size >= DISPATCHER_CACHE_MAX) {
     // Evict oldest entry.
     const firstKey = dispatcherCache.keys().next().value;
