@@ -247,10 +247,6 @@ Maintenance/ops tooling (not runtime):
 
 - `custom-server.js`, `https-server.js`, `start.sh` — server launch / Docker.
 - `install.sh`, `install.ps1` — one-liner installers (`npm i -g <release tarball>`).
-- `fix_provider_models.py`, `uncomment.py`, `fix-theme.py` — one-off code fixes.
-- `add-gemini-web.sh`, `update-gemini-cookies.sh`,
-  `gemini-health-check-runner.js` — Gemini-Web account ops.
-- `check-db.js`, `test-db.js` — SQLite inspection.
 - `scripts/` — `gemini-web-health-check.js`, `injectDisplayToRegistry.mjs`,
   `migrate-registry.mjs` (one-shot registry codemods), `test-combo-autoswitch.mjs`,
   `translate-readme.js`, `copy-standalone-assets.mjs` (postbuild).
