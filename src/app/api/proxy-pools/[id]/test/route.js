@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { getProxyPoolById, updateProxyPool } from "@/models";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { fetch as undiciFetch } from "undici";
+import { runHealthCheck } from "@/lib/xray/manager";
+
+// Debounce for kicking the v2go health-check/auto-rotate from repeated test
+// clicks — each runHealthCheck may await a blue-green switchConfig.
+let lastManagedHealthKickAt = 0;
+const MANAGED_HEALTH_KICK_DEBOUNCE_MS = 10_000;
 
 async function testVercelRelay(relayUrl, timeoutMs = 10000) {
   const controller = new AbortController();
@@ -128,12 +134,34 @@ export async function POST(request, { params }) {
       : await testProxyUrl({ proxyUrl: proxyPool.proxyUrl });
     const now = new Date().toISOString();
 
-    await updateProxyPool(id, {
+    const updates = {
       testStatus: result.ok ? "active" : "error",
       lastTestedAt: now,
       lastError: result.ok ? null : (result.error || `Proxy test failed with status ${result.status}`),
-      isActive: result.ok,
-    });
+    };
+
+    // Managed v2go pool: its lifecycle belongs to the xray manager. A failed
+    // probe must NOT deactivate it — an inactive pool makes bound connections
+    // fall back to DIRECT (leaking the server IP under strictProxy intent).
+    // Instead, surface the error and kick the health-check/auto-rotate
+    // machinery in the background: it re-probes authoritatively and
+    // blue-green-switches to a healthy node when "Auto-rotate" is enabled.
+    const isManagedPool = id === "v2go-xray-managed" || proxyPool._v2goManaged === true;
+    if (isManagedPool) {
+      if (!result.ok) {
+        updates.lastError = `${updates.lastError} — v2go node unreachable, auto-rotation triggered; re-test in a few seconds`;
+        if (Date.now() - lastManagedHealthKickAt > MANAGED_HEALTH_KICK_DEBOUNCE_MS) {
+          lastManagedHealthKickAt = Date.now();
+          runHealthCheck().catch((e) =>
+            console.warn("[proxy-pools] managed-pool test kick of health check failed:", e?.message || e)
+          );
+        }
+      }
+    } else {
+      updates.isActive = result.ok;
+    }
+
+    await updateProxyPool(id, updates);
 
     return NextResponse.json({
       ok: result.ok,
