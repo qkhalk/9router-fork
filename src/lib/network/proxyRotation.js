@@ -57,9 +57,12 @@ export function isProxyRotatableError(status, errorText) {
 // unreachable / dropped the connection), as opposed to an upstream HTTP error
 // the proxy successfully forwarded. `formatProviderError` surfaces the undici /
 // socket cause in the `(cause: ...)` suffix, so we can tell a SOCKS-port-down
-// event (rotation teardown) from a genuine upstream 502.
+// event (rotation teardown) from a genuine upstream 502. `terminated` is
+// undici's mid-body abort (TypeError: terminated) — the proxy/process died
+// under the response stream; client-side aborts surface as "AbortError"
+// instead, so the word `terminated` stays unambiguous here.
 const CONNECTION_FAILURE_RE =
-  /fetch failed|socket hang up|und_err_socket|other side closed|cause:\s*e(connrefused|connreset|timedout|pipe|connaborted|eof)/i;
+  /fetch failed|socket hang up|und_err_socket|other side closed|\bterminated\b|cause:\s*e(connrefused|connreset|timedout|pipe|connaborted|eof)/i;
 
 /**
  * Is this error a connection-level proxy failure (proxy unreachable / dropped),

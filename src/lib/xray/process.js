@@ -6,8 +6,9 @@
  * SIGTERM → SIGKILL escalation, and Windows-safe killing via taskkill.
  *
  * One xray process = one active outbound (the v2rayN convention). Switching
- * servers is kill + respawn with a new config.json — simpler and leak-free
- * compared to the gRPC HandlerService reload path.
+ * servers is a blue-green replace: spawn the next instance on a fresh port,
+ * then drain + terminate the old one once the pool has been repointed (see
+ * spawnNextManagedXray / manager.switchConfig).
  */
 
 import fs from "node:fs";
@@ -18,6 +19,9 @@ import { getXrayBinaryPath, isXrayInstalled } from "./installer.js";
 
 const XRAY_DIR = path.join(DATA_DIR, "xray");
 const PID_FILE = path.join(XRAY_DIR, "xray.pid");
+// Instances retired by a blue-green switch that are kept alive briefly so
+// in-flight requests through the old SOCKS port can finish (drain).
+const DRAINING_FILE = path.join(XRAY_DIR, "xray.pid.draining");
 const LOG_FILE = path.join(XRAY_DIR, "xray.log");
 const STARTUP_TIMEOUT_MS = 8000;
 
@@ -197,23 +201,122 @@ export function stopXray() {
 export async function restartXray({ configPath }) {
   const pid = getManagedPid();
   if (pid) {
-    if (process.platform === "win32") {
-      await killPidWindows(pid);
-      // Give the OS a moment to release the port.
-      await new Promise((r) => setTimeout(r, 500));
-    } else {
-      try { process.kill(pid, "SIGTERM"); } catch {}
-      for (let i = 0; i < 30 && isPidAlive(pid); i++) {
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      if (isPidAlive(pid)) {
-        try { process.kill(pid, "SIGKILL"); } catch {}
-        await new Promise((r) => setTimeout(r, 300));
-      }
-    }
+    await terminateXrayPid(pid);
     clearPid();
   }
   return startManagedXray({ configPath });
+}
+
+/**
+ * Gracefully terminate an xray instance by PID: SIGTERM, escalate to SIGKILL
+ * after 3s. Waits for the process to actually die so the caller can rely on
+ * its ports being released. Windows uses PowerShell Stop-Process.
+ */
+export async function terminateXrayPid(pid) {
+  if (!pid || !isPidAlive(pid)) return;
+  if (process.platform === "win32") {
+    await killPidWindows(pid);
+    // Give the OS a moment to release the port.
+    await new Promise((r) => setTimeout(r, 500));
+    return;
+  }
+  try { process.kill(pid, "SIGTERM"); } catch {}
+  for (let i = 0; i < 30 && isPidAlive(pid); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (isPidAlive(pid)) {
+    try { process.kill(pid, "SIGKILL"); } catch {}
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+
+/** Overwrite the managed PID file (used by blue-green switch to promote the
+ *  new instance, or to restore the previous one when a candidate fails). */
+export function setManagedPid(pid) {
+  if (pid) writePid(pid);
+  else clearPid();
+}
+
+// ─── draining-instance bookkeeping (blue-green switch) ─────────────────────
+// Retired instances stay alive for a drain window so requests already riding
+// their SOCKS port can finish. The registry is persisted so the boot reaper
+// can kill orphans after a crash/restart (in-flight requests died with the
+// Node process anyway).
+
+export function getDrainingPids() {
+  try {
+    if (!fs.existsSync(DRAINING_FILE)) return [];
+    const parsed = JSON.parse(fs.readFileSync(DRAINING_FILE, "utf8"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((e) => e && Number.isFinite(Number(e.pid)));
+  } catch {
+    return [];
+  }
+}
+
+export function addDrainingPid(pid) {
+  if (!pid) return;
+  const list = getDrainingPids();
+  if (list.some((e) => Number(e.pid) === Number(pid))) return;
+  list.push({ pid: Number(pid), since: Date.now() });
+  ensureDir();
+  fs.writeFileSync(DRAINING_FILE, JSON.stringify(list));
+}
+
+export function removeDrainingPid(pid) {
+  const list = getDrainingPids();
+  const next = list.filter((e) => Number(e.pid) !== Number(pid));
+  try {
+    if (next.length) fs.writeFileSync(DRAINING_FILE, JSON.stringify(next));
+    else if (fs.existsSync(DRAINING_FILE)) fs.unlinkSync(DRAINING_FILE);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Spawn the NEXT managed instance without touching the current one and
+ * without the fixed 8s startup gate: the caller races port-readiness against
+ * the early-exit promise instead, so a healthy instance is promoted as soon
+ * as its SOCKS port accepts connections and a bad one fails fast.
+ *
+ * Does NOT write the PID file — the caller promotes via setManagedPid() only
+ * after the new instance passes its health probe (and restores the old PID
+ * on failure).
+ *
+ * @param {{ configPath: string }} opts
+ * @returns {Promise<{ pid: number, exitPromise: Promise<number> }>}
+ *   exitPromise resolves with the exit code if the process dies on its own
+ *   (bad config, port conflict) — race it against readiness.
+ */
+export async function spawnNextManagedXray({ configPath }) {
+  if (!isXrayInstalled()) {
+    const err = new Error("Xray binary not installed");
+    err.code = "NOT_INSTALLED";
+    throw err;
+  }
+  ensureDir();
+  const binary = getXrayBinaryPath();
+  const outFd = fs.openSync(LOG_FILE, "a");
+  let child;
+  try {
+    child = spawn(binary, ["run", "-c", configPath], {
+      stdio: ["ignore", outFd, outFd],
+      detached: true,
+      windowsHide: true,
+      env: { ...process.env },
+    });
+  } finally {
+    try { fs.closeSync(outFd); } catch {}
+  }
+  if (!child.pid) {
+    const err = new Error("Failed to spawn xray process");
+    err.code = "SPAWN_FAILED";
+    throw err;
+  }
+  child.unref();
+  const exitPromise = new Promise((resolve) => {
+    child.once("exit", (code) => resolve(code));
+  });
+  return { pid: child.pid, exitPromise };
 }
 
 /** Tail the xray runtime log for the dashboard log viewer. */
