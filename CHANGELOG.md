@@ -1,3 +1,38 @@
+# v0.6.21 (2026-08-14)
+
+## Added
+- **opencode-go — usage metering on the dashboard**: OpenCode Go meters three
+  plan windows (rolling / weekly / monthly) at `GET /zen/go/v1/usage`, taking
+  the same `sk-...` key chat uses. The new usage handler renders all three on
+  the `/usage` page. `percent` is percent **used** (a depleted window reads
+  100, not 0); a window counts as blocked on **either** signal
+  (`status: "rate-limited"` or percent at 100), so an upstream that renames the
+  status string still reports the window as blocked; and a reset time is only
+  surfaced for a window that is blocked or partly used — an untouched window's
+  `resetsAt` is a moving projection, not a deadline. `monthly` is a rolling
+  ~30 day window, not a calendar month.
+- **opencode-go — endpoint routing by client request format**: the provider now
+  declares multi-endpoint `transports` (openai / claude / openai-responses) so
+  the endpoint is picked by the **client's request format** — Claude Code hits
+  `/messages` (native, thinking block preserved), Codex hits `/responses`,
+  OpenAI clients hit `/chat/completions` — instead of force-translating every
+  request through the Claude pivot (two hops, with thinking/tool_id loss). A
+  per-model `supportedFormats` guard keeps models on the endpoints they
+  actually support: kimi/glm/mimo only do `/chat/completions`, MiniMax/Qwen
+  add `/messages`, DeepSeek adds `/responses`. The bespoke `OpenCodeGoExecutor`
+  is gone — routing now flows through `DefaultExecutor` + the registry, like
+  every other multi-endpoint provider.
+
+## Fixes
+- **opencode-go — spent plan reported as "Invalid API key"**: the key test
+  probed a chat completion and treated 401/403 as a bad key, but a key whose
+  plan window is spent answers 401 on chat while `/usage` answers 200 — so the
+  dashboard called a working, self-recovering key invalid. Both test paths now
+  probe `/usage` (accurate, costs no tokens, no `getDefaultModel` dependency).
+  As a fallback, `401 {"error":{"type":"CreditsError"}}` is still treated as a
+  valid-but-spent key, while `AuthError` remains invalid — the two share a
+  status code and only `error.type` separates them.
+
 # v0.6.20 (2026-08-14)
 
 ## Fixes
