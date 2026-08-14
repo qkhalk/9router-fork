@@ -1193,15 +1193,22 @@ export default function ProxyPoolsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1">
                   <span className="text-xs text-text-muted">Rotation interval (live, minutes)</span>
-                  <select
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    step={1}
                     value={formData.liveMinutes}
                     onChange={(e) => setFormData((prev) => ({ ...prev, liveMinutes: Number(e.target.value) }))}
+                    onBlur={(e) => {
+                      // Snap empty/out-of-range input back into 1–60 on blur.
+                      const n = Math.round(Number(e.target.value));
+                      const safe = Number.isFinite(n) && n > 0 ? Math.min(60, Math.max(1, n)) : 5;
+                      setFormData((prev) => ({ ...prev, liveMinutes: safe }));
+                    }}
                     className="text-sm rounded border border-border bg-transparent px-2 py-1.5"
-                  >
-                    {[1, 2, 3, 4, 5].map((m) => (
-                      <option key={m} value={m}>{m} min</option>
-                    ))}
-                  </select>
+                  />
+                  <span className="text-[11px] text-text-muted">1–60 min. Actual IP lifetime follows the provider (time_die).</span>
                 </label>
                 <label className="flex flex-col gap-1">
                   <span className="text-xs text-text-muted">Protocol</span>

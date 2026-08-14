@@ -31,10 +31,16 @@ export class ProxyXoayError extends Error {
   }
 }
 
+// The provider doesn't document a hard max for `live`; similar Vietnamese 4G
+// providers cap IP lifetime around 30–60 min, so accept up to 60 and let the
+// provider's own response (`time_die` / error) be the source of truth.
+const LIVE_MIN = 1;
+const LIVE_MAX = 60;
+
 function clampLive(minutes) {
   const n = parseInt(minutes, 10);
   if (!Number.isFinite(n)) return 5;
-  return Math.min(5, Math.max(1, n));
+  return Math.min(LIVE_MAX, Math.max(LIVE_MIN, n));
 }
 
 /**
