@@ -260,6 +260,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // Retries used so far for managed-pool connection failures (port-down during
   // rotation). Bounded by MAX_MANAGED_CONN_RETRIES per request.
   let managedConnRetries = 0;
+  // Last known state of the SOCKS port during those retries. null = no retry
+  // ran; true = port kept accepting connections (so the failure is NOT
+  // teardown noise); false = port never came back.
+  let managedConnPortOpen = null;
 
   while (true) {
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
@@ -364,6 +368,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       await waitForManagedRotationSettle({ maxWaitMs: 6000 });
       // 2. Wait for the port to accept connections again (≤6s).
       const up = await waitForSocksPortOpen(connSocksPort, 6000);
+      managedConnPortOpen = up;
       if (up) {
         // Port is back — retry the same account + body. Do NOT mark the
         // account unavailable or exclude it; this was an infra blip.
@@ -393,12 +398,32 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // the new IP.
     if (rotatable && usedPoolId === MANAGED_POOL_ID) {
       // Connection-level failures (SOCKS port down, terminated streams) are
-      // infra noise — often self-inflicted by a rotation's teardown — NOT an
-      // IP-rate-limit signal. Rotating on them amplifies the outage: each
-      // switch tears down more streams, which fail as 502s, which trigger
-      // yet another rotation. They are handled by the retry path above.
+      // usually infra noise — often self-inflicted by a rotation's teardown —
+      // NOT an IP-rate-limit signal. Rotating on them amplifies the outage:
+      // each switch tears down more streams, which fail as 502s, which trigger
+      // yet another rotation. They are handled by the retry path above…
       if (isConnectionFailure(result.error)) {
-        log.warn("PROXY", "Managed-pool connection failure classified as non-rotatable (infra noise, not IP-specific)");
+        // …EXCEPT when the retries already ran and the SOCKS port kept
+        // accepting connections the whole time (or never came back with no
+        // rotation in flight to blame). Then the teardown-noise theory is
+        // dead: the xray process is up but its outbound can't reach anything
+        // (dead node). Without this, a node that dies outside a rotation is
+        // stuck forever — health checks only run manually, so real traffic is
+        // the only signal. triggerManagedRotationOnProxyError has its own
+        // in-flight + cooldown guards, so this is safe to call per request.
+        if (managedConnRetries >= MAX_MANAGED_CONN_RETRIES || managedConnPortOpen === false) {
+          log.warn(
+            "PROXY",
+            `Managed-pool SOCKS port ${managedConnPortOpen === false ? "down without an in-flight rotation" : "up but outbound dead"}; triggering managed rotation to a healthy node`
+          );
+          triggerManagedRotationOnProxyError({
+            status: result.status,
+            error: typeof result.error === "string" ? result.error : "",
+            model: `${provider}/${model}`,
+          }).catch(() => {});
+        } else {
+          log.warn("PROXY", "Managed-pool connection failure classified as non-rotatable (infra noise, not IP-specific)");
+        }
       } else {
         triggerManagedRotationOnProxyError({
           status: result.status,
