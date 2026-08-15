@@ -32,28 +32,47 @@ const ROTATABLE_ERROR_TEXT = [
   "capacity",
   "overloaded",
   "request not allowed",
+  // Cloudflare edge rate-limiting the exit IP (error 1015 block page) — a
+  // short per-IP window at the edge, so rotate with the normal rate-limit
+  // cooldown. (Status is usually 429, which is already rotatable; these
+  // signatures catch the status-less text form.)
+  "you are being rate limited",
+  "error 1015",
 ];
 
 // HTTP statuses that warrant a proxy switch. 5xx/408 are upstream/proxy
 // trouble; 429 is the headline rate-limit case. 401/403 are NOT here because
 // those are account/credential problems, not proxy problems — EXCEPT the
-// Cloudflare edge-IP block below, which is exit-IP-specific.
+// Cloudflare edge-IP blocks below, which are exit-IP-specific.
 const ROTATABLE_ERROR_STATUS = [408, 429, 500, 502, 503, 504];
 
-// Cloudflare edge blocks that are specific to the EXIT IP: the site is behind
-// Cloudflare and the proxy's egress IP is restricted/banned at the edge
-// (error 1034 "Edge IP Restricted" et al.). Every request through this IP
-// fails identically regardless of account — switching proxy is the only fix.
-// Matched against the block-page body, which formatProviderError embeds in
-// the error text (a normal API 403 never contains these strings).
-const IP_BAN_ERROR_TEXT = ["edge ip restricted", "error 1034", "error code: 1034"];
+// Cloudflare edge blocks that follow the EXIT IP: the site is behind
+// Cloudflare and the proxy's egress IP is banned/restricted at the edge.
+// Every request through this IP fails identically regardless of account —
+// switching proxy is the only fix. Matched against the block-page body,
+// which formatProviderError embeds in the error text (a normal API 403 JSON
+// error never contains these strings). Hard bans only — edge blocks that are
+// NOT IP-specific (1010 browser-signature, 1000-series DNS/domain issues,
+// 52x origin errors) deliberately stay out: rotating cannot fix those.
+const IP_BAN_ERROR_TEXT = [
+  "edge ip restricted", // 1034 — DNS points somewhere CF doesn't proxy for this IP
+  "error 1034",
+  "error code: 1034",
+  "errorcode: 1034",
+  "error 1006", // "Your IP address has been banned"
+  "error 1007",
+  "error 1008",
+  "ip address has been banned",
+  "access denied by firewall rules", // 1020 — WAF, usually IP reputation
+  "error 1020",
+];
 
 /**
  * Is this error a Cloudflare-style edge block on the proxy's exit IP?
- * (403 + block-page signature — NOT an account/credential 403.)
+ * (Block-page signature — NOT an account/credential 403. Hard bans only;
+ * the edge rate-limit 1015 is classified via ROTATABLE_ERROR_TEXT instead.)
  */
 export function isProxyIpBanError(status, errorText) {
-  if (status && status !== 403) return false;
   const lower = errorText
     ? (typeof errorText === "string" ? errorText : String(errorText)).toLowerCase()
     : "";
