@@ -380,6 +380,26 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       log.warn("PROXY", `Managed-pool SOCKS port ${connSocksPort} did not come back within 6s; falling through to error handling`);
     }
 
+    // --- Managed-pool flakiness tracking (status-agnostic) ---
+    // Mid-stream aborts (`TypeError: terminated`) surface with NO http status
+    // — the response already started (200) when the stream died — so they can
+    // never satisfy the rotatable gate below, yet they are THE signature of a
+    // flaky node. Count every managed-pool connection-level failure here,
+    // status or not; three in a rolling 5-min window rotate the pool. (The
+    // rotation module's adaptive cooldown bypass handles the case where the
+    // flaky node was itself just rotated to.)
+    if (usedPoolId === MANAGED_POOL_ID && isConnectionFailure(result.error)) {
+      const { flaky, countInWindow } = noteManagedPoolConnFailure();
+      if (flaky) {
+        log.warn("PROXY", `Managed-pool ${countInWindow} connection-level failures in the last 5min (flaky node); rotating to a healthy one`);
+        triggerManagedRotationOnProxyError({
+          status: result.status,
+          error: typeof result.error === "string" ? result.error : "",
+          model: `${provider}/${model}`,
+        }).catch(() => {});
+      }
+    }
+
     // Public/no-auth connections (free providers) have no account to protect:
     // there is nothing to "burn" by trying another IP, and edge/bot blocks can
     // masquerade as 401/402/403. So when the request went through a proxy
@@ -418,26 +438,18 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // each switch tears down more streams, which fail as 502s, which trigger
       // yet another rotation. They are handled by the retry path above…
       if (isConnectionFailure(result.error)) {
-        // …EXCEPT when the evidence says otherwise. Three distinct signals
-        // turn a "noise" connection failure into a rotation trigger:
-        //   1. Flaky node: connection-level failures keep piling up in a
-        //      rolling 5-min window (xray websocket dial EOFs — requests
-        //      between the drops still succeed, so the node never looks
-        //      dead). Interleaved successes don't reset the count.
-        //   2. Retries exhausted while the SOCKS port kept accepting
-        //      connections — the xray process is up but its outbound can't
-        //      reach anything (dead node).
-        //   3. The port never came back with no rotation in flight to blame.
-        // Health checks only run manually, so real traffic is the only
-        // automatic signal. triggerManagedRotationOnProxyError has its own
-        // in-flight + cooldown guards, so this is safe to call per request.
-        const { flaky, countInWindow } = noteManagedPoolConnFailure();
-        if (flaky || managedConnRetries >= MAX_MANAGED_CONN_RETRIES || managedConnPortOpen === false) {
-          const why = flaky
-            ? `${countInWindow} connection-level failures in the last 5min (flaky node)`
-            : managedConnPortOpen === false
-              ? "SOCKS port down without an in-flight rotation"
-              : "SOCKS port up but outbound dead";
+        // …EXCEPT when the retries already ran and the SOCKS port kept
+        // accepting connections the whole time (or never came back with no
+        // rotation in flight to blame). Then the teardown-noise theory is
+        // dead: the xray process is up but its outbound can't reach anything
+        // (dead node). Flaky nodes are handled by the status-agnostic rolling
+        // counter above — including the status-less mid-stream aborts that
+        // never reach this gate. triggerManagedRotationOnProxyError has its
+        // own in-flight + cooldown guards, so this is safe to call per request.
+        if (managedConnRetries >= MAX_MANAGED_CONN_RETRIES || managedConnPortOpen === false) {
+          const why = managedConnPortOpen === false
+            ? "SOCKS port down without an in-flight rotation"
+            : "SOCKS port up but outbound dead";
           log.warn("PROXY", `Managed-pool ${why}; triggering managed rotation to a healthy node`);
           triggerManagedRotationOnProxyError({
             status: result.status,
