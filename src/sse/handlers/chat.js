@@ -380,7 +380,22 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       log.warn("PROXY", `Managed-pool SOCKS port ${connSocksPort} did not come back within 6s; falling through to error handling`);
     }
 
-    const rotatable = isProxyRotatableError(result.status, result.error);
+    // Public/no-auth connections (free providers) have no account to protect:
+    // there is nothing to "burn" by trying another IP, and edge/bot blocks can
+    // masquerade as 401/402/403. So when the request went through a proxy
+    // pool, rotate on ANY http error except the request-shape-deterministic
+    // ones (400/404/405/413/422 fail identically on every IP). Authenticated
+    // connections keep the conservative taxonomy in isProxyRotatableError —
+    // for those, 401/402 really are credential/billing problems and rotating
+    // would just re-fail on a fresh node.
+    const isPublicConn = credentials?.id === "noauth" || credentials?.connectionName === "Public";
+    const rotatable =
+      isProxyRotatableError(result.status, result.error) ||
+      (isPublicConn &&
+        usedPoolId != null &&
+        Number.isFinite(Number(result.status)) &&
+        Number(result.status) >= 400 &&
+        ![400, 404, 405, 413, 422].includes(Number(result.status)));
 
     // --- Proxy-group / managed-pool rotation on rotatable errors (429/rate-limit/5xx) ---
     // When a request fails through a proxy-group entry with an error that's
