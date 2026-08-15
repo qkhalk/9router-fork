@@ -264,7 +264,7 @@ async function doRotate({ status, errorText, model }) {
       ok: false,
       status: 403,
       exitIp: bannedRow?.exitIp ?? active?.lastExitIp ?? null,
-      error: "cloudflare edge ip restricted (exit IP banned)",
+      error: "cloudflare edge ip block (exit IP banned/restricted)",
     }).catch(() => {});
     logRotation("info", "managed-pool marked active config IP-banned at edge", {
       configId: activeId, model: matchedModel,
