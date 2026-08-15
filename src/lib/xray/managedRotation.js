@@ -122,6 +122,30 @@ let lastRotateAt = 0;       // epoch ms of last successful rotation
 let lastRotatedToConfigId = null; // the configId we most recently rotated TO
 const recentlyTried = new Map(); // configId -> epoch ms it was rotated to
 
+// --- flaky-node tracking -----------------------------------------------------
+// A node that INTERMITTENTLY drops streams (xray "websocket: failed to dial >
+// EOF", mid-body `terminated`) never looks dead: requests between the drops
+// succeed, so neither the retries-exhausted path nor manual health checks
+// fire, and the pool stays pinned to it. Track connection-level failures on
+// the managed pool in a rolling window; enough of them => rotate. Interleaved
+// successes do NOT reset the window — three broken streams in five minutes is
+// already worth switching nodes regardless of the successes between them.
+const FLAKY_WINDOW_MS = 5 * 60 * 1000;
+const FLAKY_FAILURE_THRESHOLD = 3;
+let recentConnFailures = []; // epoch ms of managed-pool connection-level failures
+
+/**
+ * Record one connection-level failure on the managed pool.
+ * @returns {{flaky: boolean, countInWindow: number}} flaky=true once the
+ *   rolling-window count reaches FLAKY_FAILURE_THRESHOLD.
+ */
+export function noteManagedPoolConnFailure() {
+  const now = nowMs();
+  recentConnFailures.push(now);
+  recentConnFailures = recentConnFailures.filter((t) => now - t < FLAKY_WINDOW_MS);
+  return { flaky: recentConnFailures.length >= FLAKY_FAILURE_THRESHOLD, countInWindow: recentConnFailures.length };
+}
+
 function nowMs() { return Date.now(); }
 
 function pruneRecentlyTried() {
@@ -364,4 +388,5 @@ export function _resetManagedRotationState() {
   lastRotateAt = 0;
   lastRotatedToConfigId = null;
   recentlyTried.clear();
+  recentConnFailures = [];
 }
