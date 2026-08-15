@@ -31,7 +31,7 @@ import { getProxyPoolById } from "@/models";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { beginLiveModelTraffic, wrapLiveModelResponse } from "@/lib/xray/modelFilterTraffic.js";
-import { triggerManagedRotationOnProxyError, waitForManagedRotationSettle } from "@/lib/xray/managedRotation.js";
+import { triggerManagedRotationOnProxyError, waitForManagedRotationSettle, noteManagedPoolConnFailure } from "@/lib/xray/managedRotation.js";
 import { MANAGED_POOL_ID } from "@/lib/xray/manager.js";
 import { waitForSocksPortOpen } from "@/lib/xray/tester.js";
 
@@ -403,19 +403,27 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // each switch tears down more streams, which fail as 502s, which trigger
       // yet another rotation. They are handled by the retry path above…
       if (isConnectionFailure(result.error)) {
-        // …EXCEPT when the retries already ran and the SOCKS port kept
-        // accepting connections the whole time (or never came back with no
-        // rotation in flight to blame). Then the teardown-noise theory is
-        // dead: the xray process is up but its outbound can't reach anything
-        // (dead node). Without this, a node that dies outside a rotation is
-        // stuck forever — health checks only run manually, so real traffic is
-        // the only signal. triggerManagedRotationOnProxyError has its own
+        // …EXCEPT when the evidence says otherwise. Three distinct signals
+        // turn a "noise" connection failure into a rotation trigger:
+        //   1. Flaky node: connection-level failures keep piling up in a
+        //      rolling 5-min window (xray websocket dial EOFs — requests
+        //      between the drops still succeed, so the node never looks
+        //      dead). Interleaved successes don't reset the count.
+        //   2. Retries exhausted while the SOCKS port kept accepting
+        //      connections — the xray process is up but its outbound can't
+        //      reach anything (dead node).
+        //   3. The port never came back with no rotation in flight to blame.
+        // Health checks only run manually, so real traffic is the only
+        // automatic signal. triggerManagedRotationOnProxyError has its own
         // in-flight + cooldown guards, so this is safe to call per request.
-        if (managedConnRetries >= MAX_MANAGED_CONN_RETRIES || managedConnPortOpen === false) {
-          log.warn(
-            "PROXY",
-            `Managed-pool SOCKS port ${managedConnPortOpen === false ? "down without an in-flight rotation" : "up but outbound dead"}; triggering managed rotation to a healthy node`
-          );
+        const { flaky, countInWindow } = noteManagedPoolConnFailure();
+        if (flaky || managedConnRetries >= MAX_MANAGED_CONN_RETRIES || managedConnPortOpen === false) {
+          const why = flaky
+            ? `${countInWindow} connection-level failures in the last 5min (flaky node)`
+            : managedConnPortOpen === false
+              ? "SOCKS port down without an in-flight rotation"
+              : "SOCKS port up but outbound dead";
+          log.warn("PROXY", `Managed-pool ${why}; triggering managed rotation to a healthy node`);
           triggerManagedRotationOnProxyError({
             status: result.status,
             error: typeof result.error === "string" ? result.error : "",
