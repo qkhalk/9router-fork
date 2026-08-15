@@ -36,8 +36,29 @@ const ROTATABLE_ERROR_TEXT = [
 
 // HTTP statuses that warrant a proxy switch. 5xx/408 are upstream/proxy
 // trouble; 429 is the headline rate-limit case. 401/403 are NOT here because
-// those are account/credential problems, not proxy problems.
+// those are account/credential problems, not proxy problems — EXCEPT the
+// Cloudflare edge-IP block below, which is exit-IP-specific.
 const ROTATABLE_ERROR_STATUS = [408, 429, 500, 502, 503, 504];
+
+// Cloudflare edge blocks that are specific to the EXIT IP: the site is behind
+// Cloudflare and the proxy's egress IP is restricted/banned at the edge
+// (error 1034 "Edge IP Restricted" et al.). Every request through this IP
+// fails identically regardless of account — switching proxy is the only fix.
+// Matched against the block-page body, which formatProviderError embeds in
+// the error text (a normal API 403 never contains these strings).
+const IP_BAN_ERROR_TEXT = ["edge ip restricted", "error 1034", "error code: 1034"];
+
+/**
+ * Is this error a Cloudflare-style edge block on the proxy's exit IP?
+ * (403 + block-page signature — NOT an account/credential 403.)
+ */
+export function isProxyIpBanError(status, errorText) {
+  if (status && status !== 403) return false;
+  const lower = errorText
+    ? (typeof errorText === "string" ? errorText : String(errorText)).toLowerCase()
+    : "";
+  return !!lower && IP_BAN_ERROR_TEXT.some((t) => lower.includes(t));
+}
 
 /**
  * Does this error look like it could be resolved by switching proxy/IP?
@@ -45,6 +66,7 @@ const ROTATABLE_ERROR_STATUS = [408, 429, 500, 502, 503, 504];
  * and try another one before giving up on the account.
  */
 export function isProxyRotatableError(status, errorText) {
+  if (isProxyIpBanError(status, errorText)) return true;
   if (status && ROTATABLE_ERROR_STATUS.includes(status)) return true;
   const lower = errorText
     ? (typeof errorText === "string" ? errorText : String(errorText)).toLowerCase()
@@ -83,6 +105,7 @@ const PROXY_COOLDOWN_MS = {
   rateLimit: 60 * 1000, // 429 / rate-limit / quota → 60s
   server: 30 * 1000, // 5xx → 30s
   transient: 20 * 1000, // other rotatable → 20s
+  ipBan: 60 * 60 * 1000, // Cloudflare edge IP block → 1h (edge bans last hours)
 };
 
 /**
@@ -93,6 +116,7 @@ export function proxyCooldownForError(status, errorText) {
   const lower = errorText
     ? (typeof errorText === "string" ? errorText : String(errorText)).toLowerCase()
     : "";
+  if (isProxyIpBanError(status, errorText)) return PROXY_COOLDOWN_MS.ipBan;
   if (lower && ["rate limit", "too many requests", "quota exceeded", "freeusagelimit", "capacity", "overloaded"].some((t) => lower.includes(t))) {
     return PROXY_COOLDOWN_MS.rateLimit;
   }

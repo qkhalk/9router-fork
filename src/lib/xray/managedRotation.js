@@ -38,7 +38,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getSelectedXrayConfig } from "../db/repos/xrayRepo.js";
-import { getNextHealthyConfigsForModel, getModelFilterResult } from "../db/repos/modelFilterResultsRepo.js";
+import { getNextHealthyConfigsForModel, getModelFilterResult, upsertModelFilterResult } from "../db/repos/modelFilterResultsRepo.js";
+import { isProxyIpBanError } from "../network/proxyRotation.js";
 
 /**
  * The Model Filter cache keys results by the model string the job was run
@@ -247,6 +248,29 @@ async function doRotate({ status, errorText, model }) {
   // tolerates alias/id prefix differences between the chat path and the
   // filter cache (e.g. "opencode/x" vs "oc/x").
   const { candidates, matchedModel } = await findCandidatesForModel(model, activeId);
+
+  // Cloudflare-style edge IP ban: the ACTIVE config's exit IP is blocked at
+  // the edge — every request through it fails identically, whatever the
+  // account. Mark its cached filter row failed (ok=0) so future rotations
+  // skip this node once the 5-min recentlyTried window expires. The next
+  // model-filter run re-validates it; if the ban is still on, the filter
+  // probe fails too and it stays excluded. This is deliberately a cooldown,
+  // not removal from the config list — edge bans are usually temporary.
+  if (activeId && isProxyIpBanError(null, errorText)) {
+    const bannedRow = await getModelFilterResult(activeId, matchedModel).catch(() => null);
+    await upsertModelFilterResult({
+      configId: activeId,
+      model: matchedModel,
+      ok: false,
+      status: 403,
+      exitIp: bannedRow?.exitIp ?? active?.lastExitIp ?? null,
+      error: "cloudflare edge ip restricted (exit IP banned)",
+    }).catch(() => {});
+    logRotation("info", "managed-pool marked active config IP-banned at edge", {
+      configId: activeId, model: matchedModel,
+    });
+  }
+
   logRotation("info", "managed-pool rotation candidates", {
     activeId,
     requestedModel: model,
