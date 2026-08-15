@@ -1,3 +1,22 @@
+# v0.6.27 (2026-08-15)
+
+Hotfix for the flaky-node rotation introduced in v0.6.26: it never fired
+for its primary target.
+
+## Fixes
+- **Mid-stream aborts never reached the flaky-node counter**: `TypeError:
+  terminated` errors carry NO http status — the response already started
+  (200) when the stream died — so they never satisfied the `rotatable`
+  gate the rolling counter was nested under. Live logs confirmed it:
+  three `terminated` errors within 30 seconds across two nodes, zero
+  rotations, users stuck until the flaky node recovered on its own (or
+  didn't). The counter now lives in its own status-agnostic block that
+  runs for every managed-pool connection-level failure; the old
+  classification branch keeps only the two signals that belong there
+  (retries exhausted with the SOCKS port open, and the port down with no
+  rotation in flight). The rotation module's adaptive cooldown bypass
+  covers the case where the flaky node was itself just rotated to.
+
 # v0.6.26 (2026-08-15)
 
 v2go rotation intelligence: flaky nodes, edge-banned exit IPs, and
