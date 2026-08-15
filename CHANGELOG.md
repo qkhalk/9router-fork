@@ -1,3 +1,49 @@
+# v0.6.26 (2026-08-15)
+
+v2go rotation intelligence: flaky nodes, edge-banned exit IPs, and
+public/no-auth traffic all rotate away automatically now, with a
+full error taxonomy deciding when switching IP helps and when it
+just wastes a node.
+
+## Fixes
+- **Flaky nodes no longer pin the pool**: a node that INTERMITTENTLY
+  drops streams (xray `websocket: failed to dial ... EOF`, mid-body
+  `TypeError: terminated`) never looked dead — requests between the
+  drops succeed — so the pool stayed pinned to it indefinitely.
+  Connection-level failures on the managed pool are now tracked in a
+  rolling 5-minute window (interleaved successes do not reset it) and
+  the 3rd failure triggers a managed rotation to a healthy node. This
+  joins the two existing escape hatches: retries exhausted with the
+  SOCKS port open (dead outbound) and the port down with no rotation
+  in flight (instance gone).
+
+## Added
+- **Edge-banned exit IPs rotate + quarantine**: a 403 Cloudflare block
+  page (Error 1034 "Edge IP Restricted", 1006/1007/1008 "Your IP
+  address has been banned", 1020 firewall rules) means the exit IP is
+  banned at the edge — every request through it fails identically
+  regardless of account. These are now classified proxy-rotatable
+  (previously a plain 403 was treated as an account problem: the
+  account got marked unavailable while the banned IP stayed active).
+  Hard bans rotate immediately, cool group entries for 1h, and mark
+  the config's model-filter row `ok=0` so future rotations skip the
+  node until the next filter run re-validates it — a quarantine, not
+  removal, since edge bans are usually temporary. Cloudflare 1015
+  ("You are being rate limited") is a short per-IP edge window and
+  rotates with the normal 60s rate-limit cooldown, no quarantine.
+  Classification is signature-driven (block-page text), and the
+  taxonomy was verified with a 14-case unit check: auth 403/401, S3
+  AccessDenied, and CF 1010 (browser-signature) correctly stay
+  non-rotatable for authenticated accounts.
+- **Aggressive rotation for public/no-auth connections**: a no-auth
+  connection (opencode free, mimo-free — the truly credential-free
+  providers) has no account to protect, and edge/bot blocks can
+  masquerade as 401/402/403. When such a connection rides a proxy
+  pool, ANY http error except the request-shape-deterministic ones
+  (400/404/405/413/422) now triggers rotation. Authenticated
+  connections keep the conservative taxonomy — their 401/402 are
+  genuinely credential/billing problems.
+
 # v0.6.25 (2026-08-15)
 
 v2go resilience: a dead xray outbound can no longer wedge the managed pool
