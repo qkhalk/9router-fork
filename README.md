@@ -501,7 +501,7 @@ command when a newer release exists (run `9router` and watch the menu).
       </td>
     </tr>
   </table>
-  <p><i>...and 20+ more providers including Grok CLI (OAuth), Perplexity Agent API, Featherless, Cloudflare AI, Nebius, Chutes, Hyperbolic, Venice AI, TokenRouter, and custom OpenAI/Anthropic compatible endpoints</i></p>
+  <p><i>...and 20+ more providers including Grok CLI (OAuth), Perplexity Agent API, Featherless, Cloudflare AI, Nebius, Chutes, Hyperbolic, Venice AI, TokenRouter, OrcaRouter, and custom OpenAI/Anthropic compatible endpoints</i></p>
 </div>
 
 ### 🏠 Self-hosted Providers
