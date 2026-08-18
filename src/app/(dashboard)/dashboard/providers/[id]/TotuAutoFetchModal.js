@@ -42,6 +42,10 @@ export default function TotuAutoFetchModal({ isOpen, onClose, onSuccess }) {
     }
   };
 
+  const handleModalClose = () => {
+    onClose();
+  };
+
   const handleSaveSettings = async () => {
     setSaving(true);
     setError("");
@@ -94,7 +98,7 @@ export default function TotuAutoFetchModal({ isOpen, onClose, onSuccess }) {
   };
 
   return (
-    <Modal isOpen={isOpen} title="Lấy acc (TOTU AI)" onClose={handleOpen}>
+    <Modal isOpen={isOpen} title="Lấy acc (TOTU AI)" onClose={handleModalClose}>
       <div className="flex flex-col gap-4">
         <p className="text-xs text-text-muted">
           Automatically register fresh TOTU AI accounts (disposable mail.tm
