@@ -126,7 +126,7 @@ const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) => asyn
 };
 
 // Provider models endpoints configuration
-const PROVIDER_MODELS_CONFIG = {
+export const PROVIDER_MODELS_CONFIG = {
   claude: {
     url: "https://api.anthropic.com/v1/models",
     method: "GET",
@@ -258,6 +258,8 @@ const PROVIDER_MODELS_CONFIG = {
   assemblyai: createOpenAIModelsConfig("https://api.assemblyai.com/v1/models"),
   "vercel-ai-gateway": createOpenAIModelsConfig("https://ai-gateway.vercel.sh/v1/models"),
   orcarouter: createOpenAIModelsConfig("https://api.orcarouter.ai/v1/models"),
+  tokenrouter: createOpenAIModelsConfig("https://api.tokenrouter.com/v1/models"),
+  "totu-ai": createOpenAIModelsConfig("https://totu-ai.com/v1/models"),
   kimchi: {
     customResolver: async (connection) => {
       const result = await resolveKimchiModels({

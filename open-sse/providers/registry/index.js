@@ -127,6 +127,7 @@ import p122 from "./gemini-web.js";
 import p123 from "./ds2api.js";
 import p124 from "./genspark-web.js";
 import p125 from "./orcarouter.js";
+import p126 from "./totu-ai.js";
 
 export default [
   p0,
@@ -254,4 +255,5 @@ export default [
   p123,
   p124,
   p125,
+  p126,
 ];
