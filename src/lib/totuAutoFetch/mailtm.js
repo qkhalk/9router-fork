@@ -22,6 +22,22 @@ async function jsonOrNull(res) {
   }
 }
 
+// GET /domains — active domains mail.tm will accept for new mailboxes.
+// Returns an array of { domain, isActive, _id }. Fail-open: [] on error.
+export async function listDomains({ fetchImpl = globalThis.fetch } = {}) {
+  try {
+    const res = await fetchImpl(`${MAIL_TM_API_BASE}/domains`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) return [];
+    const json = await jsonOrNull(res);
+    if (!Array.isArray(json)) return [];
+    return json;
+  } catch {
+    return [];
+  }
+}
+
 // POST /accounts { address, password } -> { id, address, ... }
 export async function createMailbox({
   address,

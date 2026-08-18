@@ -3,7 +3,7 @@
 // provider connection. Runs either once (API route) or on a schedule.
 
 import { getSettings, getProviderConnections, createProviderConnection } from "@/lib/localDb";
-import { createMailbox, getMailTmToken, waitForVerificationCode } from "./mailtm.js";
+import { createMailbox, getMailTmToken, listDomains, waitForVerificationCode } from "./mailtm.js";
 import {
   login,
   requestVerification,
@@ -35,9 +35,33 @@ function makeCredentials() {
   return { username, password };
 }
 
-function randomMailboxAddress() {
+// Known-good mail.tm domain used only when the live domain list can't be
+// fetched (fail-open fallback). The active list rotates, so this is a last
+// resort, never the primary source.
+const FALLBACK_MAIL_TM_DOMAIN = "emalupe.com";
+
+// Fetch the live mail.tm domain list and pick the first active domain, falling
+// back to FALLBACK_MAIL_TM_DOMAIN when the query fails or returns nothing.
+async function resolveMailTmDomain(fetchImpl) {
+  try {
+    const domains = await listDomains({ fetchImpl });
+    const active = (Array.isArray(domains) ? domains : []).find((d) => d && d.isActive && d.domain);
+    if (active?.domain) return active.domain;
+  } catch {
+    // fall through to the fallback
+  }
+  return FALLBACK_MAIL_TM_DOMAIN;
+}
+
+function makeMailboxAddress(domain) {
   const local = `tu${(Date.now() + Math.floor(Math.random() * 10000)).toString(36)}${randomString(6)}`;
-  return `${local}@cctm-mail.cf`;
+  return `${local}@${domain}`;
+}
+
+// One explicit entry point: fetch the domain, then compose the address.
+async function fetchMailboxAddress(fetchImpl) {
+  const domain = await resolveMailTmDomain(fetchImpl);
+  return makeMailboxAddress(domain);
 }
 
 function getErrorText(error) {
@@ -59,10 +83,11 @@ async function fetchOneAccount(deps) {
   const base = deps.baseUrl || TOTU_BASE_URL;
   const fetchImpl = deps.fetchImpl || globalThis.fetch;
 
-  // 1. Disposable mailbox
+  // 1. Disposable mailbox — address domain comes from the live mail.tm list.
   const creds = makeCredentials();
+  const mailboxAddress = await fetchMailboxAddress(fetchImpl);
   const mailbox = await createMailbox({
-    address: randomMailboxAddress(),
+    address: mailboxAddress,
     password: randomString(16),
     fetchImpl,
   });
