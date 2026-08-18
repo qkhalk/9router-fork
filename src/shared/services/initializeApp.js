@@ -139,6 +139,14 @@ async function runHeavyStartup() {
       .catch((e) => console.log("[AutoPing] scheduler start failed:", e.message));
   }
 
+  // TOTU AI account auto-fetch scheduler. Idempotent; start only when the
+  // user has toggled it on in settings.
+  if (settings.totuAutoFetch === true) {
+    import("@/lib/totuAutoFetch")
+      .then(({ startTotuAutoFetch }) => startTotuAutoFetch())
+      .catch((e) => console.log("[TotuAutoFetch] scheduler start failed:", e.message));
+  }
+
   // Proactive OAuth token refresh (e.g. grok-cli ~6h TTL). Module is idempotent
   // and also started from custom-server.js when that entry is used.
   import("@/sse/services/backgroundTokenRefresh.js")

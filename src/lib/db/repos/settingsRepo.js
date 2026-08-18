@@ -77,6 +77,10 @@ const DEFAULT_SETTINGS = {
   // Subscription auto-sync interval in minutes. 0 = manual-only (scheduler off,
   // sync runs only via the "Sync Now" button). Positive values are clamped to >= 5.
   xraySyncIntervalMin: 60,
+  // TOTU AI account auto-fetch scheduler. totuAutoFetch toggles it; the
+  // interval in minutes (0 = manual-only, positive values clamped to >= 5).
+  totuAutoFetch: false,
+  totuAutoFetchIntervalMin: 60,
   xrayStaleRetentionDays: 7,
   xrayAutoRotate: false,
   xrayHealthCheckIntervalMin: 10,
