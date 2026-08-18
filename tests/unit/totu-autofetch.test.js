@@ -54,18 +54,30 @@ function failFetch(message) {
 // 2nd (or Nth) mailbox creation throw, to exercise per-account isolation.
 // Token creation records the requested name so the list endpoint can return a
 // matching token (the orchestrator polls the list to find the token it made).
-function makeTotuFetch({ failCreateMailboxOn = 0 } = {}) {
+//
+// `domains` controls the live mail.tm domain list the orchestrator fetches
+// before composing a mailbox address. The fake /accounts echo the requested
+// address from the POST body, so the test asserts on the address actually used.
+// `echoAddress` overrides the echoed address (used by the dedup test to make the
+// mailbox come back as an already-known email).
+function makeTotuFetch({
+  failCreateMailboxOn = 0,
+  domains = [{ domain: "emalupe.com", isActive: true }],
+  echoAddress = null,
+} = {}) {
   const createdTokens = [];
 
   const handlers = [
     // mail.tm
     [
       /api\.mail\.tm\/accounts/,
-      counting((n) => {
+      counting((n, url, options) => {
         if (failCreateMailboxOn && n === failCreateMailboxOn) failFetch("mail.tm 429");
-        return okJson({ id: "m1", address: FIXED_EMAIL });
+        const { address } = JSON.parse(options.body || "{}");
+        return okJson({ id: "m1", address: echoAddress || address });
       }),
     ],
+    [/api\.mail\.tm\/domains/, () => okJson(domains)],
     [/api\.mail\.tm\/token/, () => okJson({ token: "mail-token-1" })],
     [/api\.mail\.tm\/messages\/[^/]+/, () =>
       okJson({ subject: "TOTU AI邮箱验证邮件", text: `Your verification code is ${OTP}`, html: "" })],
@@ -142,7 +154,8 @@ describe("runTotuFetchOnce", () => {
     expect(saved.provider).toBe("totu-ai");
     expect(saved.authType).toBe("apikey");
     expect(saved.apiKey).toBe(FIXED_SK);
-    expect(saved.email).toBe(FIXED_EMAIL);
+    // Address domain comes from the live mail.tm list (stubbed emalupe.com), not hardcoded.
+    expect(saved.email).toMatch(/^tu[A-Za-z0-9]+@emalupe\.com$/);
     expect(saved.testStatus).toBe("active");
     expect(saved.isActive).toBe(true);
     expect(saved.name).toMatch(/^TOTU u/);
@@ -151,14 +164,28 @@ describe("runTotuFetchOnce", () => {
     expect(saved.providerSpecificData.totuUsername).toMatch(/^u/);
     expect(saved.providerSpecificData.totuTokenId).toBe("tok1");
 
-    // mail.tm mailbox created + verification requested with that address
-    const createdMailbox = deps.fetchImpl.mock.calls.find(([url]) => url.includes("api.mail.tm/accounts"));
-    expect(createdMailbox).toBeTruthy();
+    // The mailbox address was composed from the fetched active domain.
+    const mailboxAddress = saved.email;
+    expect(deps.fetchImpl).toHaveBeenCalledWith(
+      "https://api.mail.tm/domains",
+      expect.objectContaining({ headers: expect.objectContaining({ Accept: "application/json" }) })
+    );
+    const createdMailboxCall = deps.fetchImpl.mock.calls.find(([url, op]) => url.includes("api.mail.tm/accounts"));
+    expect(JSON.parse(createdMailboxCall[1].body).address).toBe(mailboxAddress);
+  });
+
+  it("falls back to a known-good domain when the live list is empty or fails", async () => {
+    const deps = makeDeps({ connections: [], fetchImpl: makeTotuFetch({ domains: [] }) });
+    const result = await runTotuFetchOnce(deps, { maxAccounts: 1 });
+    expect(result.added).toBe(1);
+    const saved = deps.createProviderConnection.mock.calls[0][0];
+    expect(saved.email).toMatch(/^tu[0-9a-zA-Z]+@emalupe\.com$/);
   });
 
   it("skips accounts whose email already exists (dedup)", async () => {
     const deps = makeDeps({
       connections: [{ id: "existing", provider: "totu-ai", email: FIXED_EMAIL }],
+      fetchImpl: makeTotuFetch({ echoAddress: FIXED_EMAIL }),
     });
 
     const result = await runTotuFetchOnce(deps, { maxAccounts: 1 });
