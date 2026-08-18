@@ -1,3 +1,40 @@
+# v0.6.28 (2026-08-18)
+
+Dashboard hotfix: the "Usage by API Key" table on /dashboard/usage was
+wrong in every period, each period in its own way.
+
+## Fixes
+- **All keys collapsed into one row in Today/24h**: API keys are
+  `sk-{machineId}-{keyId}-{crc}`, so every key on one machine shares the
+  same first 8 characters — and the Today/24h aggregation used exactly
+  those 8 masked chars as the row key. Every request from every key
+  merged into a single row attributed to whichever key happened to be
+  seen first; the other keys simply vanished from the table. Rows are
+  now keyed by the full raw key internally and by a per-key SHA-256
+  fingerprint in the response, so each key keeps its own numbers.
+- **Deleted keys merged into one anonymous row in 7d/30d/60d**: once a
+  key was removed from the key manager, its display name fell back to
+  the first 8 chars + "..." — identical for every deleted key — and the
+  UI groups rows by name, so all deleted keys' usage piled into a
+  single row. The fallback name now includes the key tail (e.g.
+  `sk-machi…beef01`), unique per key.
+- **Local (no-key) usage showed the wrong model in Today/24h**: all
+  no-key requests were forced into one row that inherited the model of
+  the first request seen; each model now gets its own row, matching the
+  daily-summary path.
+- **Raw API keys leaked in the /api/usage/stats response**: the
+  daily-summary path used `rawKey|model|provider` as JSON property
+  names, shipping full plaintext keys to the browser. Property names
+  are now fingerprint-based.
+- **lastUsed never sharpened for no-key rows**: the timestamp overlay
+  looked up `"local-no-key"` while daily rows are keyed
+  `local-no-key|model|provider`; the overlay now builds the same key.
+
+No data migration needed: stored daily aggregates were already keyed by
+the full raw key, so historical per-key numbers render correctly as
+soon as the dashboard reloads. Regression tests in
+`tests/unit/usage-by-api-key.test.js`.
+
 # v0.6.27 (2026-08-15)
 
 Hotfix for the flaky-node rotation introduced in v0.6.26: it never fired
