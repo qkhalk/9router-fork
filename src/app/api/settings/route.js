@@ -89,6 +89,17 @@ export async function PATCH(request) {
       }
     }
 
+    // totuAutoFetchIntervalMin: 0 = manual-only mode, otherwise clamp to >= 5 min
+    // (mirrors xraySyncIntervalMin above).
+    if (Object.prototype.hasOwnProperty.call(body, "totuAutoFetchIntervalMin")) {
+      const raw = Number(body.totuAutoFetchIntervalMin);
+      if (!Number.isFinite(raw) || raw <= 0) {
+        body.totuAutoFetchIntervalMin = 0;
+      } else {
+        body.totuAutoFetchIntervalMin = Math.max(5, Math.floor(raw));
+      }
+    }
+
     const settings = await updateSettings(body);
 
     // Apply outbound proxy settings immediately (no restart required)
@@ -124,6 +135,18 @@ export async function PATCH(request) {
       import("@/lib/xray/sync.js")
         .then(({ startSyncScheduler }) => startSyncScheduler())
         .catch((error) => console.warn("[XraySync] restart failed:", error.message));
+    }
+
+    // Reconfigure the TOTU account auto-fetch scheduler when toggled or its
+    // interval changes. configureTotuAutoFetch stops the timer for interval 0
+    // or when totuAutoFetch is disabled (manual mode).
+    if (
+      Object.prototype.hasOwnProperty.call(body, "totuAutoFetch") ||
+      Object.prototype.hasOwnProperty.call(body, "totuAutoFetchIntervalMin")
+    ) {
+      import("@/lib/totuAutoFetch")
+        .then(({ configureTotuAutoFetch }) => configureTotuAutoFetch(settings))
+        .catch((error) => console.warn("[TotuAutoFetch] settings update failed:", error.message));
     }
 
     if (
