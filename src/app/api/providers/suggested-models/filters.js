@@ -32,4 +32,16 @@ export const FILTERS = {
     (Array.isArray(models) ? models : [])
       .map((m) => ({ id: m.id, name: m.name || m.id }))
       .filter((m) => m.id),
+
+  // NewAPI pricing endpoint ({data:[{model_name, model_ratio, ...}]}). Keeps only
+  // free models (model_ratio === 0). Used by tokenrouter + totu-ai (modelsFetcher
+  // type "pricing") — the route already fetched + parsed the JSON.
+  pricing: (models) => {
+    const list = Array.isArray(models) ? models : Array.isArray(models?.data) ? models.data : [];
+    return list
+      .filter((m) => Number(m.model_ratio) === 0)
+      .map((m) => ({ id: m.model_name || m.id, name: m.model_name || m.id }))
+      .filter((m) => m.id)
+      .sort((a, b) => a.id.localeCompare(b.id));
+  },
 };
