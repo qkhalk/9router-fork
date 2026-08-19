@@ -708,6 +708,9 @@
   "opencode-go": {
     "baseUrl": "https://opencode.ai/zen/go/v1/chat/completions",
     "headers": {},
+    "usage": {
+      "url": "https://opencode.ai/zen/go/v1/usage"
+    },
     "format": "openai",
     "transports": [
       {
@@ -1032,5 +1035,10 @@
     "baseUrl": "https://www.genspark.ai/api/copilot/ask",
     "format": "genspark-web",
     "authType": "cookie"
+  },
+  "orcarouter": {
+    "baseUrl": "https://api.orcarouter.ai/v1/chat/completions",
+    "validateUrl": "https://api.orcarouter.ai/v1/models",
+    "format": "openai"
   }
 }

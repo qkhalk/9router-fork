@@ -23,4 +23,13 @@ export const FILTERS = {
     (Array.isArray(models) ? models : [])
       .filter((m) => m.id?.startsWith("mimo") || m.name?.toLowerCase().includes("mimo"))
       .map((m) => ({ id: m.id, name: m.name || m.id })),
+
+  // Generic OpenAI-compatible models endpoint ({data:[{id,...}]}). Used by
+  // aggregate api-key gateways (orcarouter, ds2api, venice, tokenrouter,
+  // perplexity-agent, vercel-ai-gateway) — the route already fetched + parsed
+  // the JSON, so this only shapes the array.
+  openai: (models) =>
+    (Array.isArray(models) ? models : [])
+      .map((m) => ({ id: m.id, name: m.name || m.id }))
+      .filter((m) => m.id),
 };
