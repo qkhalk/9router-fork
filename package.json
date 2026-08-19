@@ -49,7 +49,7 @@
     "socks": "^2.8.9",
     "socks-proxy-agent": "^8.0.5",
     "sql.js": "^1.14.1",
-    "undici": "^7.19.2",
+    "undici": "^7.29.0",
     "uuid": "^13.0.0",
     "zustand": "^5.0.10"
   },

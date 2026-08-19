@@ -40,6 +40,9 @@ COPY --from=builder /app/node_modules/next ./node_modules/next
 # sql.js loads dist/sql-wasm.wasm by path at runtime; tracing only follows JS imports,
 # so the last-resort DB driver would abort with ENOENT on the missing binary.
 COPY --from=builder /app/node_modules/sql.js ./node_modules/sql.js
+# open-sse/translator/concerns/image.js imports undici at module scope; if open-sse is
+# loaded as plain files at runtime (outside the webpack bundle), undici must be present.
+COPY --from=builder /app/node_modules/undici ./node_modules/undici
 
 RUN mkdir -p /app/data && chown -R node:node /app && \
   mkdir -p /app/data-home && chown node:node /app/data-home && \
