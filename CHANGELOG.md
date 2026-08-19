@@ -1,3 +1,52 @@
+# v0.6.29 (2026-08-19)
+
+Provider pack: two new API-key providers (OrcaRouter, TOTU AI), a TOTU
+account auto-fetch ("Lấy acc"), per-account $ balance for the NewAPI
+gateways, and tokenrouter free-model suggestions that actually work.
+
+## Features
+- **OrcaRouter provider (orcarouter.ai)**: new API-key provider with a
+  thin executor that parses `Retry-After` / `x-ratelimit-reset-after`
+  on 429 into a precise `resetsAtMs` cooldown instead of the default
+  guess; generic-OpenAI suggested-models filter; connection test; the
+  per-workspace rate-limit caveat surfaced in the provider notice.
+- **TOTU AI provider**: OpenAI-compatible NewAPI gateway (category
+  `apikey`), 3-model seed, embedding + image config, model listing via
+  the public pricing endpoint, connection test. No `thinkingConfig`
+  (TOTU reasoning conventions unverified).
+- **TOTU auto-fetch ("Lấy acc")**: one button creates fresh TOTU
+  accounts end-to-end — disposable mail.tm mailbox, email-OTP capture,
+  register, login, mint an `sk-` key — and saves each as a connection
+  with `testStatus: active`. Per-account error isolation, email dedup,
+  and an optional scheduler (default off; manual / 15 / 30 / 60 min).
+  The dashboard login token is stored server-side only, outside
+  `SAFE_PSD_FIELDS`, so it never reaches the browser.
+- **Per-account $ balance for NewAPI gateways**: tokenrouter and totu-ai
+  query `GET /api/user/self` with the stored dashboard login token
+  (never the sk- inference key) and convert NewAPI quota units to USD
+  (tokenrouter price 7, totu 0.5, quota_per_unit 500000). 401/403 maps
+  to a clear "re-add the account" message; orcarouter has no balance
+  API and says so instead of fabricating numbers.
+
+## Fixes
+- **tokenrouter "Suggested free models" was empty**: the modelsFetcher
+  pointed at `/v1/models`, which 401s unauthenticated; it now reads the
+  public pricing endpoint and keeps only `model_ratio === 0` models.
+  Seed trimmed from 120 to 6 — the 3 verified-real free ids plus 3
+  paid — and the stale fake-free `moonshotai/kimi-k3-free` removed.
+  Other ids still route fine via `passthroughModels`.
+- **`undici` was an undeclared dependency** (imported at module scope by
+  `open-sse/translator/concerns/image.js` since the upstream v0.5.2
+  migration): test suites reaching the claude-to-openai translator chain
+  failed to load with `Cannot find package 'undici'` wherever no
+  ambient copy existed, and the SSRF-pinned image-fetch path silently
+  degraded. Now declared (`^7.29.0`) and copied into the Docker runner
+  image alongside the node-forge / sql.js precedent.
+
+## Chores
+- Provider/alias regression baselines regenerated for totu-ai
+  (post-merge of PRs #7–#10).
+
 # v0.6.28 (2026-08-18)
 
 Dashboard hotfix: the "Usage by API Key" table on /dashboard/usage was
