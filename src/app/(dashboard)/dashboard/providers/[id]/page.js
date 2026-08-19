@@ -1323,7 +1323,7 @@ export default function ProviderDetailPage() {
                   className="text-xs text-primary hover:underline inline-flex items-center gap-1"
                 >
                   <span className="material-symbols-outlined text-sm">open_in_new</span>
-                  {providerInfo.notice?.apiKeyUrl ? "Get API Key" : "Sign up / Learn more"}
+                  {providerInfo.notice?.apiKeyUrl ? translate("Get API Key") : translate("Sign up / Learn more")}
                 </a>
               )}
             </div>
@@ -1347,7 +1347,7 @@ export default function ProviderDetailPage() {
       {providerInfo.notice?.text && !providerInfo.deprecated && (
         <div className="flex flex-col gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 sm:flex-row sm:items-center">
           <span className="material-symbols-outlined text-[16px] text-blue-500 shrink-0">info</span>
-          <p className="min-w-0 flex-1 text-xs leading-relaxed text-blue-600 dark:text-blue-400">{providerInfo.notice.text}</p>
+          <p className="min-w-0 flex-1 text-xs leading-relaxed text-blue-600 dark:text-blue-400">{translate(providerInfo.notice.text)}</p>
           {providerInfo.notice.apiKeyUrl && (
             <a
               href={providerInfo.notice.apiKeyUrl}
@@ -1537,7 +1537,7 @@ export default function ProviderDetailPage() {
                     )}
                     {providerId === "totu-ai" && (
                       <Button size="sm" icon="bolt" variant="secondary" onClick={() => setShowTotuAutoFetch(true)}>
-                        Lấy acc
+                        {translate("Get accounts")}
                       </Button>
                     )}
                     <Button
@@ -1615,10 +1615,10 @@ export default function ProviderDetailPage() {
                       icon="bolt"
                       variant="secondary"
                       onClick={() => setShowTotuAutoFetch(true)}
-                      title="Auto-fetch TOTU AI accounts"
+                      title={translate("Auto-fetch TOTU AI accounts")}
                       className="w-full sm:w-auto"
                     >
-                      Lấy acc
+                      {translate("Get accounts")}
                     </Button>
                   )}
                   {hasDualAuthModes ? (

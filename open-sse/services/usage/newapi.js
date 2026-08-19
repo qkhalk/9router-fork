@@ -38,7 +38,7 @@ export async function getNewApiBalanceUsage({
   if (!loginToken || typeof loginToken !== "string" || !loginToken.trim()) {
     return {
       plan: providerName,
-      message: `${providerName}: no dashboard login token stored. Manual API keys cannot query balance — use Lấy acc (auto-fetch) to add an account and view the remaining $ balance.`,
+      message: `${providerName}: no dashboard login token stored. Manual API keys cannot query balance — use the account auto-fetch to add an account and view the remaining $ balance.`,
     };
   }
 
@@ -59,7 +59,7 @@ export async function getNewApiBalanceUsage({
     if (response.status === 401 || response.status === 403) {
       return {
         plan: providerName,
-        message: `${providerName} login token expired or invalid. Re-add the account (Lấy acc).`,
+        message: `${providerName} login token expired or invalid. Re-add the account via the account auto-fetch.`,
       };
     }
 
