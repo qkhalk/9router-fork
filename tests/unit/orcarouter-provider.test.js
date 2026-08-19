@@ -4,6 +4,7 @@ import REGISTRY from "../../open-sse/providers/registry/index.js";
 import { PROVIDERS, PROVIDER_MODELS } from "../../open-sse/providers/index.js";
 import { getExecutor } from "../../open-sse/executors/index.js";
 import { FILTERS } from "../../src/app/api/providers/suggested-models/filters.js";
+import { USAGE_SUPPORTED_PROVIDERS, USAGE_APIKEY_PROVIDERS } from "../../src/shared/constants/providers.js";
 
 describe("OrcaRouter provider", () => {
   const orcarouter = REGISTRY.find((e) => e.id === "orcarouter");
@@ -31,11 +32,19 @@ describe("OrcaRouter provider", () => {
     expect(PROVIDERS.orcarouter.validateUrl).toBe("https://api.orcarouter.ai/v1/models");
   });
 
-  it("exposes its seed models (provider-prefixed ids)", () => {
+  it("exposes a small example seed list (full catalog comes live via modelsFetcher)", () => {
     const ids = (PROVIDER_MODELS.orcarouter || []).map((m) => m.id);
     expect(ids.length).toBeGreaterThan(0);
-    expect(ids).toContain("openai/gpt-4o-mini");
-    expect(ids).toContain("anthropic/claude-opus-5");
+    expect(ids.length).toBeLessThanOrEqual(6); // small hint, not a hardcoded catalog
+    expect(ids).toContain("openai/gpt-5");
+    expect(ids).toContain("anthropic/claude-fable-5");
+    expect(ids).toContain("google/gemini-3.6-flash");
+  });
+
+  it("is listed in the usage-supported provider sets", () => {
+    expect(orcarouter.features).toMatchObject({ usage: true, usageApikey: true });
+    expect(USAGE_SUPPORTED_PROVIDERS).toContain("orcarouter");
+    expect(USAGE_APIKEY_PROVIDERS).toContain("orcarouter");
   });
 
   it("keeps every registry id unique after adding orcarouter", () => {

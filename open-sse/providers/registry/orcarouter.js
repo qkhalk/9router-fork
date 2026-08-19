@@ -15,25 +15,17 @@ export default {
     },
   },
   category: "apikey",
-  // Seed snapshot from the live public /v1/models catalog (top headers only). The
-  // full catalogue is fetched via modelsFetcher; any provider-prefixed id is still
-  // accepted via passthroughModels.
+  // Small example set only — the full catalogue (191 models) is fetched live via
+  // modelsFetcher and offered in "Suggested free models"; any provider-prefixed id
+  // is accepted via passthroughModels. Keep this list short so it stays a hint,
+  // not a hardcoded catalog.
   models: [
-    { id: "openai/gpt-4o-mini", name: "GPT 4O Mini" },
     { id: "openai/gpt-5", name: "GPT 5" },
-    { id: "openai/gpt-5-pro/2025-10-06", name: "GPT 5 Pro (2025-10-06)" },
-    { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
+    { id: "openai/gpt-4o-mini", name: "GPT 4O Mini" },
+    { id: "anthropic/claude-fable-5", name: "Claude Fable 5" },
     { id: "anthropic/claude-opus-4.8", name: "Claude Opus 4.8" },
-    { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
     { id: "google/gemini-3.6-flash", name: "Gemini 3.6 Flash" },
-    { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
     { id: "deepseek/deepseek-chat", name: "DeepSeek Chat" },
-    { id: "deepseek/deepseek-reasoner", name: "DeepSeek Reasoner" },
-    { id: "grok/grok-4.6", name: "Grok 4.6" },
-    { id: "qwen/qwen3.8-max", name: "Qwen3.8 Max" },
-    { id: "kimi/kimi-k2.7-code", name: "Kimi K2.7 Code" },
-    { id: "minimax/minimax-m3", name: "MiniMax M3" },
-    { id: "z-ai/glm-5", name: "GLM 5" },
   ],
   transport: {
     baseUrl: "https://api.orcarouter.ai/v1/chat/completions",
@@ -41,5 +33,6 @@ export default {
   },
   modelsFetcher: { url: "https://api.orcarouter.ai/v1/models", type: "openai" },
   passthroughModels: true,
+  features: { usage: true, usageApikey: true },
   serviceKinds: ["llm"],
 };
