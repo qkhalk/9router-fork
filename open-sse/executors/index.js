@@ -21,6 +21,7 @@ import { MimoFreeExecutor } from "./mimo-free.js";
 import { CodeBuddyExecutor } from "./codebuddy-cn.js";
 import { GensparkWebExecutor } from "./genspark-web.js";
 import { CodeBuddyIntlExecutor } from "./codebuddy-intl.js";
+import { OrcaRouterExecutor } from "./orcarouter.js";
 import TraeExecutor from "./trae.js";
 import ZedExecutor from "./zed.js";
 import WindsurfExecutor from "./windsurf.js";
@@ -56,6 +57,7 @@ const executors = {
   "codebuddy-cn": new CodeBuddyExecutor(),
   "genspark-web": new GensparkWebExecutor(),
   "codebuddy-intl": new CodeBuddyIntlExecutor(),
+  orcarouter: new OrcaRouterExecutor(),
   trae: new TraeExecutor(),
   zed: new ZedExecutor(),
   windsurf: new WindsurfExecutor(),
@@ -99,6 +101,7 @@ export { MimoFreeExecutor } from "./mimo-free.js";
 export { CodeBuddyExecutor } from "./codebuddy-cn.js";
 export { GensparkWebExecutor } from "./genspark-web.js";
 export { CodeBuddyIntlExecutor } from "./codebuddy-intl.js";
+export { OrcaRouterExecutor } from "./orcarouter.js";
 export { default as TraeExecutor } from "./trae.js";
 export { default as ZedExecutor } from "./zed.js";
 export { default as WindsurfExecutor } from "./windsurf.js";

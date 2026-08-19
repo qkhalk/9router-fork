@@ -126,6 +126,7 @@ import p121 from "./alitp-intl.js";
 import p122 from "./gemini-web.js";
 import p123 from "./ds2api.js";
 import p124 from "./genspark-web.js";
+import p125 from "./orcarouter.js";
 
 export default [
   p0,
@@ -252,4 +253,5 @@ export default [
   p122,
   p123,
   p124,
+  p125,
 ];
