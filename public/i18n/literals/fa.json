@@ -1389,5 +1389,21 @@
   "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ اطلاعیه ریسک: این ارائه‌دهنده از اشتراک/جلسه OAuth استفاده می‌کند که به طور رسمی برای استفاده پروکسی/روتر مجوز ندارد. حساب ممکن است محدود یا مسدود شود. با مسئولیت خود استفاده کنید.",
   "✓ Confirm Add": "✓ تأیید افزودن",
   "📝 Configure providers in dashboard or use environment variables": "📝 ارائه‌دهندگان را در داشبورد پیکربندی کنید یا از متغیرهای محیطی استفاده کنید",
-  "🔐 OAuth required. Add now and authenticate after Apply; tool list will be discovered after first connect.": "🔐 نیاز به OAuth. اکنون اضافه کنید و پس از اعمال، احراز هویت کنید؛ لیست ابزارها پس از اولین اتصال کشف می‌شود."
+  "🔐 OAuth required. Add now and authenticate after Apply; tool list will be discovered after first connect.": "🔐 نیاز به OAuth. اکنون اضافه کنید و پس از اعمال، احراز هویت کنید؛ لیست ابزارها پس از اولین اتصال کشف می‌شود.",
+  "Get accounts": "دریافت حساب‌ها",
+  "Get TOTU AI accounts": "دریافت حساب‌های TOTU AI",
+  "Fetch now": "هم‌اکنون دریافت کن",
+  "Auto-fetch accounts": "دریافت خودکار حساب‌ها",
+  "Auto-fetch TOTU AI accounts": "دریافت خودکار حساب‌های TOTU AI",
+  "Fetch interval": "بازه دریافت",
+  "Never (manual only)": "هرگز (فقط دستی)",
+  "Every 15 min": "هر ۱۵ دقیقه",
+  "Every 30 min": "هر ۳۰ دقیقه",
+  "Every hour": "هر ساعت",
+  "Save auto-fetch settings": "ذخیره تنظیمات دریافت خودکار",
+  "Request failed": "درخواست ناموفق بود",
+  "added": "افزوده شد",
+  "skipped": "رد شد",
+  "Sign up / Learn more": "ثبت‌نام / بیشتر بدانید",
+  "Automatically register fresh TOTU AI accounts (disposable mail.tm mailbox) and add them as API-key connections, or fetch a batch now.": "به‌طور خودکار حساب‌های جدید TOTU AI را ثبت می‌کند (صندوق پستی یک‌بارمصرف mail.tm) و به‌عنوان اتصال کلید API اضافه می‌کند، یا اکنون یک دسته دریافت کنید."
 }

@@ -1389,5 +1389,21 @@
   "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ ประกาศความเสี่ยง: Provider นี้ใช้ subscription/OAuth session ที่ไม่ได้รับอนุญาตอย่างเป็นทางการสำหรับการใช้งาน proxy/router บัญชีอาจถูกจำกัดหรือแบน ใช้ด้วยความเสี่ยงของคุณเอง",
   "✓ Confirm Add": "✓ ยืนยันการเพิ่ม",
   "📝 Configure providers in dashboard or use environment variables": "📝 กำหนดค่า providers ใน dashboard หรือใช้ environment variables",
-  "🔐 OAuth required. Add now and authenticate after Apply; tool list will be discovered after first connect.": "🔐 ต้องใช้ OAuth เพิ่มตอนนี้แล้ว authenticate หลัง Apply; รายการเครื่องมือจะถูกค้นพบหลังการเชื่อมต่อครั้งแรก"
+  "🔐 OAuth required. Add now and authenticate after Apply; tool list will be discovered after first connect.": "🔐 ต้องใช้ OAuth เพิ่มตอนนี้แล้ว authenticate หลัง Apply; รายการเครื่องมือจะถูกค้นพบหลังการเชื่อมต่อครั้งแรก",
+  "Get accounts": "รับบัญชี",
+  "Get TOTU AI accounts": "รับบัญชี TOTU AI",
+  "Fetch now": "ดึงข้อมูลเดี๋ยวนี้",
+  "Auto-fetch accounts": "ดึงบัญชีอัตโนมัติ",
+  "Auto-fetch TOTU AI accounts": "ดึงบัญชี TOTU AI อัตโนมัติ",
+  "Fetch interval": "ช่วงเวลาการดึงข้อมูล",
+  "Never (manual only)": "ไม่เปิดใช้งาน (ด้วยตนเองเท่านั้น)",
+  "Every 15 min": "ทุก 15 นาที",
+  "Every 30 min": "ทุก 30 นาที",
+  "Every hour": "ทุกชั่วโมง",
+  "Save auto-fetch settings": "บันทึกการตั้งค่าดึงข้อมูลอัตโนมัติ",
+  "Request failed": "คำขอล้มเหลว",
+  "added": "เพิ่มแล้ว",
+  "skipped": "ข้ามแล้ว",
+  "Sign up / Learn more": "สมัคร / เรียนรู้เพิ่มเติม",
+  "Automatically register fresh TOTU AI accounts (disposable mail.tm mailbox) and add them as API-key connections, or fetch a batch now.": "ลงทะเบียนบัญชี TOTU AI ใหม่โดยอัตโนมัติ (กล่องจดหมาย mail.tm แบบใช้ครั้งเดียว) และเพิ่มเป็นการเชื่อมต่อ API key หรือดึงชุดข้อมูลเดี๋ยวนี้"
 }
