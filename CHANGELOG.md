@@ -1,3 +1,41 @@
+# v0.6.30 (2026-08-19)
+
+i18n compliance release for the v0.6.29 provider pack: the TOTU
+auto-fetch UI now follows the translation pipeline (English source
+keys + 34 locale dictionaries), a modal settings bug is fixed, and the
+provider detail page is lint-clean.
+
+## Fixes
+- **TOTU auto-fetch UI broke the i18n convention**: three Vietnamese
+  source strings ("Lấy acc" buttons, modal title, "Lấy acc ngay") were
+  hardcoded, so English and the other locales saw Vietnamese forever,
+  and the modal wrapped none of its strings in translate(). All strings
+  are now English keys passed through translate(); Vietnamese keeps the
+  "Lấy acc" branding via dictionary translations ("Get accounts" →
+  "Lấy acc"), every other locale falls back to English.
+- **New keys translated across all 34 locales**: the 20 auto-fetch
+  keys are present in every locale file (vi, zh-CN and the remaining 32
+  added in this release; verified 100% key coverage).
+- **Modal never loaded saved settings**: handleOpen was dead code
+  (never invoked), so the auto-fetch toggle always showed OFF even when
+  the scheduler was enabled. Settings now load each time the modal
+  opens (useEffect on isOpen with a cancellation guard).
+- **Server-side usage messages embedded Vietnamese**: the NewAPI
+  balance messages mixed "Lấy acc" into English text shown to all
+  locales; now pure English ("use the account auto-fetch…").
+- **Translatable quota notices**: quota.message (usage dashboard) and
+  provider notice.text / "Get API Key" / "Sign up / Learn more"
+  (provider detail page) now pass through translate() at render time.
+
+## Chores
+- Resolved the three remaining react-hooks/set-state-in-effect lint
+  errors in the provider detail page: the mount-fetch effect gets a
+  scoped disable with rationale (false positive — the fetchers only
+  setState after await, same convention as the media-providers pages);
+  the cursor live-models reset became a render-time derivation; the
+  selection prune now uses the React-docs render-phase adjustment
+  pattern.
+
 # v0.6.29 (2026-08-19)
 
 Provider pack: two new API-key providers (OrcaRouter, TOTU AI), a TOTU
