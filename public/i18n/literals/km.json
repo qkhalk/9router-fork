@@ -1394,5 +1394,21 @@
   "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ សេចក្តីជូនដំណឹងអំពីហានិភ័យ៖ អ្នកផ្តល់សេវានេះប្រើ Subscription/OAuth Session ដែលមិនមានអាជ្ញាបណ្ណផ្លូវការសម្រាប់ប្រើជា Proxy/Router។ គណនីអាចត្រូវបានដាក់កម្រិត ឬហាមឃាត់។ ប្រើដោយទទួលខុសត្រូវលើហានិភ័យដោយខ្លួនឯង។",
   "✓ Confirm Add": "✓ បញ្ជាក់ការបន្ថែម",
   "📝 Configure providers in dashboard or use environment variables": "📝 កំណត់អ្នកផ្តល់សេវាក្នុងផ្ទាំងគ្រប់គ្រង ឬប្រើ Environment Variables",
-  "🔐 OAuth required. Add now and authenticate after Apply; tool list will be discovered after first connect.": "🔐 ត្រូវការ OAuth។ បន្ថែមឥឡូវ ហើយផ្ទៀងផ្ទាត់បន្ទាប់ពីចុច អនុវត្ត; បញ្ជីឧបករណ៍នឹងត្រូវបានរកឃើញបន្ទាប់ពីការតភ្ជាប់លើកដំបូង។"
+  "🔐 OAuth required. Add now and authenticate after Apply; tool list will be discovered after first connect.": "🔐 ត្រូវការ OAuth។ បន្ថែមឥឡូវ ហើយផ្ទៀងផ្ទាត់បន្ទាប់ពីចុច អនុវត្ត; បញ្ជីឧបករណ៍នឹងត្រូវបានរកឃើញបន្ទាប់ពីការតភ្ជាប់លើកដំបូង។",
+  "Get accounts": "ទទួលបានគណនី",
+  "Get TOTU AI accounts": "ទទួលបានគណនី TOTU AI",
+  "Fetch now": "ទាញយកឥឡូវនេះ",
+  "Auto-fetch accounts": "ទាញយកគណនីដោយស្វ័យប្រវត្តិ",
+  "Auto-fetch TOTU AI accounts": "ទាញយកគណនី TOTU AI ដោយស្វ័យប្រវត្តិ",
+  "Fetch interval": "ចន្លោះពេលទាញយក",
+  "Never (manual only)": "កុំ (ដៃប៉ុណ្ណោះ)",
+  "Every 15 min": "រាល់ 15 នាទី",
+  "Every 30 min": "រាល់ 30 នាទី",
+  "Every hour": "រាល់ម៉ោង",
+  "Save auto-fetch settings": "រក្សាទុកការកំណត់ទាញយកស្វ័យប្រវត្តិ",
+  "Request failed": "សំណើបរាជ័យ",
+  "added": "បានបន្ថែម",
+  "skipped": "បានរំលង",
+  "Sign up / Learn more": "ចុះឈ្មោះ / ស្វែងយល់បន្ថែម",
+  "Automatically register fresh TOTU AI accounts (disposable mail.tm mailbox) and add them as API-key connections, or fetch a batch now.": "ចុះឈ្មោះគណនី TOTU AI ថ្មីដោយស្វ័យប្រវត្តិ (ប្រអប់សំបុត្រ mail.tm ម្តង) ហើយបន្ថែមជាការតភ្ជាប់កូនសោ API ឬទាញយកមួយសំណុំឥឡូវនេះ"
 }

@@ -147,8 +147,12 @@ export default function ProviderDetailPage() {
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
-  const models = providerId === "cursor" && liveModels.length > 0
-    ? liveModels
+  // Live models only apply to Cursor with an active connection; deriving the
+  // display value here hides stale catalogs without a synchronous reset effect.
+  const cursorConnection = providerId === "cursor" ? connections.find((item) => item.isActive !== false) : undefined;
+  const liveCursorModels = cursorConnection?.id ? liveModels : [];
+  const models = providerId === "cursor" && liveCursorModels.length > 0
+    ? liveCursorModels
     : staticModels;
   const providerAlias = getProviderAlias(providerId);
   
@@ -454,30 +458,24 @@ export default function ProviderDetailPage() {
     saveAutoPing({ ...autoPing, connections: { ...autoPing.connections, [connectionId]: on } });
   };
 
+  /* eslint-disable react-hooks/set-state-in-effect -- mount-fetch effect: the fetchers
+     only setState after await, same false positive as media-providers pages */
   useEffect(() => {
     fetchConnections();
     fetchAliases();
     fetchCustomModels();
     fetchDisabledModels();
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Cursor's model availability is account-specific and changes frequently.
   // Load the active account's live catalog for the dashboard; the static
   // registry remains the fallback while the request is pending or unavailable.
   useEffect(() => {
-    if (providerId !== "cursor") {
-      setLiveModels([]);
-      return;
-    }
-
-    const connection = connections.find((item) => item.isActive !== false);
-    if (!connection?.id) {
-      setLiveModels([]);
-      return;
-    }
+    if (!cursorConnection?.id) return;
 
     let cancelled = false;
-    fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" })
+    fetch(`/api/providers/${cursorConnection.id}/models`, { cache: "no-store" })
       .then(async (res) => ({ ok: res.ok, data: await res.json() }))
       .then(({ ok, data }) => {
         if (!cancelled && ok && Array.isArray(data.models) && data.models.length > 0) {
@@ -487,7 +485,7 @@ export default function ProviderDetailPage() {
       .catch(() => {});
 
     return () => { cancelled = true; };
-  }, [providerId, connections]);
+  }, [cursorConnection]);
 
   // Fetch suggested models from provider's public API (if configured)
   useEffect(() => {
@@ -869,9 +867,13 @@ export default function ProviderDetailPage() {
     setBulkProxyPoolId("__none__");
   };
 
-  useEffect(() => {
+  // Prune selected ids whose connections disappeared (delete/refresh) —
+  // render-phase adjustment (React docs pattern) instead of a sync effect.
+  const [selectionPrunedFor, setSelectionPrunedFor] = useState(connections);
+  if (connections !== selectionPrunedFor) {
+    setSelectionPrunedFor(connections);
     setSelectedConnectionIds((prev) => prev.filter((id) => connections.some((conn) => conn.id === id)));
-  }, [connections]);
+  }
 
   const selectedProxySummary = (() => {
     if (selectedConnections.length === 0) return "";
