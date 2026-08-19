@@ -15,6 +15,8 @@ import { getGrokCliUsage } from "./usage/grok-cli.js";
 import { getOpenCodeGoUsage } from "./usage/opencode-go.js";
 import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
+import { getNewApiBalanceUsage } from "./usage/newapi.js";
+import { getOrcarouterUsage } from "./usage/orcarouter.js";
 import { resolveQoderCredentials } from "./qoderModels.js";
 import {
   getIflowUsage,
@@ -56,6 +58,21 @@ const USAGE_HANDLERS = {
   "opencode-go": (c) => getOpenCodeGoUsage(c.apiKey, c.proxyOptions),
   kimi: (c) => getKimiUsage(c.accessToken, c.apiKey, c.proxyOptions, c.providerSpecificData),
   deepseek: (c) => getDeepseekUsage(c.apiKey, c.proxyOptions),
+  tokenrouter: (c) => getNewApiBalanceUsage({
+    baseUrl: "https://api.tokenrouter.com",
+    price: 7,
+    providerName: "TokenRouter",
+    loginToken: c.providerSpecificData?.loginToken,
+    proxyOptions: c.proxyOptions,
+  }),
+  "totu-ai": (c) => getNewApiBalanceUsage({
+    baseUrl: "https://totu-ai.com",
+    price: 0.5,
+    providerName: "TOTU AI",
+    loginToken: c.providerSpecificData?.loginToken,
+    proxyOptions: c.proxyOptions,
+  }),
+  orcarouter: (c) => getOrcarouterUsage(c.apiKey, c.proxyOptions),
 };
 
 export async function getUsageForProvider(connection, proxyOptions = null, options = {}) {
