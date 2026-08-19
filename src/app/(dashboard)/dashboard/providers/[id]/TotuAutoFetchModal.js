@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import { Button, Modal, Toggle } from "@/shared/components";
+import { translate } from "@/i18n/runtime";
 
 // Interval presets in minutes. 0 = manual-only (scheduler stopped).
 const INTERVAL_PRESETS = [
@@ -19,32 +20,28 @@ export default function TotuAutoFetchModal({ isOpen, onClose, onSuccess }) {
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
-  // Load the current scheduler settings the first time the modal opens.
-  const loadSettings = async () => {
-    try {
-      const res = await fetch("/api/settings", { cache: "no-store" });
-      const data = res.ok ? await res.json() : {};
-      setEnabled(data.totuAutoFetch === true);
-      setIntervalMin(data.totuAutoFetchIntervalMin ?? 60);
-    } catch {
-      // Non-fatal: keep last known values.
-    }
-  };
-
-  const handleOpen = async () => {
-    setError("");
-    setResult(null);
-    if (!settingsLoaded) {
-      setSettingsLoaded(true);
-      await loadSettings();
-    }
-  };
-
-  const handleModalClose = () => {
-    onClose();
-  };
+  // Reset transient state and load the current scheduler settings each time
+  // the modal opens, so the toggle/interval always reflect the saved config.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    fetch("/api/settings", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : {}))
+      .then((data) => {
+        if (cancelled) return;
+        setError("");
+        setResult(null);
+        setEnabled(data.totuAutoFetch === true);
+        setIntervalMin(data.totuAutoFetchIntervalMin ?? 60);
+      })
+      .catch(() => {
+        // Non-fatal: keep last known values.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   const handleSaveSettings = async () => {
     setSaving(true);
@@ -60,12 +57,12 @@ export default function TotuAutoFetchModal({ isOpen, onClose, onSuccess }) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data?.error || `Request failed: ${res.status}`);
+        setError(data?.error || `${translate("Request failed")}: ${res.status}`);
         return;
       }
       if (typeof onSuccess === "function") onSuccess();
     } catch (err) {
-      setError(err.message || "Request failed");
+      setError(err.message || translate("Request failed"));
     } finally {
       setSaving(false);
     }
@@ -83,7 +80,7 @@ export default function TotuAutoFetchModal({ isOpen, onClose, onSuccess }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.error || `Request failed: ${res.status}`);
+        setError(data?.error || `${translate("Request failed")}: ${res.status}`);
         return;
       }
       setResult(data);
@@ -91,29 +88,30 @@ export default function TotuAutoFetchModal({ isOpen, onClose, onSuccess }) {
         onSuccess();
       }
     } catch (err) {
-      setError(err.message || "Request failed");
+      setError(err.message || translate("Request failed"));
     } finally {
       setFetching(false);
     }
   };
 
   return (
-    <Modal isOpen={isOpen} title="Lấy acc (TOTU AI)" onClose={handleModalClose}>
+    <Modal isOpen={isOpen} title={translate("Get TOTU AI accounts")} onClose={onClose}>
       <div className="flex flex-col gap-4">
         <p className="text-xs text-text-muted">
-          Automatically register fresh TOTU AI accounts (disposable mail.tm
-          mailbox) and add them as API-key connections, or fetch a batch now.
+          {translate(
+            "Automatically register fresh TOTU AI accounts (disposable mail.tm mailbox) and add them as API-key connections, or fetch a batch now."
+          )}
         </p>
 
         <div className="flex items-center justify-between gap-3 rounded border border-accent/20 bg-sidebar/50 px-3 py-2">
-          <span className="text-sm">Auto-fetch accounts</span>
+          <span className="text-sm">{translate("Auto-fetch accounts")}</span>
           <Toggle checked={enabled} onChange={(v) => setEnabled(v)} />
         </div>
 
         {enabled && (
           <div className="grid gap-3">
             <div>
-              <label className="mb-1 block text-xs text-text-muted">Fetch interval</label>
+              <label className="mb-1 block text-xs text-text-muted">{translate("Fetch interval")}</label>
               <select
                 className="w-full rounded border border-accent/30 bg-sidebar px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                 value={String(intervalMin)}
@@ -121,13 +119,13 @@ export default function TotuAutoFetchModal({ isOpen, onClose, onSuccess }) {
               >
                 {INTERVAL_PRESETS.map((p) => (
                   <option key={p.value} value={p.value}>
-                    {p.label}
+                    {translate(p.label)}
                   </option>
                 ))}
               </select>
             </div>
             <Button onClick={handleSaveSettings} fullWidth disabled={saving}>
-              {saving ? "Saving..." : "Save auto-fetch settings"}
+              {saving ? translate("Saving...") : translate("Save auto-fetch settings")}
             </Button>
           </div>
         )}
@@ -137,9 +135,9 @@ export default function TotuAutoFetchModal({ isOpen, onClose, onSuccess }) {
         {result && (
           <div className="flex flex-col gap-2">
             <div className="text-sm font-medium text-green-400">
-              +{result.added || 0} added
-              {result.failed > 0 ? `, ${result.failed} failed` : ""}
-              {result.skipped > 0 ? `, ${result.skipped} skipped` : ""}
+              +{result.added || 0} {translate("added")}
+              {result.failed > 0 ? `, ${result.failed} ${translate("failed")}` : ""}
+              {result.skipped > 0 ? `, ${result.skipped} ${translate("skipped")}` : ""}
             </div>
             {result.errors?.length > 0 && (
               <ul className="max-h-40 overflow-y-auto rounded border border-accent/20 bg-sidebar/50 p-2 text-xs font-mono">
@@ -160,10 +158,10 @@ export default function TotuAutoFetchModal({ isOpen, onClose, onSuccess }) {
             disabled={fetching}
             icon="bolt"
           >
-            {fetching ? "Fetching..." : "Lấy acc ngay"}
+            {fetching ? translate("Fetching...") : translate("Fetch now")}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth disabled={fetching}>
-            Close
+            {translate("Close")}
           </Button>
         </div>
       </div>

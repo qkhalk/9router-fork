@@ -1389,5 +1389,21 @@
   "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ 风险提示：此提供商使用的订阅/OAuth 会话未获官方授权用于代理/路由器使用。账户可能被限制或封禁。使用风险自负。",
   "✓ Confirm Add": "✓ 确认添加",
   "📝 Configure providers in dashboard or use environment variables": "📝 在仪表盘中配置提供商或使用环境变量",
-  "🔐 OAuth required. Add now and authenticate after Apply; tool list will be discovered after first connect.": "🔐 需要 OAuth。立即添加并在应用后认证；工具列表将在首次连接后自动发现。"
+  "🔐 OAuth required. Add now and authenticate after Apply; tool list will be discovered after first connect.": "🔐 需要 OAuth。立即添加并在应用后认证；工具列表将在首次连接后自动发现。",
+  "Get accounts": "获取账号",
+  "Get TOTU AI accounts": "获取 TOTU AI 账号",
+  "Fetch now": "立即获取",
+  "Auto-fetch accounts": "自动获取账号",
+  "Auto-fetch TOTU AI accounts": "自动获取 TOTU AI 账号",
+  "Fetch interval": "获取间隔",
+  "Never (manual only)": "关闭（仅手动）",
+  "Every 15 min": "每 15 分钟",
+  "Every 30 min": "每 30 分钟",
+  "Every hour": "每小时",
+  "Save auto-fetch settings": "保存自动获取设置",
+  "Request failed": "请求失败",
+  "added": "已添加",
+  "skipped": "已跳过",
+  "Sign up / Learn more": "注册 / 了解更多",
+  "Automatically register fresh TOTU AI accounts (disposable mail.tm mailbox) and add them as API-key connections, or fetch a batch now.": "自动注册新的 TOTU AI 账号（一次性 mail.tm 邮箱）并添加为 API Key 连接，也可立即获取一批。"
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { translate } from "@/i18n/runtime";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import QuotaTable from "./QuotaTable";
 import Toggle from "@/shared/components/Toggle";
@@ -1252,7 +1253,7 @@ export default function ProviderLimits() {
                   </div>
                 ) : quota?.message ? (
                   <div className="text-center py-5">
-                    <p className="text-xs text-text-muted">{quota.message}</p>
+                    <p className="text-xs text-text-muted">{translate(quota.message)}</p>
                   </div>
                 ) : (
                   <QuotaTable
