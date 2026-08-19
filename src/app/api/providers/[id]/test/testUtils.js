@@ -854,6 +854,18 @@ case "llm7": {
         await res?.body?.cancel?.().catch(() => {});
         return { valid, error: valid ? null : `OrcaRouter API key rejected (HTTP ${res.status})` };
       }
+      case "tokenrouter":
+      case "totu-ai": {
+        // GET /v1/models is publicly readable (200 even unauthenticated), so a
+        // valid/invalid key is distinguishable only by 401/403, not by res.ok.
+        // PROVIDERS is the flattened transport map — no .transport key.
+        const res = await fetchWithConnectionProxy(PROVIDERS[connection.provider].validateUrl, {
+          headers: { Authorization: `Bearer ${connection.apiKey}` },
+        }, effectiveProxy);
+        const valid = res.status !== 401 && res.status !== 403;
+        await res?.body?.cancel?.().catch(() => {});
+        return { valid, error: valid ? null : `Provider API key rejected (HTTP ${res.status})` };
+      }
       default:
         return { valid: false, error: "Provider test not supported" };
     }
