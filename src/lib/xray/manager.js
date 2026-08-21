@@ -74,6 +74,7 @@ import {
   getLiveTrafficQuietForMs,
   waitForLiveTrafficQuiet,
 } from "./modelFilterTraffic.js";
+import { buildModelProbeBody, withProbeTimeout } from "./modelProbe.js";
 
 // Fixed pool id so re-runs update the same row rather than creating dupes.
 const MANAGED_POOL_ID = "v2go-xray-managed";
@@ -861,19 +862,14 @@ export async function testSingleConfigWithModel(configId, { model: modelStr, tim
       },
     };
     const settings = await getSettings();
-    const result = await handleChatCore({
-      body: {
-        model: `${modelInfo.provider}/${modelInfo.model}`,
-        max_tokens: 1,
-        stream: false,
-        messages: [{ role: "user", content: "hi" }],
-      },
+    const result = await withProbeTimeout(handleChatCore({
+      body: buildModelProbeBody(modelInfo),
       modelInfo,
       credentials,
       log: silentProbeLog,
       clientRawRequest: {
         endpoint: "/api/xray/configs/model-test",
-        body: { model: modelStr, max_tokens: 1, stream: false, messages: [{ role: "user", content: "hi" }] },
+        body: { ...buildModelProbeBody(modelInfo), model: modelStr },
         headers: { accept: "application/json", "content-type": "application/json", "x-9r-internal": "xray-model-filter" },
       },
       connectionId: baseCredentials.connectionId,
@@ -894,7 +890,7 @@ export async function testSingleConfigWithModel(configId, { model: modelStr, tim
       pxpipeTransform: null,
       providerThinking: null,
       sourceFormatOverride: "openai",
-    });
+    }), timeoutMs, "spawn");
 
     const latencyMs = Date.now() - startedAt;
     if (!result.success) {
@@ -985,19 +981,14 @@ async function probeModelViaChatCore(modelInfo, socksUri, timeoutMs) {
   };
   const settings = await getSettings();
   const startedAt = Date.now();
-  const result = await handleChatCore({
-    body: {
-      model: `${modelInfo.provider}/${modelInfo.model}`,
-      max_tokens: 1,
-      stream: false,
-      messages: [{ role: "user", content: "hi" }],
-    },
+  const result = await withProbeTimeout(handleChatCore({
+    body: buildModelProbeBody(modelInfo),
     modelInfo,
     credentials,
     log: silentProbeLog,
     clientRawRequest: {
       endpoint: "/api/xray/configs/model-test",
-      body: { model: `${modelInfo.provider}/${modelInfo.model}`, max_tokens: 1, stream: false, messages: [{ role: "user", content: "hi" }] },
+      body: buildModelProbeBody(modelInfo),
       headers: { accept: "application/json", "content-type": "application/json", "x-9r-internal": "xray-model-filter" },
     },
     connectionId: baseCredentials.connectionId,
@@ -1018,7 +1009,7 @@ async function probeModelViaChatCore(modelInfo, socksUri, timeoutMs) {
     pxpipeTransform: null,
     providerThinking: null,
     sourceFormatOverride: "openai",
-  });
+  }), timeoutMs, "api");
   if (!result.success) {
     return { ok: false, status: result.status || 502, error: result.error || "probe failed" };
   }
