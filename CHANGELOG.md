@@ -1,3 +1,54 @@
+# v0.6.31 (2026-08-21)
+
+Model-compatibility release for the Model Proxy Filter and provider
+validation: every probe payload is now model-agnostic (no more hardcoded
+max_tokens: 1) and every probe is time-bounded, so a model that enforces
+its own token minimum — or one that generates slowly — can no longer fail
+every Xray config or hang a worker/UI request.
+
+## Fixes
+- **Model Proxy Filter failed every config for models with upstream
+  token minimums**: the filter probe hardcoded `max_tokens: 1`, and
+  upstreams enforce different floors (opencode's
+  muse-spark-1.2-contributor-free rejects anything under 16 with HTTP
+  400 — verified live: 2/4/8 → 400, 16/32/omitted → 200). Every config
+  then "failed" identically regardless of proxy quality, and with
+  "Delete failures" enabled the prune step permanently deleted healthy
+  configs. The probe body now lives in one shared builder
+  (src/lib/xray/modelProbe.js) with max_tokens omitted: each upstream
+  applies its own default, and target-format translators inject one
+  where the format requires it (openai→claude/commandcode:
+  DEFAULT_MAX_TOKENS; openai→gemini: optional field omitted). Bonus:
+  OpenAI reasoning models (o-series) that reject `max_tokens` outright
+  now probe correctly too.
+- **Provider/node validation had the same latent bug** (23 sites across
+  providers/validate, provider-nodes/validate, and the per-connection
+  test utils): openai-format probes omit max_tokens; claude-format
+  probes (/v1/messages, where the field is required) use 64 to clear
+  gateway minimums. The provider-nodes chat fallback was the real
+  user-facing case — it judges validity via `chatRes.ok`, so a min-cap
+  400 meant a working node tested as INVALID.
+- **Model filter probes could hang a worker indefinitely**: the filter's
+  timeoutMs was never applied to the actual chat request, so a
+  slow-generating model held the worker until the upstream gave up.
+  Both probe paths (spawn mode and api mode) are now wrapped in
+  withProbeTimeout(): on timeout the config is marked failed with
+  "Probe timed out after Xms" (visible in the results table) and the
+  worker moves on; spawn mode kills its temp xray, tearing down the
+  abandoned fetch.
+- **Validation probes are now time-bounded (30s)**: dropping the token
+  cap means probes wait for a full completion, so the edited validation
+  fetches carry AbortSignal.timeout(30000) (default added to the
+  connection-proxy fetch helper), preventing a slow model from hanging
+  the interactive "test connection" request for minutes.
+
+## Chores
+- Regression tests for the probe payload (asserts no token caps are
+  reintroduced) and the timeout helper (resolve, hang, late-rejection
+  safety, early-failure propagation, pass-through mode).
+- GitNexus impact/detect-changes run before each edit batch; code
+  review verified no verdict-logic changes in any validation site.
+
 # v0.6.30 (2026-08-19)
 
 i18n compliance release for the v0.6.29 provider pack: the TOTU
