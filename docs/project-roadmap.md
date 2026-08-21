@@ -1,7 +1,7 @@
 # Project Roadmap
 
 > Direction and recent trajectory for the 9Router fork
-> (`vibecoder11200/9router`). Current version: **v0.6.1** (2026-08-10). This is
+> (`vibecoder11200/9router`). Current version: **v0.6.31** (2026-08-21). This is
 > a feature-enhanced fork of `decolua/9router`; the fork regularly merges
 > upstream while preserving its own additions. Dates are historical where
 > stated and indicative otherwise.
@@ -37,6 +37,28 @@ recent highlight reel (v0.5.40 → v0.6.1):
 - **CLI tool integrations**: ~17 tools, MITM interception for Antigravity /
   Copilot / Kiro (Cursor stubbed).
 
+The next arc (v0.6.2 → v0.6.31, 2026-08-10 → 2026-08-21) hardened the v2go
+proxy and expanded the provider surface:
+
+- **Model Proxy Filter** (introduced v0.6.5, hardened through v0.6.31): probe
+  which Xray configs actually work for a given model; results cached per
+  (config, model), single-instance gRPC API mode, and finally model-agnostic
+  payloads (no hardcoded `max_tokens`) with time-bounded probes so models
+  with upstream token minimums can't fail every config.
+- **v2go rotation hardening**: blue-green zero-downtime outbound rotation
+  (v0.6.23), proxyxoay pool support + custom rotation interval (v0.6.24),
+  flaky-node quarantine and edge-banned exit-IP rotation (v0.6.25–0.6.27).
+- **SAML 2.0 SSO** (v0.6.22): dashboard login supports SAML alongside
+  password and OIDC.
+- **New providers**: Fish Audio TTS, Alibaba Token Plan (`alitp-intl`),
+  OrcaRouter, TOTU AI — registry 122 → 126 definitions.
+- **Per-account $ balance** for NewAPI gateways (TokenRouter / TOTU AI)
+  via the dashboard login token (v0.6.29).
+- **TOTU AI account auto-fetch** ("Lấy acc", v0.6.29): mail.tm temp mailbox +
+  email OTP + NewAPI register/login, saved as provider connections, with a
+  settings-driven scheduler.
+- **i18n coverage completed** for all 34 translated locales (v0.6.30).
+
 ## 2. Themes guiding the next iterations
 
 These are the directions the recent commit history points to, not promises.
@@ -54,7 +76,7 @@ These are the directions the recent commit history points to, not promises.
   reduction, not just claimed reduction.
 
 ### 2.2 Expand the provider surface
-- Keep merging upstream's new providers (the registry grew from 97 → 122 in a
+- Keep merging upstream's new providers (the registry grew from 97 → 126 in a
   few weeks).
 - Unblock the three hidden providers (`trae`, `windsurf`, `devin-cli`) once
   tool-calling support lands.
@@ -80,6 +102,12 @@ These are the directions the recent commit history points to, not promises.
 
 | Version | Date | Highlights |
 |---|---|---|
+| **0.6.31** | 2026-08-21 | Model Proxy Filter: model-agnostic probe payloads (no hardcoded `max_tokens`) + time-bounded probes. |
+| **0.6.30** | 2026-08-19 | i18n: dictionary coverage completed for all 34 translated locales; TOTU auto-fetch UI translatable. |
+| **0.6.29** | 2026-08-19 | Provider pack: OrcaRouter + TOTU AI providers, TOTU auto-fetch (Lấy acc), per-account $ balance (TokenRouter / TOTU AI), `undici` as direct dependency. |
+| **0.6.28** | 2026-08-18 | Usage dashboard hotfix: usage-by-API-key rows kept distinct per key; raw keys no longer leaked in `/api/usage/stats`. |
+| **0.6.23** | 2026-08-14 | v2go: blue-green zero-downtime managed-pool rotation, same-exit-IP swap avoidance, drain registry. |
+| **0.6.22** | 2026-08-14 | SAML 2.0 SSO; Alibaba Token Plan provider; Kimchi dual auth; Gemini 3.7 Flash on Antigravity. |
 | **0.6.1** | 2026-08-10 | Fix: invalid SQLite `ORDER BY` in `getSelectedXrayConfig` (broke v2go proxy start on Linux). |
 | **0.6.0** | 2026-08-10 | **V2Ray proxy (v2go)** — managed Xray-core client, subscription sync, SOCKS5/HTTP proxy, auto-rotation. DB schema v2 (`xrayConfigs`, `xraySyncState`). |
 | **0.5.50** | 2026-08-05 | Capacity adapter (default-enabled vision/audio), Qoder PAT, TokenRouter, self-hosted STT/TTS/embedding, GPT-5.6 overrides, OpenDesign, endpoint auto-key, headroom savings report, proactive OAuth refresh. Upstream merge v0.5.45 → v0.5.50. Qwen removed. |

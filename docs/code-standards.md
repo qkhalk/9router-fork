@@ -55,7 +55,7 @@
   Never talk to SQLite drivers directly from feature code.
 - **Repository pattern**: one repo per entity in `src/lib/db/repos/`.
 - **Schema is declarative** in `src/lib/db/schema.js` (`TABLES` object,
-  `SCHEMA_VERSION = 2`). Add columns by editing `TABLES` — the additive
+  `SCHEMA_VERSION = 3`). Add columns by editing `TABLES` — the additive
   `syncSchemaFromTables` step runs `CREATE TABLE IF NOT EXISTS` + diffs
   `PRAGMA table_info` and `ALTER TABLE ADD COLUMN` for missing columns
   (non-destructive only; a safety backup runs when `backupSchemaVersion <
@@ -82,7 +82,7 @@
 ## The `open-sse` engine — extension points
 
 - **The provider registry is canonical.** `open-sse/providers/registry/*.js`
-  (122 files) is the single source of truth for provider metadata — each file
+  (one file per provider) is the single source of truth for provider metadata — each file
   is self-contained (`alias`, `display`, `category`, `authModes`, `models`,
   media configs, `thinkingConfig`). `src/lib/oauth/` and
   `src/shared/constants/providers.js` both *derive* from it; do not redefine

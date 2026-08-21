@@ -79,12 +79,13 @@ Result: Never stop coding, minimal cost + 20-40% token savings via RTK
 
 | Feature | What it adds | Where to enable |
 | --- | --- | --- |
-| 🛰️ **V2Ray Proxy (v2go)** | Managed local **Xray-core** client that turns V2Ray share links (VLESS/VMess/Trojan/SS) from [v2go](https://github.com/Danialsamadi/v2go) into a SOCKS5/HTTP proxy 9Router can route through. Auto-syncs ~1,000+ working configs hourly, per-server latency testing, auto-rotation when the active server dies. Bundles the Xray-core binary (auto-download per OS/arch). Creates a managed Proxy Pool you can assign to any connection. *(v0.6.0+)* | Dashboard → **V2Ray Proxy** |
+| 🛰️ **V2Ray Proxy (v2go)** | Managed local **Xray-core** client that turns V2Ray share links (VLESS/VMess/Trojan/SS) from [v2go](https://github.com/Danialsamadi/v2go) into a SOCKS5/HTTP proxy 9Router can route through. Auto-syncs ~1,000+ working configs hourly, per-server latency testing, zero-downtime blue-green auto-rotation (flaky-node + edge-banned-IP quarantine), and a **Model Proxy Filter** that finds the configs a given model actually works through. Bundles the Xray-core binary (auto-download per OS/arch). Creates a managed Proxy Pool you can assign to any connection. *(v0.6.0+)* | Dashboard → **V2Ray Proxy** |
 | 🐬 **DeepSeek Web (DS2API)** | Runs a local Go sidecar that turns your DeepSeek Web session into an OpenAI-compatible endpoint. Managed start/stop/install/**update**, per-account proxies + **rotating proxy groups** (round-robin/random/failover). Engine pulled from [`vibecoder11200/ds2api`](https://github.com/vibecoder11200/ds2api) `v4.6.2-rotation`. | Dashboard → **DeepSeek Web** |
 | 🔀 **Proxy Pools & Rotating Groups** | Single-proxy pools **or** rotating groups (many proxies + optional "direct" server-IP slot). Per-request rotation: **on-error** (LRU) / **round-robin** / **random**. All protocols (http, https, socks5/5h/4/4a). Batch import. `strictProxy` fail-hard. Auto-cooldown (60s rate-limit, 30s 5xx). Bind to any provider connection. | Dashboard → **Proxy Pools** |
 | 🌐 **No-auth provider rotation** | Free no-auth providers (OpenCode Free, mimo-free…) can be bound to a rotating pool group from their provider page — set **Rotation Strategy** to round-robin/random (needs ≥2 active pools) to spread requests across IPs. | Provider page → **Proxy / Rotation** card |
 | 🤖 **Genspark Web** | Cookie-based Genspark Copilot MOA backend. Chat + **image generation** (`COPILOT_MOA_IMAGE`). Append `-search` to any model for web grounding. Prefix `genspark-web/` (`gspark`). | Dashboard → Providers → **Genspark Web** |
 | ♊ **Gemini Web** | Cookie-based `gemini.google.com` (internal `StreamGenerate` RPC). Cookie pool up to 5, round-robin, 15-min health checks, auto-disable dead cookies. LLM + image + video + audio. Prefix `gemini-web/` (`gweb`). | Dashboard → Providers → **Gemini Web** |
+| 🐟 **TOTU AI Auto-Fetch (Lấy acc)** | One-click account farming for the TOTU AI free NewAPI gateway: creates a temp mail.tm mailbox, captures the email OTP, registers + logs in, and saves the `sk-` key (with the dashboard login token) as a provider connection — plus a **per-account $ balance** view (shared with TokenRouter). Optional scheduler auto-fetches on an interval (default off; 15/30/60 min). *(v0.6.29+)* | Dashboard → Providers → **TOTU AI** → **Lấy acc** |
 | 🔗 **External Tunnel URL** | Register a tunnel the app does **not** manage (e.g. `cloudflared` via systemd, or any reverse proxy). Combined with *Allow dashboard access via tunnel*, local-only actions (DS2API install/start/stop, tunnel controls, Headroom, MITM) run over that tunnel after login. Setting `externalTunnelUrl`. | Dashboard → Endpoint → **External tunnel URL** |
 
 > Plus everything from **upstream** (regularly merged): PXPipe multimodal token saver, Grok CLI, Perplexity Agent API, Featherless, self-hosted STT/TTS/embedding providers, Headroom extras — all documented in their sections below.
@@ -501,7 +502,7 @@ command when a newer release exists (run `9router` and watch the menu).
       </td>
     </tr>
   </table>
-  <p><i>...and 20+ more providers including Grok CLI (OAuth), Perplexity Agent API, Featherless, Cloudflare AI, Nebius, Chutes, Hyperbolic, Venice AI, TokenRouter, OrcaRouter, and custom OpenAI/Anthropic compatible endpoints</i></p>
+  <p><i>...and 20+ more providers including Grok CLI (OAuth), Perplexity Agent API, Featherless, Cloudflare AI, Nebius, Chutes, Hyperbolic, Venice AI, TokenRouter, OrcaRouter, TOTU AI, and custom OpenAI/Anthropic compatible endpoints</i></p>
 </div>
 
 ### 🏠 Self-hosted Providers
