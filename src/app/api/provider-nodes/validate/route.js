@@ -141,8 +141,7 @@ export async function POST(request) {
           },
           body: JSON.stringify({
             model: modelId,
-            messages: [{ role: "user", content: "ping" }],
-            max_tokens: 1
+            messages: [{ role: "user", content: "ping" }]
           })
         });
         if (chatRes.ok) {
@@ -181,8 +180,7 @@ export async function POST(request) {
         },
         body: JSON.stringify({
           model: modelId,
-          messages: [{ role: "user", content: "ping" }],
-          max_tokens: 1
+          messages: [{ role: "user", content: "ping" }]
         })
       });
       if (chatRes.ok) {

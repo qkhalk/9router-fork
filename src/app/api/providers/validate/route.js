@@ -162,6 +162,7 @@ export async function POST(request) {
 
         const res = await fetch(messagesUrl, {
           method: "POST",
+          signal: AbortSignal.timeout(30000),
           headers: {
             "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
@@ -170,7 +171,8 @@ export async function POST(request) {
           },
           body: JSON.stringify({
             model,
-            max_tokens: 1,
+            // claude-format requires max_tokens; 64 clears gateway min-caps
+            max_tokens: 64,
             messages: [{ role: "user", content: "test" }],
           }),
         });
@@ -192,11 +194,11 @@ export async function POST(request) {
         const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
         const cfRes = await fetch(url, {
           method: "POST",
+          signal: AbortSignal.timeout(30000),
           headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             model: getDefaultModel("cloudflare-ai"),
             messages: [{ role: "user", content: "test" }],
-            max_tokens: 1,
           }),
         });
         isValid = cfRes.status !== 401 && cfRes.status !== 403 && cfRes.status !== 404;
@@ -222,10 +224,10 @@ export async function POST(request) {
 
         const azureRes = await fetch(url, {
           method: "POST",
+          signal: AbortSignal.timeout(30000),
           headers,
           body: JSON.stringify({
             messages: [{ role: "user", content: "test" }],
-            max_tokens: 1,
           }),
         });
         isValid = azureRes.status !== 401 && azureRes.status !== 403;
@@ -271,6 +273,7 @@ export async function POST(request) {
         case "anthropic":
           const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
+            signal: AbortSignal.timeout(30000),
             headers: {
               "x-api-key": apiKey,
               "anthropic-version": "2023-06-01",
@@ -278,7 +281,7 @@ export async function POST(request) {
             },
             body: JSON.stringify({
               model: "claude-3-haiku-20240307",
-              max_tokens: 1,
+              max_tokens: 64,
               messages: [{ role: "user", content: "test" }],
             }),
           });
@@ -325,21 +328,24 @@ export async function POST(request) {
             const testModel = getDefaultModel(provider);
             const res = await fetch(cfg.baseUrl, {
               method: "POST",
+              signal: AbortSignal.timeout(30000),
               headers: { "Authorization": `Bearer ${apiKey}`, "content-type": "application/json" },
-              body: JSON.stringify({ model: testModel, max_tokens: 1, messages: [{ role: "user", content: "test" }] }),
+              body: JSON.stringify({ model: testModel, messages: [{ role: "user", content: "test" }] }),
             });
             isValid = res.status !== 401 && res.status !== 403;
           } else {
             const testModel = getDefaultModel(provider) || "claude-sonnet-4-20250514";
             const res = await fetch(cfg.baseUrl, {
               method: "POST",
+              signal: AbortSignal.timeout(30000),
               headers: {
                 "x-api-key": apiKey,
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
                 ...(cfg.headers || {}),
               },
-              body: JSON.stringify({ model: testModel, max_tokens: 1, messages: [{ role: "user", content: "test" }] }),
+              // claude-format requires max_tokens; 64 clears gateway min-caps
+              body: JSON.stringify({ model: testModel, max_tokens: 64, messages: [{ role: "user", content: "test" }] }),
             });
             // 400 = model resolution error but auth passed (e.g. agentrouter "no available channel")
             isValid = res.status !== 401 && res.status !== 403;
@@ -350,13 +356,13 @@ export async function POST(request) {
         case "byteplus": {
           const res = await fetch(PROVIDERS[provider]?.baseUrl, {
             method: "POST",
+            signal: AbortSignal.timeout(30000),
             headers: {
               "Authorization": `Bearer ${apiKey}`,
               "content-type": "application/json",
             },
             body: JSON.stringify({
               model: getDefaultModel(provider),
-              max_tokens: 1,
               messages: [{ role: "user", content: "test" }],
             }),
           });
@@ -426,11 +432,11 @@ export async function POST(request) {
           const model = getDefaultModel("commandcode");
           const payload = openaiToCommandCodeRequest(model, {
             messages: [{ role: "user", content: "ping" }],
-            max_tokens: 1,
             stream: false,
           }, false);
           const res = await fetch(cfg.baseUrl, {
             method: "POST",
+            signal: AbortSignal.timeout(30000),
             headers: {
               "Content-Type": "application/json",
               ...(cfg.headers || {}),
@@ -454,6 +460,7 @@ export async function POST(request) {
         case "blackbox": {
           const res = await fetch("https://api.blackbox.ai/chat/completions", {
             method: "POST",
+            signal: AbortSignal.timeout(30000),
             headers: {
               "Authorization": `Bearer ${apiKey}`,
               "Content-Type": "application/json",
@@ -461,7 +468,6 @@ export async function POST(request) {
             body: JSON.stringify({
               model: "gpt-4o",
               messages: [{ role: "user", content: "test" }],
-              max_tokens: 10,
             }),
           });
           // Returns 401 for invalid key, 200 for valid, 400 for malformed
@@ -638,7 +644,7 @@ export async function POST(request) {
           const chatRes = await fetch(cfg.baseUrl, {
             method: "POST",
             headers,
-            body: JSON.stringify({ model: defaultModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }),
+            body: JSON.stringify({ model: defaultModel, messages: [{ role: "user", content: "ping" }] }),
             signal: AbortSignal.timeout(10000),
           });
           isValid = chatRes.status !== 401 && chatRes.status !== 403;
