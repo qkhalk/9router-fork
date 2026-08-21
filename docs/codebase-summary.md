@@ -64,7 +64,7 @@
 
 - **`db/`** — multi-driver SQLite: `driver.js` (bun → better-sqlite3 →
   node:sqlite → sql.js), `schema.js` (declarative tables + WAL PRAGMAs,
-  `SCHEMA_VERSION = 2`), `migrate.js` (versioned + additive auto-sync),
+  `SCHEMA_VERSION = 3`), `migrate.js` (versioned + additive auto-sync),
   `paths.js`, `repos/` (one repository per entity), `adapters/`.
 - **`auth/`** — `dashboardSession.js` (JWT + bcrypt), `oidc.js` (PKCE),
   `loginLimiter.js` (rate limiting).
@@ -74,7 +74,12 @@
   (SOCKS+HTTP inbound config), `process.js` (spawn/stop/restart + temp test
   instance), `tester.js` (latency/exit-IP probes), `sync.js` +
   `syncParse.js` (subscription fetcher + scheduler), `manager.js`
-  (orchestration facade + state machine).
+  (orchestration facade + state machine), `managedRotation.js` (blue-green
+  zero-downtime outbound rotation on rotatable errors, v0.6.23+),
+  `modelFilterTraffic.js` + `apiFilter.js` + `modelProbe.js` (Model Proxy
+  Filter: probe which configs work for a given model, spawn mode or
+  single-instance gRPC API mode; results in `xrayModelFilterResults`),
+  `reaper.js` (boot-time reaper for orphaned probe processes).
 - **`ds2api/`** — DS2API (DeepSeek-Web) managed sidecar: `install.js` (auto-download release binary per OS/arch + sha256 verify + extract), `process.js` (spawn/stop lifecycle + generated admin/api credentials), `detect.js` (binary detection + health probe), `adminClient.js` (JWT admin REST API client), `resolve.js` (runtime `PROVIDERS.ds2api` baseUrl sync), `context.js` (route runtime resolver).
 - **`headroom/`** — Headroom token-compression proxy lifecycle (`process.js`,
   `detect.js` with `code`/`ml` extras probing).
@@ -90,6 +95,10 @@
 - **`oauth/`** — OAuth flow orchestrator (`providers/index.js` with flow
   handlers per provider: PKCE / device-code / import-token / RSA-keypair).
 - **`pxpipe/`** — PXPIPE image-context-compression sidecar lifecycle.
+- **`totuAutoFetch/`** — TOTU AI account auto-fetch (v0.6.29): `mailtm.js`
+  (mail.tm temp mailbox + OTP capture), `newapi.js` (NewAPI register/login/
+  token minting), `index.js` (scheduler driven by `totuAutoFetch` +
+  `totuAutoFetchIntervalMin` settings, started from `initializeApp`).
 - **`qoder/`** — re-export shim to `open-sse/shared/qoder/` (COSY signing).
 - Notable: `dataDir.js`, `consoleLogBuffer.js`, `mitmAliasCache.js`.
 
@@ -142,14 +151,14 @@ provider and streams the response back in the client's format.
 | Subdir | Role |
 |---|---|
 | `config/` | Constants, runtime timeouts/retry, error/backoff config |
-| `executors/` | ~40 per-provider HTTP clients (`base.js` `BaseExecutor` + specialized: azure, vertex, codex, cursor, kiro, gemini-web, gemini-cli, github, antigravity, qoder, grok-web, perplexity-web, codebuddy-cn, mimo-free, cloudflare-ai, commandcode, …) |
+| `executors/` | ~30 per-provider HTTP clients (`base.js` `BaseExecutor` + specialized: azure, vertex, codex, cursor, kiro, gemini-web, gemini-cli, github, antigravity, qoder, grok-web, perplexity-web, codebuddy-cn, mimo-free, orcarouter, commandcode, …) |
 | `handlers/` | Modality orchestrators: `chatCore.js` (+ `chatCore/` streaming/non-streaming/SSE→JSON/forced-SSE-to-JSON), `responsesHandler.js` (Responses Lite), `embeddingsCore.js`, `imageGenerationCore.js`, `ttsCore.js`, `sttCore.js`, `search/` |
 | `translator/` | Bidirectional format conversion across 14 source formats; `formats/`, `request/`, `response/`, `schema/`, modular `concerns/` (toolCall, thinking/reasoning, message, chunk, usage, image, modality, finishReason, …). Direct routes preferred; OpenAI is the pivot fallback. |
-| `services/` | `model.js`, `provider.js`, `accountFallback.js`, **`combo.js`** (fallback/round-robin/fusion + capability tiering), **`capacityAdapter.js`** (vision/pdf/audio/video fallback pool), `oauthCredentialManager.js`, `tokenRefresh.js` (centralized per-provider refresh handlers), `usage/` (per-provider usage parsers incl. Antigravity Gemini-3.x quota tracker), Gemini-Web session/cookie/RPC/keepalive/fingerprint cluster (8 files), `projectId.js` (Vertex) |
+| `services/` | `model.js`, `provider.js`, `accountFallback.js`, **`combo.js`** (fallback/round-robin/fusion + capability tiering), **`capacityAdapter.js`** (vision/pdf/audio/video fallback pool), `oauthCredentialManager.js`, `tokenRefresh.js` (centralized per-provider refresh handlers), `usage/` (per-provider usage parsers incl. Antigravity Gemini-3.x quota tracker and `newapi.js` per-account balance for TokenRouter/TOTU), Gemini-Web session/cookie/RPC/keepalive/fingerprint cluster (8 files), `projectId.js` (Vertex) |
 | `rtk/` | Token-saver pipeline (fail-open, ordered): `index.js` + `filters/` (11 files) compress `tool_result`; `headroom.js` (external `/v1/compress` proxy, reports effective savings), `caveman.js` (−65% output tokens), `ponytail.js` (lazy senior dev, Lite/Full/Ultra). PXPIPE image compression is a sibling step wired from `src/lib/pxpipe/`. |
 | `transformer/` | `responsesTransformer.js` (Chat Completions SSE → Codex Responses API SSE), `streamToJsonConverter.js` |
 | `utils/` | `stream.js`, `streamHandler.js`, `sse.js`, `proxyFetch.js`, `bypassHandler.js`, `clientDetector.js`, `claudeCloaking.js`, `cursorChecksum.js`/`cursorProtobuf.js`, `usageTracking.js`, `error.js`, `requestLogger.js` |
-| `providers/`, `shared/` | Provider registry (`registry/` — **122 provider files**, the single source of truth, each self-contained with `display`/`category`/`models`/`authModes`), `pricing.js` ($/1M tokens), `capabilities.js`, `schema.js`, `models/`. `shared/` has `qoder/` (COSY signing), `zedAuth.js` (RSA keypair). |
+| `providers/`, `shared/` | Provider registry (`registry/` — **one file per provider**, the single source of truth, each self-contained with `display`/`category`/`models`/`authModes`), `pricing.js` ($/1M tokens), `capabilities.js`, `schema.js`, `models/`. `shared/` has `qoder/` (COSY signing), `zedAuth.js` (RSA keypair). |
 
 Entry: `open-sse/index.js` (re-exports config, translators, services, handlers,
 stream utils). Imported for side effects (HTTP proxy env wiring) at the top of
@@ -180,8 +189,9 @@ Three executors that use session cookies (not API keys) to access web versions:
 
 ### Provider registry
 
-The provider registry in `open-sse/providers/registry/` contains **122
-individual provider definition files**, each a self-contained module exporting
+The provider registry in `open-sse/providers/registry/` holds **one
+self-contained definition file per provider** (126 at v0.6.31 — list the
+directory for the current count), each exporting
 `alias`, `display`, `category` (`free`/`freeTier`/`oauth`/`apikey`/`webCookie`),
 `authModes`, `models[]` (kind-tagged: `llm`/`image`/`tts`/`stt`/`embedding`/…),
 media configs, and `thinkingConfig`. The `registry/index.js` imports them all

@@ -6,7 +6,7 @@
 
 ## 1. What 9Router is
 
-9Router (`package.json` name: `9router-app`, version `0.6.1`) is a **self-hosted
+9Router (`package.json` name: `9router-app`, version `0.6.31`) is a **self-hosted
 LLM API gateway / router** with a Next.js dashboard. It exposes an OpenAI-compatible
 HTTP API and routes each request to one of many configured upstream providers —
 translating between client formats (OpenAI, Claude, Gemini, OpenAI Responses API)
@@ -33,8 +33,9 @@ and a CLI (`9router`) for headless use. This checkout (`9router-mod`) is a
   formats: `openai`, `openai-responses`, `claude`, `gemini`, `gemini-cli`,
   `gemini-web`, `vertex`, `codex`, `antigravity`, `kiro`, `cursor`, `ollama`,
   `commandcode`.
-- **~120 upstream providers** (122 in the registry) via specialized executors,
-  registered in `open-sse/providers/registry/` (the single source of truth).
+- **~125 upstream providers** (one self-contained registry file each under
+  `open-sse/providers/registry/` — the single source of truth; list the
+  directory for the current count), called via specialized executors.
   Three credential
   families: OAuth (Claude, Codex, Gemini-CLI, Antigravity, GitHub Copilot, Kiro,
   Cursor, Kimi, Qoder, GitLab Duo, Cline, CodeBuddy, xAI/Grok, …), API-key
@@ -42,7 +43,11 @@ and a CLI (`9router`) for headless use. This checkout (`9router-mod`) is a
   Cloudflare AI, self-hosted STT/TTS/embedding, image/video/search providers),
   and web-cookie (Gemini Web, Grok Web, Genspark, Perplexity Web). Three
   providers (`trae`, `windsurf`, `devin-cli`) are registered but hidden pending
-  tool-calling support.
+  tool-calling support. The NewAPI gateways TokenRouter and TOTU AI support
+  **per-account $ balance** queried with the dashboard login token
+  (`open-sse/services/usage/newapi.js`; OrcaRouter has no balance API and says
+  so), and TOTU AI additionally supports **account auto-fetch**
+  (`src/lib/totuAutoFetch/` — see `docs/system-architecture.md`).
 - **Credentials & failover**: per-connection credentials (API key, OAuth, or
   cookie), account fallback with exponential backoff + per-model locking, and
   multi-model **combos** (fallback / round-robin / fusion).
@@ -84,7 +89,7 @@ and a CLI (`9router`) for headless use. This checkout (`9router-mod`) is a
 | Editor / charts / flow | Monaco, Recharts, @xyflow/react, @dnd-kit |
 | Auth | bcrypt + JWT dashboard sessions (`src/lib/auth/`), optional OIDC PKCE |
 | HTTP | undici, http-proxy-middleware, express (custom server), socks-proxy-agent |
-| Database | SQLite via multi-driver adapter (`bun:sqlite` → `better-sqlite3` → `node:sqlite` → `sql.js` WASM fallback), schema v2 |
+| Database | SQLite via multi-driver adapter (`bun:sqlite` → `better-sqlite3` → `node:sqlite` → `sql.js` WASM fallback), schema v3 |
 | Crypto/certs | node-forge, selfsigned, jose (JWT), bcryptjs, node-machine-id |
 | V2Ray | bundled Xray-core binary (auto-downloaded per OS/arch into `<DATA_DIR>/xray/`) |
 
@@ -127,7 +132,7 @@ deliberately does **not** bundle `better-sqlite3` (to avoid Windows EBUSY during
 | FR-6 | Usage logging + analytics | `usageHistory`, `usageDaily`, `requestDetails` tables; `/api/usage/` |
 | FR-7 | MITM rerouting for AI IDEs | `src/mitm/` |
 | FR-8 | Tunnel exposure (Cloudflare / Tailscale / external URL) | `src/lib/tunnel/` |
-| FR-9 | Dashboard auth (password / OIDC) with rate-limited login | `src/lib/auth/`, `/api/auth/` |
+| FR-9 | Dashboard auth (password / OIDC / SAML SSO) with rate-limited login | `src/lib/auth/`, `/api/auth/` |
 | FR-10 | CLI launch + terminal UI + tray | `cli/` |
 | FR-11 | Web-based/session-based providers (cookie auth, not API key) | `open-sse/executors/gemini-web.js`, `grok-web.js`, `perplexity-web.js`; Gemini-Web cluster (`open-sse/services/geminiWeb*.js`) |
 | FR-12 | SSRF guard for outbound requests | `src/shared/utils/ssrfGuard.js` — blocks requests to private/internal/metadata IP ranges |
@@ -137,6 +142,8 @@ deliberately does **not** bundle `better-sqlite3` (to avoid Windows EBUSY during
 | FR-16 | Token-saver pipeline (RTK + Headroom + Caveman + Ponytail + PXPIPE) | `open-sse/rtk/`, `open-sse/rtk/headroom.js`, per-request `TOKEN_SAVER_HEADER` opt-out |
 | FR-17 | Media generation (image / TTS / STT / video / embedding / search) | `src/app/api/v1/{images,audio,videos,embeddings,search,web}/*`, `open-sse/handlers/{imageGenerationCore,ttsCore,sttCore,embeddingsCore,search}` |
 | FR-18 | MCP plugin bridge (preset local stdio plugins → SSE) | `src/lib/mcp/stdioSseBridge.js`, `/api/mcp/[plugin]/{sse,message}` |
+| FR-19 | Dashboard SSO (OIDC + SAML 2.0) | `src/lib/auth/oidc.js`, `src/lib/auth/saml.js`, `saml*` settings |
+| FR-20 | TOTU AI account auto-fetch (temp mailbox + OTP + scheduler) | `src/lib/totuAutoFetch/`, `totuAutoFetch*` settings, `POST /api/providers/totu-ai/fetch-account` |
 
 ### 3.4 Non-functional requirements
 

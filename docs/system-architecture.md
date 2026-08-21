@@ -151,7 +151,7 @@ vars).
   OpenAI format is the pivot fallback. Organized into `formats/`, `request/`,
   `response/`, `schema/`, and modular `concerns/` (toolCall, thinking,
   reasoning, message, chunk, usage, image, modality, …).
-- **Executors** = ~40 provider HTTP clients; `base.js` (`BaseExecutor`)
+- **Executors** = ~30 provider HTTP clients; `base.js` (`BaseExecutor`)
   provides URL/header build, retry, fallback-URL, credential-refresh;
   specialized executors add provider protocols (protobuf for Cursor, AWS
   EventStream for Kiro, RPC for Gemini-Web, COSY signing for Qoder, etc.).
@@ -159,7 +159,9 @@ vars).
   **combos + capacity adapter**, OAuth credential management + centralized
   token refresh (`tokenRefresh.js` with per-provider handlers), per-provider
   usage parsers (`services/usage/` — incl. the Antigravity Gemini-3.x quota
-  tracker), and the Gemini-Web session/cookie/RPC/keepalive cluster (8 files).
+  tracker and the NewAPI dashboard-login balance for TokenRouter / TOTU,
+  `usage/newapi.js`), and the Gemini-Web
+  session/cookie/RPC/keepalive cluster (8 files).
 - **RTK / token saver** = fail-open pre-translate pipeline that compresses tool
   output (git diff/status, logs, grep/find/ls) and injects token-frugal system
   prompts. Chain order: RTK (`filters/`, 11 files) → Headroom
@@ -170,9 +172,9 @@ vars).
 - **Transformer** = `responsesTransformer.js` (Chat Completions SSE → Codex
   Responses API SSE), `streamToJsonConverter.js` (Responses non-streaming).
 - **Config / registry** = single source for timeouts, retry/backoff, error
-  mapping, and the provider/model registries (built from
-  `providers/registry/` — 122 provider files; `pricing.js`,
-  `capabilities.js`, `schema.js`).
+  mapping, and the provider/model registries (one self-contained file per
+  provider under `providers/registry/` — list it for the current count;
+  `pricing.js`, `capabilities.js`, `schema.js`).
 
 ### The token-saver pipeline (chat)
 
@@ -273,6 +275,23 @@ browser access, auto-generates strong admin/api keys, and does not advertise the
 port, but a host firewall is recommended on multi-user machines. (A loopback-only
 bind would require forking ds2api.)
 
+### TOTU AI account auto-fetch (`src/lib/totuAutoFetch/`)
+
+TOTU AI is a free NewAPI gateway; the fork auto-registers accounts for it
+(v0.6.29, dashboard label **Lấy acc**):
+
+- **mail.tm client** (`mailtm.js`): creates a temp mailbox, resolves the
+  registerable domain at runtime via `GET /domains` (a previously hardcoded
+  domain died with HTTP 406), and captures the OTP email.
+- **NewAPI client** (`newapi.js`): register → login → mint the `sk-` inference
+  key plus the dashboard session token (`providerSpecificData.loginToken`,
+  which is also what the per-account balance query needs).
+- **Scheduler** (`index.js`): started from `initializeApp` when
+  `settings.totuAutoFetch` is true; interval `totuAutoFetchIntervalMin`
+  (default 60). A settings `PATCH` live-restarts it.
+- **UI / API**: `TotuAutoFetchModal.js` on the TOTU provider page;
+  `POST /api/providers/totu-ai/fetch-account` (dashboard-auth gated).
+
 ### V2Ray proxy (v2go) — managed Xray-core client
 
 The v2go integration (`src/lib/xray/`, new in v0.6.0) turns V2Ray share links
@@ -297,7 +316,23 @@ configs, refreshed hourly).
   file + log), gated by an 8s startup-survival check. `spawnTempXray` runs an
   isolated ephemeral instance for per-config testing without clobbering the
   active proxy. Windows uses `powershell.exe Stop-Process`; Unix uses
-  SIGTERM → SIGKILL.
+  SIGTERM → SIGKILL. `reaper.js` (statically imported at boot) reaps orphaned
+  temp-probe processes and config files.
+- **Managed rotation** (`managedRotation.js`, v0.6.23+): on rotatable errors
+  (429 / rate-limit / 5xx) through the managed pool, the outbound rotates
+  **blue-green** — the replacement Xray starts before the old one drains
+  (`NINEROUTER_XRAY_DRAIN_MS`, default 90s; draining PIDs tracked for boot
+  cleanup), so the SOCKS port never goes down. `switchConfig` avoids swapping
+  to the same exit IP; flaky nodes are quarantined instead of pinning the
+  pool, and edge-banned exit IPs (403 Cloudflare) rotate + quarantine.
+- **Model Proxy Filter** (`modelFilterTraffic.js`, `apiFilter.js`,
+  `modelProbe.js`; results in the `xrayModelFilterResults` table): tests
+  which Xray configs actually work for a given model. Spawn mode probes via
+  `spawnTempXray`; API mode tests many configs through a single long-lived
+  Xray instance, swapping outbounds over the Xray gRPC API. The shared probe
+  payload (`modelProbe.js`) is deliberately model-agnostic — no
+  `max_tokens` (upstreams enforce different floors) — and every probe is
+  time-bounded.
 - **Manager** (`manager.js`): orchestration facade + in-memory state machine
   (`stopped → starting → running → error`) that reconciles against the live PID
   to survive Next.js HMR. Exposes start/stop/restart/switch/test/health-check.
@@ -387,10 +422,11 @@ to `1.23.2` (`antigravityIdeVersion.js`).
   `busy_timeout=5000`, `foreign_keys=ON`.
 - **Location:** `<DATA_DIR>/db/data.sqlite`. Default `DATA_DIR`:
   `~/.9router/` (Linux/macOS) or `%APPDATA%/9router/` (Windows).
-- **Schema (`SCHEMA_VERSION = 2`), 13 tables:**
+- **Schema (`SCHEMA_VERSION = 3`), 14 tables:**
   - `_meta` — schema version/migration state, `appVersion`, `totalRequestsLifetime`.
-  - `settings` — single-row JSON (auth, password hash, OIDC config, combo/capacity
-    strategy, xray/mitm/ds2api/headroom flags, quota visibility, …).
+  - `settings` — single-row JSON (auth, password hash, OIDC + SAML config,
+    combo/capacity strategy, xray/mitm/ds2api/headroom flags, TOTU auto-fetch
+    toggle + interval, quota visibility, …).
   - `providerConnections` — provider credentials (`authType`: `oauth`/`apikey`/
     `access_token`/`cookie`/`api_key`), priority, isActive; bulk metadata in a
     `data` JSON column (tokens, refresh, `providerSpecificData`, model locks, …);
@@ -411,6 +447,9 @@ to `1.23.2` (`antigravityIdeVersion.js`).
     country, host/port, latency, exit-IP, selected, active). **(v0.6.0)**
   - `xraySyncState` — singleton subscription-sync state (source URL, last sync
     count/error/runs). **(v0.6.0)**
+  - `xrayModelFilterResults` — Model Proxy Filter probe outcome per
+    (config, model): status, latency, error. **(v0.6.10; cached-result
+    reuse since v0.6.11)**
 - **Migrations:** versioned files in `src/lib/db/migrations/`
   (`001-initial.js`); `migrate.js` stamps `_meta.schemaVersion` and takes a
   safety backup when `backupSchemaVersion < SCHEMA_VERSION`. `syncSchemaFromTables`
@@ -421,8 +460,10 @@ to `1.23.2` (`antigravityIdeVersion.js`).
 
 ## 6. Auth & security model
 
-- **Dashboard access:** single admin. Password (bcrypt) or OIDC (PKCE,
-  `src/lib/auth/oidc.js`). Sessions are JWT cookies set by
+- **Dashboard access:** single admin. Password (bcrypt), OIDC (PKCE,
+  `src/lib/auth/oidc.js`), or SAML 2.0 SSO (`src/lib/auth/saml.js`, v0.6.22;
+  settings `samlEntryPoint` / `samlIssuer` / `samlCert` / `samlAttributeEmail`).
+  Sessions are JWT cookies set by
   `dashboardSession.js`. Login is rate-limited per real IP
   (`loginLimiter.js`). Default password is `INITIAL_PASSWORD` (fallback
   `123456`) and remote logins with the default password are forced to change it.
