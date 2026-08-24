@@ -4,7 +4,7 @@ import { PROVIDERS } from "../config/providers.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 
-const OPENCODE_UA = "opencode";
+const OPENCODE_UA = "opencode/1.18.22 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14";
 const MESSAGES_MODELS = new Set();
 
 function generateRequestId() {
@@ -60,7 +60,7 @@ export class OpenCodeExecutor extends BaseExecutor {
       "Content-Type": "application/json",
       "Authorization": "Bearer public",
       "User-Agent": isOpencodeDownstream ? downstreamUa : OPENCODE_UA,
-      "x-opencode-client": lower["x-opencode-client"] || "desktop",
+      "x-opencode-client": lower["x-opencode-client"] || "cli",
       "x-opencode-session": lower["x-opencode-session"] || this._currentSessionId || generateSessionId(),
       "x-opencode-request": lower["x-opencode-request"] || generateRequestId(),
       "x-opencode-project": lower["x-opencode-project"] || "global",
