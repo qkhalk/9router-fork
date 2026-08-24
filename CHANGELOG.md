@@ -1,3 +1,25 @@
+# v0.6.32 (2026-08-25)
+
+Anti-fingerprint release for the opencode (zen) provider: outbound requests
+now carry the exact official opencode CLI request fingerprint, so upstream
+can no longer distinguish 9router traffic from the real client.
+
+## Fixes
+- **opencode (zen) 503 "Endpoint is unavailable" for some users**: the
+  executor sent a bare `opencode` User-Agent and defaulted
+  `x-opencode-client` to `desktop`, while the real opencode CLI (1.18.22)
+  sends the full ai-sdk/runtime UA string and `cli`. Requests that didn't
+  look like the official client were intermittently rejected with
+  `503 {"error":{"type":"server_error","message":"Error from provider
+  (Console): Upstream request failed: Endpoint is unavailable."}}` — hit
+  some users/IPs and not others, which made it look like a proxy problem
+  (the v2go managed pool kept rotating exit IPs in response without ever
+  fixing it). The executor now sends the captured official fingerprint
+  (`opencode/1.18.22 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14`)
+  and defaults `x-opencode-client` to `cli`. Downstream client headers
+  (`User-Agent`, `x-opencode-*`) still pass through unchanged when the
+  request itself carries them.
+
 # v0.6.31 (2026-08-21)
 
 Model-compatibility release for the Model Proxy Filter and provider
