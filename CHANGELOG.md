@@ -1,3 +1,60 @@
+# v0.6.33 (2026-09-01)
+
+Upstream-sync release: merges upstream v0.5.59 into the fork (72 commits,
+v0.5.50 → v0.5.59; the v0.5.51–v0.5.55 cycle was already content-cherry-
+picked, v0.5.56–v0.5.59 is net-new). Every fork subsystem is preserved —
+v2go/Xray managed pool + rotation + Model Proxy Filter, proxy pools/groups,
+DS2API, web-cookie providers, TOTU auto-fetch, MITM, tunnel access — and the
+v0.6.32 opencode anti-fingerprint (full official UA + `x-opencode-client:
+cli`) is kept on top of upstream's new Responses routing.
+
+## Upstream highlights now in the fork
+- **Search**: new `POST /v1/search` providers — Antigravity (Google Search
+  grounding on the existing OAuth account pool), Xquik (X search with
+  cursor pagination), plus ollama-search / zai-search which borrow a chat
+  provider's API key via the new `credentialFallback` registry field.
+- **Usage**: Zed plan quota on the dashboard; GLM `CREDIT_LIMIT` +
+  multi-interval quota parsing; nested `cached_tokens` preserved in
+  canonicalizeUsage; Claude quota calls deduped + cached (120s TTL).
+- **Models**: `glm-5.3-flash` (GLM / GLM-CN / opencode-go), DeepSeek V4
+  Flash Vision (Exp); model catalog auto-syncs from models.dev in the
+  background with snake_case token limits on `/v1/models`.
+- **opencode**: muse-spark routed through the Responses API (it 500s on
+  chat/completions) with reasoning-effort normalization and xhigh clamping.
+- **Antigravity**: quota-aware routing with reset-aware fallback — 409/429
+  refreshes live quota for the exact resetAt before locking; generalized
+  system-prompt branding rewrites (`ANTIGRAVITY_PROMPT_REWRITES`); Gemini
+  3.7 Flash tiers in MITM defaultModels; image size → aspect-ratio model
+  suffix.
+- **CLI tools**: endpoint presets shared across every tool card; Codex
+  config writes the API key where Codex actually reads it (http_headers,
+  not auth.json).
+- **CLI install**: better-sqlite3 installs without build tools on Node 22+
+  (per-platform prebuilds + `--ignore-scripts`).
+- **Fixes**: Claude Code session id read from its request header; Cline
+  token refresh uses the extension JSON contract; usage recorded when a
+  client disconnects on the terminal event + no disconnect log for
+  completed Responses calls; Ollama trailing NDJSON line parsed; Kiro
+  intercepts `x-amz-target` + mandatory initial-response frame; API-key
+  mask clamp for short keys; Material Symbols font reveal wait; connection
+  tests time out and guard undefined provider names; search failure locks
+  scoped so search cannot take chat offline.
+
+## Merge notes
+- Registry renumber: fork providers moved p122–p126 → p124–p128 around
+  upstream's new xquik (p122) + ollama-search (p123) slots — 124
+  definitions total, 0 duplicate ids.
+- `chatCore` `targetFormat` now prefers a source-format-matched transport
+  over model-level targetFormat (upstream fix; prevents MiniMax image loss
+  through mismatched transports).
+- Kept the fork's 30s bounded non-mutating connection-test probes over
+  upstream's 15s mutating variant, and the fork's Grok-CLI bulk import
+  coexists with TOTU "Lấy acc" on the provider detail page.
+- Verification: full-suite pre/post comparison 2442 tests with **0
+  pass→fail regressions** (3 golden header tests fixed); providers/alias/
+  oauth-urls baselines byte-for-byte equal; `npm run build` clean
+  including all fork routes.
+
 # v0.5.59 (2026-08-29)
 
 ## Features
