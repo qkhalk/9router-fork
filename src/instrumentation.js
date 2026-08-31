@@ -6,5 +6,13 @@ export async function register() {
     // Resume proxyxoay.org rotation + forwarding servers for active pools.
     const { initProxyXoay } = await import("@/lib/proxy/providers/initProxyXoay.js");
     initProxyXoay();
+
+    // Server-only: lets capabilities.js read the synced catalog without pulling
+    // node:fs into the dashboard's browser bundle.
+    const { installCatalogSource } = await import("open-sse/providers/catalogOverride.js");
+    await installCatalogSource();
+
+    const { startModelCatalogSync } = await import("@/lib/modelCatalog/sync.js");
+    startModelCatalogSync();
   }
 }

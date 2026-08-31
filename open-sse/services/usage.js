@@ -17,11 +17,12 @@ import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
 import { getNewApiBalanceUsage } from "./usage/newapi.js";
 import { getOrcarouterUsage } from "./usage/orcarouter.js";
+import { getZedUsage } from "./usage/zed.js";
 import { resolveQoderCredentials } from "./qoderModels.js";
+import { getGlmUsage } from "./usage/glm.js";
 import {
   getIflowUsage,
   getOllamaUsage,
-  getGlmUsage,
   getVercelAiGatewayUsage,
   getQoderUsage,
 } from "./usage/misc.js";
@@ -73,6 +74,7 @@ const USAGE_HANDLERS = {
     proxyOptions: c.proxyOptions,
   }),
   orcarouter: (c) => getOrcarouterUsage(c.apiKey, c.proxyOptions),
+  zed: (c) => getZedUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
 };
 
 export async function getUsageForProvider(connection, proxyOptions = null, options = {}) {
