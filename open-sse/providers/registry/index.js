@@ -66,6 +66,7 @@ import p63 from "./nebius.js";
 import p64 from "./nvidia.js";
 import p65 from "./ollama-local.js";
 import p66 from "./ollama.js";
+import p123 from "./ollama-search.js";
 import p67 from "./openai.js";
 import p68 from "./opencode-go.js";
 import p69 from "./opencode.js";
@@ -121,13 +122,14 @@ import p118 from "./selfhosted-tts.js";
 import p119 from "./selfhosted-embedding.js";
 import p120 from "./fish-audio.js";
 import p121 from "./alitp-intl.js";
-// Fork custom providers (appended after upstream p0–p121; renumbered from p120-122 to
-// p122-124 to avoid clashing with upstream's new p120 fish-audio + p121 alitp-intl slots)
-import p122 from "./gemini-web.js";
-import p123 from "./ds2api.js";
-import p124 from "./genspark-web.js";
-import p125 from "./orcarouter.js";
-import p126 from "./totu-ai.js";
+import p122 from "./xquik.js";
+// Fork custom providers (appended after upstream p0–p123; renumbered from p122-126 to
+// p124-128 to avoid clashing with upstream's new p122 xquik + p123 ollama-search slots)
+import p124 from "./gemini-web.js";
+import p125 from "./ds2api.js";
+import p126 from "./genspark-web.js";
+import p127 from "./orcarouter.js";
+import p128 from "./totu-ai.js";
 
 export default [
   p0,
@@ -197,6 +199,7 @@ export default [
   p64,
   p65,
   p66,
+  p123,
   p67,
   p68,
   p69,
@@ -250,10 +253,11 @@ export default [
   p119,
   p120,
   p121,
-  // Fork custom providers
   p122,
-  p123,
+  // Fork custom providers
   p124,
   p125,
   p126,
+  p127,
+  p128,
 ];
