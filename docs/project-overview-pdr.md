@@ -6,7 +6,7 @@
 
 ## 1. What 9Router is
 
-9Router (`package.json` name: `9router-app`, version `0.6.31`) is a **self-hosted
+9Router (`package.json` name: `9router-app`, version `0.6.33`) is a **self-hosted
 LLM API gateway / router** with a Next.js dashboard. It exposes an OpenAI-compatible
 HTTP API and routes each request to one of many configured upstream providers —
 translating between client formats (OpenAI, Claude, Gemini, OpenAI Responses API)
