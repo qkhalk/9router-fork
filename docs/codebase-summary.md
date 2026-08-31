@@ -190,8 +190,8 @@ Three executors that use session cookies (not API keys) to access web versions:
 ### Provider registry
 
 The provider registry in `open-sse/providers/registry/` holds **one
-self-contained definition file per provider** (126 at v0.6.31 — list the
-directory for the current count), each exporting
+self-contained definition file per provider** (124 active at v0.6.33 — list the
+directory or import `registry/index.js` for the current count), each exporting
 `alias`, `display`, `category` (`free`/`freeTier`/`oauth`/`apikey`/`webCookie`),
 `authModes`, `models[]` (kind-tagged: `llm`/`image`/`tts`/`stt`/`embedding`/…),
 media configs, and `thinkingConfig`. The `registry/index.js` imports them all
