@@ -26,6 +26,7 @@ import { compressMessages, formatRtkLog } from "../rtk/index.js";
 import { compressWithHeadroom, formatHeadroomLog, formatHeadroomSizeLog, isHeadroomPhantomSavings } from "../rtk/headroom.js";
 import { compressWithPxpipe } from "../rtk/pxpipe.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
+import { ensureOpencodeCatalog, isResponsesServed, isDeprecatedModel } from "../providers/opencodeCatalog.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 import { defaultClaudeToolType } from "../translator/concerns/toolCall.js";
@@ -78,7 +79,23 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (bypassResponse) return bypassResponse;
 
   const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;
-  const modelTargetFormat = getModelTargetFormat(alias, model);
+  let modelTargetFormat = getModelTargetFormat(alias, model);
+  // OpenCode Free: the zen endpoint split (responses vs chat/completions) is
+  // per-model and only opencode's api.json knows it — the same source the
+  // official CLI reads. Registry declarations stay authoritative; undeclared
+  // models fall back to the live catalog so newly released responses-only
+  // models route correctly without a code change.
+  if (provider === "opencode") {
+    ensureOpencodeCatalog();
+    const baseModel = stripThinkingSuffix(model);
+    // Registry lookup is exact, so suffixed ids ("model(level)") miss — retry
+    // with the bare id before consulting the catalog.
+    if (!modelTargetFormat) modelTargetFormat = getModelTargetFormat(alias, baseModel);
+    if (!modelTargetFormat && isResponsesServed(baseModel)) modelTargetFormat = FORMATS.OPENAI_RESPONSES;
+    if (isDeprecatedModel(baseModel)) {
+      log?.warn?.("OPENCODE", `${baseModel} is deprecated upstream (400/401 expected) — remove it from combos`);
+    }
+  }
   // Multi-endpoint providers: pick transport matching sourceFormat → zero translation.
   // Per-model guard: only use the transport when the model declares support for that
   // sourceFormat — opencode-go models differ in endpoint support (kimi/glm only do

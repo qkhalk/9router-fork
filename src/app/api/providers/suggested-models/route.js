@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { FILTERS } from "./filters.js";
+import { ensureOpencodeCatalog } from "open-sse/providers/opencodeCatalog.js";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,11 @@ export async function GET(request) {
   if (!filter) {
     return NextResponse.json({ error: "Unknown filter type" }, { status: 400 });
   }
+
+  // Warm the opencode api.json catalog so deprecated filtering applies on the
+  // first request too. The promise never rejects; on failure the filter just
+  // fails open (nothing dropped).
+  if (type === "opencode-free") await ensureOpencodeCatalog();
 
   try {
     const res = await fetch(url);
