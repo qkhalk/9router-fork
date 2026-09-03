@@ -1,3 +1,55 @@
+# v0.6.34 (2026-09-04)
+
+OpenCode Free reliability release: muse-spark-1.3 no longer 500s (the
+executor now routes from the same registry the translator reads), and
+zen model routing auto-syncs from opencode's api.json — the identical
+per-model metadata the official CLI uses — so newly released
+responses-only models route correctly with zero code changes, and dead
+models are visible in the dashboard before they burn a request.
+
+## Fixes
+- **muse-spark-1.3-contributor-free failed with 500 on 9router while
+  working in opencode CLI**: zen serves the muse-spark free models only
+  from /zen/v1/responses, but the executor kept its own hardcoded
+  RESPONSES_MODELS set (1.2 only) to pick the endpoint — it had drifted
+  from the registry targetFormat, so 1.3 was POSTed to
+  /chat/completions (verified live: muse → 500 there / 200 on
+  /responses; mimo-v2.5-free is the exact inverse). isResponsesModel()
+  now derives from the registry — the same source the translator uses —
+  so body format and URL can never disagree again, and
+  muse-spark-1.3-contributor-free is declared in the registry with its
+  capabilities (1M ctx / 131k out / reasoning effort minimal..xhigh,
+  per models.opencode.ai api.json).
+- **thinking-suffixed ids ("model(level)") missed their registry
+  targetFormat** on opencode: the lookup is exact-match, so
+  `oc/muse-spark…(xhigh)` silently fell back to chat/completions and
+  failed; the opencode path now retries with the suffix stripped.
+
+## Features
+- **zen model routing auto-syncs from models.opencode.ai/api.json**
+  (new `providers/opencodeCatalog.js`): background fetch (first
+  opencode request after boot + every 6h) of the same metadata the
+  official CLI reads — per-model `provider.npm == "@ai-sdk/openai"` →
+  /zen/v1/responses, `status:deprecated` flags. Registry declarations
+  stay authoritative; undeclared models fall back to the catalog;
+  fail-open: until the first sync completes (or if it errors), routing
+  behaves exactly as before. Verified against the live catalog:
+  gpt-5.4 / grok-4.5 / muse-spark-1.2 route to /responses with no
+  registry entry; mimo stays on /chat/completions.
+- **Deprecated models are visible instead of surprising**: requesting
+  one logs `[OPENCODE] <model> is deprecated upstream (400/401
+  expected) — remove it from combos`; the provider dashboard
+  (/dashboard/providers/opencode) marks them with an amber DEPRECATED
+  badge, warning icon, dimmed row and an explanatory tooltip (new
+  `/api/models/opencode-status` endpoint); "Suggested free models" no
+  longer offers deprecated ids (deepseek-v4-flash-free and friends —
+  most of the free catalog is retired upstream; only 8 of 31 -free
+  models still respond).
+
+## Docs
+- Reconciled fork docs with the v0.6.33 release + upstream v0.5.59
+  merge.
+
 # v0.6.33 (2026-09-01)
 
 Upstream-sync release: merges upstream v0.5.59 into the fork (72 commits,
