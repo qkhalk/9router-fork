@@ -13,11 +13,11 @@
   
   [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
   [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
-  [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/decolua/9router/blob/main/LICENSE)
+  [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/vibecoder11200/9router/blob/main/LICENSE)
   
   [🚀 快速开始](#-quick-start) • [💡 特性](#-key-features) • [📖 设置](#-setup) • [🌐 网站](https://9router.com)
 
-  > 🔀 **这是 [decolua/9router](https://github.com/decolua/9router)（`v0.5.30`）的功能增强 fork**，新增 **DeepSeek Web (DS2API) sidecar**、**轮换代理池**、**Genspark/Gemini web-cookie 提供商**、**外部隧道 URL** 等。通过 [GitHub Releases](https://github.com/vibecoder11200/9router/releases) 分发（不在 npm 上）。详见下方的 [⭐ Fork 功能](#-fork-功能)。
+  > 🔀 **这是 [vibecoder11200/9router](https://github.com/vibecoder11200/9router)（`v0.5.30`）的功能增强 fork**，新增 **DeepSeek Web (DS2API) sidecar**、**轮换代理池**、**Genspark/Gemini web-cookie 提供商**、**外部隧道 URL** 等。通过 [GitHub Releases](https://github.com/vibecoder11200/9router/releases) 分发（不在 npm 上）。详见下方的 [⭐ Fork 功能](#-fork-功能)。
 </div>
 
 ---
@@ -1125,7 +1125,7 @@ Model: cc/claudeus-4-6
 
 ```bash
 # Clone and install
-git clone https://github.com/decolua/9router.git
+git clone https://github.com/vibecoder11200/9router.git
 cd 9router
 npm install
 npm run build
@@ -1459,8 +1459,8 @@ OPENAI_API_KEY="your-cloud-key" bash tester/security/test-cloud-openai-compatibl
 ## 📧 支持
 
 - **网站**：[9router.com](https://9router.com)
-- **GitHub**：[github.com/decolua/9router](https://github.com/decolua/9router)
-- **问题**：[github.com/decolua/9router/issues](https://github.com/decolua/9router/issues)
+- **GitHub**：[github.com/vibecoder11200/9router](https://github.com/vibecoder11200/9router)
+- **问题**：[github.com/vibecoder11200/9router/issues](https://github.com/vibecoder11200/9router/issues)
 
 ---
 
@@ -1468,13 +1468,13 @@ OPENAI_API_KEY="your-cloud-key" bash tester/security/test-cloud-openai-compatibl
 
 感谢所有帮助让 9Router 变得更好的贡献者！
 
-[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=100&columns=20&anon=1)](https://github.com/decolua/9router/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=vibecoder11200/9router&max=100&columns=20&anon=1)](https://github.com/vibecoder11200/9router/graphs/contributors)
 
 ---
 
 ## 📊 Star 图表
 
-[![Star Chart](https://starchart.cc/decolua/9router.svg?variant=adaptive)](https://starchart.cc/decolua/9router)
+[![Star Chart](https://starchart.cc/vibecoder11200/9router.svg?variant=adaptive)](https://starchart.cc/vibecoder11200/9router)
 
 ### 如何贡献
 
@@ -1484,7 +1484,7 @@ OPENAI_API_KEY="your-cloud-key" bash tester/security/test-cloud-openai-compatibl
 4 推送到分支（`git push origin feature/amazing-feature`）
 5. 打开 Pull Request
 
-详细指南请参阅 [Pull Requests](https://github.com/decolua/9router/pulls)。
+详细指南请参阅 [Pull Requests](https://github.com/vibecoder11200/9router/pulls)。
 
 ---
 
