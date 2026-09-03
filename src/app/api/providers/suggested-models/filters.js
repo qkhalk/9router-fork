@@ -1,4 +1,6 @@
 // Free OpenCode models that don't use the "-free" id suffix
+import { isDeprecatedModel } from "open-sse/providers/opencodeCatalog.js";
+
 const KNOWN_FREE_OPENCODE_MODELS = ["big-pickle"];
 
 export const FILTERS = {
@@ -16,6 +18,10 @@ export const FILTERS = {
   "opencode-free": (models) =>
     models
       .filter((m) => m.id?.endsWith("-free") || KNOWN_FREE_OPENCODE_MODELS.includes(m.id))
+      // api.json flags models that are still listed but broken upstream
+      // (e.g. deepseek-v4-flash-free) — stop suggesting them. Fail-open:
+      // until the catalog syncs, nothing is dropped.
+      .filter((m) => !isDeprecatedModel(m.id))
       .map((m) => ({ id: m.id, name: m.id })),
 
   // models.dev returns a large catalog; keep only mimo models

@@ -6,6 +6,7 @@ import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 
 import { getModelTargetFormat, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
+import { ensureOpencodeCatalog, isResponsesServed } from "../providers/opencodeCatalog.js";
 
 const OPENCODE_UA = "opencode/1.18.22 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14";
 
@@ -30,9 +31,15 @@ function baseModelId(model) {
 
 // Models served by /zen/v1/responses declare targetFormat:"openai-responses" in
 // the registry — the same source the translator uses, so URL routing and body
-// format can never drift apart.
+// format can never drift apart. Models the registry doesn't declare fall back
+// to the live api.json catalog (same metadata the official CLI reads), which
+// picks up newly released responses-only models without a code change.
 function isResponsesModel(model) {
-  return getModelTargetFormat(PROVIDER_ID_TO_ALIAS.opencode, baseModelId(model)) === "openai-responses";
+  ensureOpencodeCatalog();
+  const base = baseModelId(model);
+  const declared = getModelTargetFormat(PROVIDER_ID_TO_ALIAS.opencode, base);
+  if (declared) return declared === "openai-responses";
+  return isResponsesServed(base);
 }
 
 function resolveOpencodeSession(body, credentials) {
