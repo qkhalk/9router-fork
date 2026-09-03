@@ -31,6 +31,17 @@ export function isDeprecatedModel(modelId) {
   return deprecatedIds?.has(modelId) === true;
 }
 
+// Snapshot for UI surfaces (dashboard badges, status APIs). synced:false means
+// the first fetch hasn't completed (or last one failed) — callers must treat
+// every model as unknown rather than alive/deprecated.
+export function getOpencodeCatalogSnapshot() {
+  return {
+    synced: responsesIds !== null,
+    deprecatedIds: deprecatedIds ? [...deprecatedIds].sort() : [],
+    responsesIds: responsesIds ? [...responsesIds].sort() : [],
+  };
+}
+
 function parseCatalog(json) {
   const models = json?.opencode?.models;
   if (!models || typeof models !== "object") throw new Error("api.json missing opencode.models");
