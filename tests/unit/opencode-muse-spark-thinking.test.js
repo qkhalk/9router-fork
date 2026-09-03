@@ -8,6 +8,7 @@ import "../translator/registerAll.js";
 import { translateRequest } from "../../open-sse/translator/index.js";
 
 const MODEL = "muse-spark-1.2-contributor-free";
+const MODEL_13 = "muse-spark-1.3-contributor-free";
 const PROVIDER = "opencode";
 
 const input = [{
@@ -38,6 +39,32 @@ describe("OpenCode Free Muse Spark thinking", () => {
       "high",
       "xhigh",
     ]);
+  });
+
+  it("advertises reasoning and the requested model limits for Muse Spark 1.3", () => {
+    expect(PROVIDER_MODELS.oc?.some((model) => model.id === MODEL_13)).toBe(true);
+    expect(getCapabilitiesForModel(PROVIDER, MODEL_13)).toMatchObject({
+      reasoning: true,
+      thinkingFormat: "openai",
+      contextWindow: 1048576,
+      maxOutput: 131072,
+    });
+    expect(getThinkingLevels(PROVIDER, MODEL_13)).toEqual([
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+
+    const body = { input, reasoning: { effort: "max" }, max_tokens: 131072 };
+    const out = new OpenCodeExecutor().transformRequest(MODEL_13, body, true, {
+      connectionId: "opencode-muse-spark-13-test",
+    });
+    expect(out.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
+    expect(out.max_output_tokens).toBe(131072);
+    expect(out.max_tokens).toBeUndefined();
   });
 
   it("clamps max to xhigh and emits the Responses reasoning shape", () => {

@@ -50,28 +50,40 @@ describe("antigravity retry (intentional change: 429=6, 503=3)", () => {
 
 describe("OpenCode Free endpoint routing", () => {
   const MUSE = "muse-spark-1.2-contributor-free";
+  const MUSE13 = "muse-spark-1.3-contributor-free";
 
-  it("declares the Responses format only on the Muse Spark model", () => {
+  it("declares the Responses format only on the Muse Spark models", () => {
     expect(opencode.transport.format).toBeUndefined();
     const muse = opencode.models.find((m) => m.id === MUSE);
     expect(muse?.targetFormat).toBe("openai-responses");
+    const muse13 = opencode.models.find((m) => m.id === MUSE13);
+    expect(muse13?.targetFormat).toBe("openai-responses");
   });
 
   it("routes Muse Spark to /responses and every other model to /chat/completions", () => {
     const executor = new OpenCodeExecutor();
     expect(executor.buildUrl(MUSE)).toBe("https://opencode.ai/zen/v1/responses");
     expect(executor.buildUrl(`${MUSE}(xhigh)`)).toBe("https://opencode.ai/zen/v1/responses");
+    expect(executor.buildUrl(MUSE13)).toBe("https://opencode.ai/zen/v1/responses");
+    expect(executor.buildUrl(`${MUSE13}(high)`)).toBe("https://opencode.ai/zen/v1/responses");
     expect(executor.buildUrl("big-pickle")).toBe("https://opencode.ai/zen/v1/chat/completions");
     expect(executor.buildUrl("hy3-free")).toBe("https://opencode.ai/zen/v1/chat/completions");
+    expect(executor.buildUrl("mimo-v2.5-free")).toBe("https://opencode.ai/zen/v1/chat/completions");
   });
 
-  it("normalizes Chat token/thinking fields only for the Responses model", () => {
+  it("normalizes Chat token/thinking fields only for the Responses models", () => {
     const executor = new OpenCodeExecutor();
     const muse = { max_tokens: 4096, reasoning_effort: "high" };
     executor.transformRequest(MUSE, muse, true, {});
     expect(muse.max_output_tokens).toBe(4096);
     expect(muse.max_tokens).toBeUndefined();
     expect(muse.reasoning).toEqual({ effort: "high", summary: "auto" });
+
+    const muse13 = { max_tokens: 4096, reasoning_effort: "high" };
+    executor.transformRequest(MUSE13, muse13, true, {});
+    expect(muse13.max_output_tokens).toBe(4096);
+    expect(muse13.max_tokens).toBeUndefined();
+    expect(muse13.reasoning).toEqual({ effort: "high", summary: "auto" });
 
     const chat = { max_tokens: 4096, reasoning_effort: "high" };
     executor.transformRequest("big-pickle", chat, true, {});
