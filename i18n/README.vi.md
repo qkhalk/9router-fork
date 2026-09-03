@@ -9,11 +9,11 @@
   
   [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
   [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
-  [![License](https://github.com/decolua/9router/blob/main/LICENSE)](https://github.com/decolua/9router/blob/main/LICENSE)
+  [![License](https://github.com/vibecoder11200/9router/blob/main/LICENSE)](https://github.com/vibecoder11200/9router/blob/main/LICENSE)
   
   [🚀 Bắt đầu nhanh](#-quick-start) • [💡 Tính năng](#-key-features) • [📖 Cài đặt](#-setup-guide) • [🌐 Website](https://9router.com)
 
-> 🔀 **Đây là một fork tăng cường tính năng** của [decolua/9router](https://github.com/decolua/9router) (`v0.5.30`), bổ sung **sidecar DeepSeek Web (DS2API)**, **rotating proxy pools**, **nhà cung cấp web-cookie Genspark/Gemini**, **external tunnel URL**, và nhiều hơn nữa. Phân phối qua [GitHub Releases](https://github.com/vibecoder11200/9router/releases) (không qua npm). Xem [⭐ Tính năng Fork](#-tính-năng-fork) bên dưới.
+> 🔀 **Đây là một fork tăng cường tính năng** của [vibecoder11200/9router](https://github.com/vibecoder11200/9router) (`v0.5.30`), bổ sung **sidecar DeepSeek Web (DS2API)**, **rotating proxy pools**, **nhà cung cấp web-cookie Genspark/Gemini**, **external tunnel URL**, và nhiều hơn nữa. Phân phối qua [GitHub Releases](https://github.com/vibecoder11200/9router/releases) (không qua npm). Xem [⭐ Tính năng Fork](#-tính-năng-fork) bên dưới.
 </div>
 
 ---
@@ -1152,7 +1152,7 @@ Model: cc/claude-opus-4-6
 
 ```bash
 # Clone và cài đặt
-git clone https://github.com/decolua/9router.git
+git clone https://github.com/vibecoder11200/9router.git
 cd 9router
 npm install
 npm run build
@@ -1487,8 +1487,8 @@ Tài liệu tham khảo kiến trúc đầy đủ: [`docs/ARCHITECTURE.md`](../d
 ## 📧 Hỗ trợ
 
 - **Website**: [9router.com](https://9router.com)
-- **GitHub**: [github.com/decolua/9](https://github.com/decolua/9router)
-- **Issues**: [github.com/decolua/9router/issues](https://github.com/decolua/9router/issues)
+- **GitHub**: [github.com/vibecoder11200/9](https://github.com/vibecoder11200/9router)
+- **Issues**: [github.com/vibecoder11200/9router/issues](https://github.com/vibecoder11200/9router/issues)
 
 ---
 
@@ -1496,13 +1496,13 @@ Tài liệu tham khảo kiến trúc đầy đủ: [`docs/ARCHITECTURE.md`](../d
 
 Cảm ơn tất cả những người đã đóng góp giúp 9Router tốt hơn!
 
-[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=100&columns=20&anon=1)](https://github.com/decolua/9router/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=vibecoder11200/9router&max=100&columns=20&anon=1)](https://github.com/vibecoder11200/9router/graphs/contributors)
 
 ---
 
 ## 📊 Star Chart
 
-[![ Chart](https://starchart.cc/decolua/9router.svg?variant=adaptive)](https://starchart.cc/decolua/9router)
+[![ Chart](https://starchart.cc/vibecoder11200/9router.svg?variant=adaptive)](https://starchart.cc/vibecoder11200/9router)
 
 ### Cách Đóng góp
 
@@ -1512,13 +1512,13 @@ Cảm ơn tất cả những người đã đóng góp giúp 9Router tốt hơn!
 4. Push lên nhánh (`git push origin feature/amazing-feature`)
 5. Mở một Pull Request
 
-Xem [Pull Requests](https://github.com/decolua/9router/pulls) để biết hướng dẫn chi tiết.
+Xem [Pull Requests](https://github.com/vibecoder11200/9router/pulls) để biết hướng dẫn chi tiết.
 
 ---
 
 ## 🔀 Forks
 
-**Kho lưu trữ này** — [`vibecoder11200/9router`](https://github.com/vibecoder11200/9router): một fork tăng cường tính năng của upstream [decolua/9router](https://github.com/decolua/9router). Thêm sidecar DeepSeek Web (DS2API), rotating proxy pools/groups, nhà cung cấp web-cookie Genspark & Gemini, external tunnel URL, và mô hình phân phối qua GitHub Releases. Theo dõi các thay đổi trong [`CHANGELOG.md`](./CHANGELOG.md).
+**Kho lưu trữ này** — [`vibecoder11200/9router`](https://github.com/vibecoder11200/9router): một fork tăng cường tính năng của upstream [vibecoder11200/9router](https://github.com/vibecoder11200/9router). Thêm sidecar DeepSeek Web (DS2API), rotating proxy pools/groups, nhà cung cấp web-cookie Genspark & Gemini, external tunnel URL, và mô hình phân phối qua GitHub Releases. Theo dõi các thay đổi trong [`CHANGELOG.md`](./CHANGELOG.md).
 
 **[OmniRoute](https://github.com/diegosouzapw/OmniRoute)** — Một fork TypeScript đầy đủ tính năng của 9Router. Thêm 36+ nhà cung cấp, tự động dự phòng 4 tầng, API đa phương tiện (hình ảnh, embedding, âm thanh, TTS), circuit breaker, bộ nhớ đệm ngữ nghĩa, đánh giá LLM và bảng điều khiển được tinh chỉnh. 368+ bài kiểm tra đơn vị. Có sẵn qua npm và.
 

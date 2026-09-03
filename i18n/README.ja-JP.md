@@ -9,13 +9,13 @@
 
   [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
   [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
-  [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/decolua/9router/blob/main/LICENSE)
+  [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/vibecoder11200/9router/blob/main/LICENSE)
 
   [🚀 クイックスタート](#-クイックスタート) • [💡 機能](#-主な機能) • [📖 セットアップ](#-セットアップガイド) • [🌐 ウェブサイト](https://9router.com)
 
   [🇻🇳 Tiếng Việt](./README.vi.md) • [🇨🇳 中文](./README.zh-CN.md) • [🇯🇵 日本語](./README.ja-JP.md)
 
-  > 🔀 **これは [decolua/9router](https://github.com/decolua/9router)（`v0.5.30`）の機能強化フォークです**。**DeepSeek Web (DS2API) サイドカー**、**ローテーションプロキシプール**、**Genspark/Gemini web-cookie プロバイダー**、**外部トンネル URL** などを追加。[GitHub Releases](https://github.com/vibecoder11200/9router/releases) で配布（npm なし）。詳しくは下記の [⭐ フォーク機能](#-フォーク機能) を参照。
+  > 🔀 **これは [vibecoder11200/9router](https://github.com/vibecoder11200/9router)（`v0.5.30`）の機能強化フォークです**。**DeepSeek Web (DS2API) サイドカー**、**ローテーションプロキシプール**、**Genspark/Gemini web-cookie プロバイダー**、**外部トンネル URL** などを追加。[GitHub Releases](https://github.com/vibecoder11200/9router/releases) で配布（npm なし）。詳しくは下記の [⭐ フォーク機能](#-フォーク機能) を参照。
 </div>
 
 ---
@@ -1140,7 +1140,7 @@ Model: cc/claude-opus-4-6
 
 ```bash
 # クローンとインストール
-git clone https://github.com/decolua/9router.git
+git clone https://github.com/vibecoder11200/9router.git
 cd 9router
 npm install
 npm run build
@@ -1391,8 +1391,8 @@ Authorization: Bearer your-api-key
 ## 📧 サポート
 
 - **ウェブサイト**: [9router.com](https://9router.com)
-- **GitHub**: [github.com/decolua/9router](https://github.com/decolua/9router)
-- **Issues**: [github.com/decolua/9router/issues](https://github.com/decolua/9router/issues)
+- **GitHub**: [github.com/vibecoder11200/9router](https://github.com/vibecoder11200/9router)
+- **Issues**: [github.com/vibecoder11200/9router/issues](https://github.com/vibecoder11200/9router/issues)
 
 ---
 
@@ -1400,19 +1400,19 @@ Authorization: Bearer your-api-key
 
 9Routerの改善に貢献してくださったすべてのコントリビューターに感謝します！
 
-[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=150&columns=15&anon=1&v=20260309)](https://github.com/decolua/9router/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=vibecoder11200/9router&max=150&columns=15&anon=1&v=20260309)](https://github.com/vibecoder11200/9router/graphs/contributors)
 
 ---
 
 ## 📊 スターチャート
 
-[![Star Chart](https://starchart.cc/decolua/9router.svg?variant=adaptive)](https://starchart.cc/decolua/9router)
+[![Star Chart](https://starchart.cc/vibecoder11200/9router.svg?variant=adaptive)](https://starchart.cc/vibecoder11200/9router)
 
 
 
 ## 🔀 フォーク
 
-**このリポジトリ** — [`vibecoder11200/9router`](https://github.com/vibecoder11200/9router)：upstream [decolua/9router](https://github.com/decolua/9router) の機能強化フォーク。DeepSeek Web (DS2API) サイドカー、ローテーションプロキシプール/グループ、Genspark & Gemini の web-cookie プロバイダー、外部トンネル URL、GitHub Releases 配布モデルを追加。変更履歴は [`CHANGELOG.md`](../CHANGELOG.md) を参照。
+**このリポジトリ** — [`vibecoder11200/9router`](https://github.com/vibecoder11200/9router)：upstream [vibecoder11200/9router](https://github.com/vibecoder11200/9router) の機能強化フォーク。DeepSeek Web (DS2API) サイドカー、ローテーションプロキシプール/グループ、Genspark & Gemini の web-cookie プロバイダー、外部トンネル URL、GitHub Releases 配布モデルを追加。変更履歴は [`CHANGELOG.md`](../CHANGELOG.md) を参照。
 
 **[OmniRoute](https://github.com/diegosouzapw/OmniRoute)** — 9RouterのフルフィーチャーTypeScriptフォーク。36以上のプロバイダー、4段階自動フォールバック、マルチモーダルAPI（画像、埋め込み、音声、TTS）、サーキットブレーカー、セマンティックキャッシュ、LLM評価、洗練されたダッシュボードを追加。368以上のユニットテスト。npmとDockerで利用可能。
 
