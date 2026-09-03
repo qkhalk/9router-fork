@@ -3,6 +3,7 @@ import {
   ensureOpencodeCatalog,
   isResponsesServed,
   isDeprecatedModel,
+  getOpencodeCatalogSnapshot,
   __resetOpencodeCatalogForTests,
   __refreshOpencodeCatalogForTests,
 } from "../../open-sse/providers/opencodeCatalog.js";
@@ -72,6 +73,19 @@ describe("opencode api.json catalog", () => {
     globalThis.fetch = stubFetch({ unexpected: true });
     await __refreshOpencodeCatalogForTests();
     expect(isResponsesServed("muse-spark-2.0-free")).toBe(true); // last good cache kept
+  });
+
+  it("snapshot reports synced state and sorted id lists", async () => {
+    expect(getOpencodeCatalogSnapshot()).toEqual({ synced: false, deprecatedIds: [], responsesIds: [] });
+
+    globalThis.fetch = stubFetch(API_JSON);
+    await ensureOpencodeCatalog();
+
+    expect(getOpencodeCatalogSnapshot()).toEqual({
+      synced: true,
+      deprecatedIds: ["deepseek-v5-flash-free"],
+      responsesIds: ["muse-spark-2.0-free"],
+    });
   });
 
   it("routes undeclared responses-only models to /zen/v1/responses", async () => {

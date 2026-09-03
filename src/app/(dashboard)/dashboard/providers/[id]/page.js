@@ -73,6 +73,9 @@ export default function ProviderDetailPage() {
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {} });
   const [suggestedModels, setSuggestedModels] = useState([]);
   const [liveModels, setLiveModels] = useState([]);
+  // OpenCode Free: upstream deprecation flags (api.json catalog) for row badges.
+  // null = not synced yet — every model treated as unknown (fail-open).
+  const [ocDeprecatedIds, setOcDeprecatedIds] = useState(null);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
   const [confirmState, setConfirmState] = useState(null);
@@ -494,6 +497,20 @@ export default function ProviderDetailPage() {
     const fetcher = (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId] || FREE_TIER_PROVIDERS[providerId])?.modelsFetcher;
     if (!fetcher) return;
     fetchSuggestedModels(fetcher).then(setSuggestedModels);
+  }, [providerId]);
+
+  // OpenCode Free: upstream retirement flags so dead models show a DEPRECATED
+  // badge instead of looking fine until the first 400/401.
+  useEffect(() => {
+    if (providerId !== "opencode") return;
+    let cancelled = false;
+    fetch("/api/models/opencode-status", { cache: "no-store" })
+      .then(async (res) => ({ ok: res.ok, data: await res.json() }))
+      .then(({ ok, data }) => {
+        if (!cancelled && ok && data?.synced) setOcDeprecatedIds(new Set(data.deprecatedIds));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [providerId]);
 
   const handleSetAlias = async (modelId, alias, providerAliasOverride = providerAlias) => {
@@ -1137,6 +1154,7 @@ export default function ProviderDetailPage() {
             isTesting={testingModelIds.has(model.id)}
             isCustom
             isFree={false}
+            deprecated={!!ocDeprecatedIds?.has(model.id)}
             caps={getCaps(`${providerId}/${model.id}`)}
             thinkingSuffix={resolveThinkingSuffix(model.id)}
           />
@@ -1162,6 +1180,7 @@ export default function ProviderDetailPage() {
               onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
               isTesting={testingModelIds.has(model.id)}
               isFree={model.isFree}
+              deprecated={!!ocDeprecatedIds?.has(model.id)}
               onDisable={() => handleDisableModel(model.id)}
               caps={getCaps(`${providerId}/${model.id}`)}
               thinkingSuffix={resolveThinkingSuffix(model.id)}
