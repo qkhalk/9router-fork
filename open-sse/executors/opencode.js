@@ -5,9 +5,9 @@ import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 
+import { getModelTargetFormat, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
+
 const OPENCODE_UA = "opencode/1.18.22 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14";
-// Models served by /zen/v1/responses; every other model stays on /chat/completions.
-const RESPONSES_MODELS = new Set(["muse-spark-1.2-contributor-free"]);
 
 function generateRequestId() {
   return `msg_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -28,8 +28,11 @@ function baseModelId(model) {
   return String(model || "").replace(/\([^()]+\)\s*$/, "").trim();
 }
 
+// Models served by /zen/v1/responses declare targetFormat:"openai-responses" in
+// the registry — the same source the translator uses, so URL routing and body
+// format can never drift apart.
 function isResponsesModel(model) {
-  return RESPONSES_MODELS.has(baseModelId(model));
+  return getModelTargetFormat(PROVIDER_ID_TO_ALIAS.opencode, baseModelId(model)) === "openai-responses";
 }
 
 function resolveOpencodeSession(body, credentials) {
