@@ -22,6 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import net from "node:net";
 import { execFile, spawn } from "node:child_process";
+import { DATA_DIR } from "@/lib/dataDir.js";
 import { promisify } from "node:util";
 
 import { validateLink } from "./configBuilder.js";
@@ -32,8 +33,7 @@ import { isXrayInstalled, getXrayBinaryPath } from "./installer.js";
 function apiLog(message, extra = {}) {
   const line = JSON.stringify({ ts: new Date().toISOString(), message, ...extra });
   try {
-    const home = process.env.HOME || process.env.USERPROFILE || "/tmp";
-    const logDir = path.join(home, ".9router", "logs");
+    const logDir = path.join(DATA_DIR, "logs");
     fs.mkdirSync(logDir, { recursive: true });
     fs.appendFileSync(path.join(logDir, "api-filter.log"), line + "\n", { flag: "a" });
   } catch {
@@ -143,8 +143,7 @@ export async function startFilterXray({ socksPort, apiPort, accountCount }) {
     throw new Error(`accountCount out of range (1..64): ${accountCount}`);
   }
   const binaryPath = getXrayBinaryPath();
-  const home = process.env.HOME || process.env.USERPROFILE || "/tmp";
-  const configPath = path.join(home, ".9router", "xray", `filter-api-${socksPort}-${apiPort}.json`);
+  const configPath = path.join(DATA_DIR, "xray", `filter-api-${socksPort}-${apiPort}.json`);
 
   const baseConfig = buildFilterBaseConfig({ socksPort, apiPort, accountCount });
   fs.writeFileSync(configPath, JSON.stringify(baseConfig, null, 2));
@@ -156,8 +155,17 @@ export async function startFilterXray({ socksPort, apiPort, accountCount }) {
   });
   child.unref();
 
-  // Wait for the API port to accept connections (process is up + API bound).
-  const ready = await waitForPort(apiPort, 8000);
+  // Wait for the API port to accept connections AND be owned by the live
+  // child (X11): a stale orphan from a previous job squatting on the port must
+  // fail fast with a clear error instead of silently "passing" readiness.
+  let ready;
+  try {
+    ready = await waitForPortOwnedByChild(apiPort, 8000, child);
+  } catch (e) {
+    try { child.kill("SIGKILL"); } catch { /* ignore */ }
+    try { fs.unlinkSync(configPath); } catch { /* ignore */ }
+    throw e;
+  }
   if (!ready) {
     try { child.kill("SIGKILL"); } catch { /* ignore */ }
     try { fs.unlinkSync(configPath); } catch { /* ignore */ }
@@ -176,21 +184,62 @@ export async function startFilterXray({ socksPort, apiPort, accountCount }) {
   };
 }
 
-function waitForPort(port, timeoutMs) {
+function tcpAccepts(port) {
   return new Promise((resolve) => {
-    const deadline = Date.now() + timeoutMs;
-    const tick = () => {
-      const sock = net.createConnection({ host: "127.0.0.1", port }, () => {
-        sock.destroy();
-        resolve(true);
-      });
-      sock.on("error", () => {
-        if (Date.now() > deadline) return resolve(false);
-        setTimeout(tick, 200);
-      });
-    };
-    tick();
+    const sock = net.createConnection({ host: "127.0.0.1", port }, () => {
+      sock.destroy();
+      resolve(true);
+    });
+    sock.on("error", () => resolve(false));
   });
+}
+
+/** Best-effort PID currently LISTENING on the port; null when undeterminable. */
+function portOwnerPid(port) {
+  return new Promise((resolve) => {
+    if (process.platform === "win32") {
+      execFile("netstat", ["-ano", "-p", "tcp"], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
+        if (err) return resolve(null);
+        for (const line of String(stdout).split(/\r?\n/)) {
+          const m = line.trim().match(new RegExp("^TCP\\s+\\S+:" + port + "\\s+\\S+\\s+LISTENING\\s+(\\d+)$", "i"));
+          if (m) return resolve(Number(m[1]));
+        }
+        resolve(null);
+      });
+    } else {
+      execFile("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], { timeout: 5000 }, (err, stdout) => {
+        if (err || !String(stdout).trim()) return resolve(null);
+        const pid = Number(String(stdout).trim().split("\n")[0]);
+        resolve(Number.isFinite(pid) ? pid : null);
+      });
+    }
+  });
+}
+
+/**
+ * Port readiness gated on ownership (X11): succeeds only when the port accepts
+ * connections AND the live child owns it (or ownership is undeterminable and
+ * the child is alive — best-effort fallback for hosts without netstat/lsof).
+ * Rejects immediately when a DIFFERENT process holds the port.
+ */
+async function waitForPortOwnedByChild(port, timeoutMs, child) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`filter xray exited before its API port opened`);
+    }
+    if (await tcpAccepts(port)) {
+      const owner = await portOwnerPid(port);
+      if (owner != null && owner !== child.pid) {
+        throw new Error(
+          `filter xray API port ${port} is already held by pid ${owner} (stale orphan?) — refusing to reuse it`
+        );
+      }
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
 }
 
 // xray api helpers. Each call is a short-lived execFile; the gRPC round-trip is

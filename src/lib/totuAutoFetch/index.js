@@ -214,8 +214,15 @@ export async function runTotuAutoFetchTick(deps = createDefaultDeps(), state = g
 }
 
 export function startTotuAutoFetch(intervalMin = 60) {
+  const n = Number(intervalMin);
+  // 0 / negative = manual-only mode (X8/N6): the scheduler must NEVER run —
+  // not even a clamped minimum interval.
+  if (!Number.isFinite(n) || n <= 0) {
+    stopTotuAutoFetch();
+    return;
+  }
   if (g.interval) clearInterval(g.interval);
-  const ms = Math.max(5, Math.floor(Number(intervalMin) || 60)) * 60_000;
+  const ms = Math.max(5, Math.floor(n)) * 60_000;
   g.interval = setInterval(() => {
     runTotuAutoFetchTick().catch(() => {});
   }, ms);
@@ -231,9 +238,15 @@ export function stopTotuAutoFetch() {
 }
 
 export function configureTotuAutoFetch(settings) {
-  if (settings?.totuAutoFetch === true) {
-    startTotuAutoFetch(settings.totuAutoFetchIntervalMin || 60);
-  } else {
+  if (settings?.totuAutoFetch !== true) {
     stopTotuAutoFetch();
+    return;
   }
+  // Explicit 0 = manual-only (stop the timer); null/undefined falls back to 60.
+  const raw = Number(settings.totuAutoFetchIntervalMin);
+  if (Number.isFinite(raw) && raw <= 0) {
+    stopTotuAutoFetch();
+    return;
+  }
+  startTotuAutoFetch(Number.isFinite(raw) ? raw : 60);
 }

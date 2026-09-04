@@ -27,7 +27,9 @@ import {
 const FIXED_EMAIL = "tu_test_abc@cctm-mail.cf";
 const FIXED_SK = "sk-test123";
 const FIXED_SESSION = "session-token-123";
-const OTP = "8e1b0c";
+// X10: real TOTU OTP codes are 6 digits; the extractor now rejects
+// alphanumeric 6-char words ("Verify" etc.) that the old regex matched.
+const OTP = "482913";
 
 // Count handler invocations so a test can make the Nth call fail.
 function counting(handler) {
