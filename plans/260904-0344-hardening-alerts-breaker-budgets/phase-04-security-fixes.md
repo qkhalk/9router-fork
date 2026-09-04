@@ -84,21 +84,21 @@ Close the auth-bypass on DB export/import (S1 + N12 + N11), verify/port the upst
 
 ## Todo list
 
-- [ ] S1 CLI-token validation + import strip + export auth path
-- [ ] N12 no-store header
-- [ ] N11 verifyDashboardPassword locality gate
-- [ ] S2 SSRF verify/port: fix intact post-merge + tests ported (upstream b870b5d4) + provider-nodes/validate fetchPublic confirmed
-- [ ] S3 requestLogger masking restored
-- [ ] S4 rootCA/dir permissions
-- [ ] S5+N10 per-install sudo key, fail-closed derive, GET strip
-- [ ] S6 default flip w/ explicit-key preservation + http banner
-- [ ] S7 apiKeys hash-at-rest + backfill migration (isolated commit)
-- [ ] S8 require-login booleans only
-- [ ] S9 API_KEY_SECRET per-install + .env.example cleanup
-- [ ] S10 cloudflared token off argv
-- [ ] Infra-a Windows process-lifecycle CI job (soft-fail rollout)
-- [ ] Infra-b stream-parser fuzz harness
-- [ ] Suite 0 pass→fail; detect_changes() clean; committed
+- [x] S1 CLI-token validation + import strip + export auth path
+- [x] N12 no-store header
+- [x] N11 verifyDashboardPassword locality gate
+- [x] S2 SSRF verify/port: fix intact post-merge + tests ported (upstream b870b5d4) + provider-nodes/validate fetchPublic confirmed
+- [x] S3 requestLogger masking restored
+- [x] S4 rootCA/dir permissions
+- [x] S5+N10 per-install sudo key, fail-closed derive, GET strip
+- [x] S6 default flip w/ explicit-key preservation + http banner
+- [x] S7 apiKeys hash-at-rest + backfill migration (isolated commit)
+- [x] S8 require-login booleans only
+- [x] S9 API_KEY_SECRET per-install + .env.example cleanup
+- [x] S10 cloudflared token off argv
+- [x] Infra-a Windows process-lifecycle CI job (soft-fail rollout)
+- [x] Infra-b stream-parser fuzz harness
+- [x] Suite 0 pass→fail; detect_changes() clean; committed
 
 ## Success Criteria
 
@@ -128,3 +128,20 @@ Close the auth-bypass on DB export/import (S1 + N12 + N11), verify/port the upst
 
 - Release group A (phases 01-04) completes here → tag (see plan.md note: actual v0.6.35) + CHANGELOG entries: one `## Security` cluster + one `## Fixes` cluster + `## CI` note, following existing bold-title bullet style.
 - Phase 05 consumes the per-install-secret helper if alert channels ever need outbound signing (not required v1).
+
+## Implementation notes (2026-09-05)
+
+Landed as two commits (S7 isolated for clean revert). Deviations and discoveries:
+
+1. **Pre-merge state differed from the audit** (re-verified via subagent sweep): the CLI token was ALREADY a real comparison in middleware (machineId + random persisted cli-secret) — the audit's presence-only `isCliRequest` survived only in the route handler. Landed: route-level constant-time validation + middleware `===` upgraded to `timingSafeEqual`. `hasValidCliToken` exported from the guard; the route shares it.
+2. **requestLocality.js extracted** from dashboardGuard (loopback helpers + isLocalRequest) so dashboardSession can gate the default password without a circular import. Guard re-exports for compat; its settings-load-failure fallback for tunnelDashboardAccess now fails CLOSED (was `true`, contradicting its own comment).
+3. **installSecret.js** (ESM leaf, DATA_DIR/auth/*.secret, 0600) + a CJS twin inlined in mitm/manager.js (module-format split; same dir/format). JWT secret machinery untouched. Consumers: mitm AES key, apiKeys HMAC, API_KEY_SECRET fallback.
+4. **importDb protected keys**: snapshot current settings BEFORE the wipe inside the same transaction (delete-then-read would always see nothing) and overlay password/mitmSudoEncrypted onto the imported payload.
+5. **S7**: hash column is additive (auto-sync, no migration file); SCHEMA_VERSION 3→4 triggers the pre-change backup. `rowToKey` masks unmigrated legacy rows at READ time (found by test: listing leaked raw legacy keys). updateApiKey no longer writes `key`. Exports carry keyHash so backups restore as already-migrated rows.
+6. **S6**: absent-key → false implemented in mergeWithDefaults (explicit raw values still win via the spread); skipped the plan's "one-time persist of resolved value" — it would freeze the fail-closed default as explicit, changing nothing observable (KISS).
+7. **S9**: API-key CRC secret change is migration-safe — the CRC is minted at creation and never verified anywhere in the request path (grep: zero consumers of parseApiKey/verifyApiKeyCrc outside the module).
+8. **S2**: guard + redirect matrix already covered by ssrf-guard-hardening.test.js (ported upstream); the two unwired call sites now use fetchPublic. Hop cap left at upstream's 5 (divergence not justified).
+9. **Env note**: repo-root node_modules is EMPTY locally (only tests/node_modules has 35 pkgs) — jose/bcryptjs need virtual mocks; dashboardSession tests must preset JWT_SECRET to skip the module-load file write; vi.mock driver paths must resolve from the TEST file (`../../src/lib/db/driver.js`).
+10. **detect_changes**: 42 symbols / 19 files / CRITICAL — pre-run impact() on each hot symbol (validateApiKey 28↑, mergeWithDefaults 132↑, deriveKey 20↑, importDb/verifyDashboardPassword LOW) with the plan's pre-decided responses. Full-suite failing-set diff vs phase-03 baseline: ZERO new failures (26 new tests green).
+
+New tests (26+7): security-phase04-hardening (10), settings-tunnel-default (4), request-logger-masking (3, writes real session logs — tests/logs/ now gitignored), apikeys-hash-migration (7), stream-fuzz (2×1000 iterations).
