@@ -1,6 +1,15 @@
 import { ERROR_RULES, BACKOFF_CONFIG, TRANSIENT_COOLDOWN_MS } from "../config/errorConfig.js";
 
 /**
+ * Deterministic client errors that CANNOT be fixed by switching accounts
+ * (C4): the request itself is bad — retrying it on every account just locks
+ * them all for nothing and makes combos skip healthy members. The error goes
+ * straight back to the client. Explicit ERROR_RULES entries above still win
+ * (a 400-text that maps to a rate-limit rule keeps its fallback).
+ */
+export const NO_FALLBACK_STATUSES = new Set([400, 401, 402, 404, 405, 413, 422]);
+
+/**
  * Calculate exponential backoff cooldown for rate limits (429)
  * Level 1: 1s, Level 2: 2s, Level 3: 4s... → max 4 min
  * @param {number} backoffLevel - Current backoff level
@@ -26,7 +35,9 @@ export function checkFallbackError(status, errorText, backoffLevel = 0) {
     : "";
 
   for (const rule of ERROR_RULES) {
-    // Text-based rule: match substring in error message
+    // Text-based rule: match substring in error message. Text evidence wins
+    // over everything — a 402 carrying "quota exceeded" IS account-specific
+    // (this account is out of credits; the next one may not be).
     if (rule.text && lowerError && lowerError.includes(rule.text)) {
       if (rule.backoff) {
         const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
@@ -34,7 +45,17 @@ export function checkFallbackError(status, errorText, backoffLevel = 0) {
       }
       return { shouldFallback: true, cooldownMs: rule.cooldownMs };
     }
+  }
 
+  // Deterministic client errors (C4): a BARE status match (no text evidence)
+  // means the request itself is bad — no account lock, no fallback, the same
+  // request fails identically on every other account. This deliberately
+  // overrides the generic status rules below for 400/401/402/404/405/413/422.
+  if (NO_FALLBACK_STATUSES.has(Number(status))) {
+    return { shouldFallback: false, cooldownMs: 0 };
+  }
+
+  for (const rule of ERROR_RULES) {
     // Status-based rule: match HTTP status code
     if (rule.status && rule.status === status) {
       if (rule.backoff) {

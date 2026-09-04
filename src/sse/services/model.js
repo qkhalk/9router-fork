@@ -82,6 +82,38 @@ export async function getModelInfo(modelStr) {
  * Check if model is a combo and get models list
  * @returns {Promise<string[]|null>} Array of models or null if not a combo
  */
+/**
+ * DFS over the combo-alias graph (C6): returns the first name that closes a
+ * cycle reachable from `models` through existing combos (self-reference
+ * included), or null when the expansion terminates. Names of combos being
+ * created/updated must not appear in their own expansion.
+ */
+export async function findComboCycle(startName, models = []) {
+  const visiting = new Set();
+  const visit = async (name) => {
+    // Reaching the name under creation closes the cycle — it may not exist in
+    // the DB yet, so this check must come before the lookup. A name already
+    // on the visiting path means an existing-combo cycle.
+    if (name === startName || visiting.has(name)) return name;
+    visiting.add(name);
+    try {
+      const combo = await getComboByName(name);
+      for (const m of combo?.models || []) {
+        const hit = await visit(m);
+        if (hit) return hit;
+      }
+    } finally {
+      visiting.delete(name);
+    }
+    return null;
+  };
+  for (const m of models) {
+    const hit = await visit(m);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 export async function getComboModels(modelStr) {
   // Only check if it's not in provider/model format
   if (modelStr.includes("/")) return null;

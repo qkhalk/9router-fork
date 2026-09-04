@@ -236,6 +236,14 @@ export function createSSEStream(options = {}) {
           controller.enqueue(sharedEncoder.encode(output));
           // Responses clients (codex CLI) close on response.completed instead of [DONE]
           if (responsesTerminal) finalizeStream();
+          // C7: forwarding the terminal sentinel finalizes usage NOW — a
+          // client that closes right after [DONE] cancels the reader and
+          // flush() never runs, losing usage/logging. C9: mark it sent so
+          // flush() can't emit a second [DONE] frame.
+          if (trimmed === "data: [DONE]") {
+            streamDoneSent = true;
+            finalizeStream();
+          }
           continue;
         }
 

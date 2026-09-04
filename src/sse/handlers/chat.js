@@ -195,13 +195,22 @@ export async function handleChat(request, clientRawRequest = null) {
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, comboVisited = new Set()) {
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
+    // C6 backstop: a combo whose members include itself (directly or via
+    // another combo) would recurse through this branch forever. The combo API
+    // rejects cycles on write, but pre-existing data or a racing edit can
+    // still produce one at read time.
+    if (comboVisited.has(modelStr)) {
+      log.warn("CHAT", `Combo cycle detected at "${modelStr}" — refusing to recurse`);
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, `Combo cycle detected at "${modelStr}"`);
+    }
     const comboModels = await getComboModels(modelStr);
     if (comboModels) {
+      const nextVisited = new Set([...comboVisited, modelStr]);
       const chatSettings = await getSettings();
       // Check for combo-specific strategy first, fallback to global
       const comboStrategies = chatSettings.comboStrategies || {};
@@ -222,7 +231,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, nextVisited);
           },
           log,
           comboName: modelStr,
@@ -237,7 +246,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         body,
         models: augmentedModels,
         handleSingleModel: withCapacityAdapterStripping(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, nextVisited),
           adapterAdded
         ),
         log,

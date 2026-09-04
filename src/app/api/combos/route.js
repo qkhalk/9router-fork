@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCombos, createCombo, getComboByName } from "@/lib/localDb";
+import { findComboCycle } from "@/sse/services/model.js";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,13 @@ export async function POST(request) {
     const existing = await getComboByName(name);
     if (existing) {
       return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
+    }
+
+    // C6: a combo whose expansion reaches itself again would recurse
+    // infinitely at request time — reject at write time.
+    const cycleAt = await findComboCycle(name, models || []);
+    if (cycleAt) {
+      return NextResponse.json({ error: `Combo definition is cyclic through "${cycleAt}"` }, { status: 400 });
     }
 
     const combo = await createCombo({ name, models: models || [], kind: kind || null });

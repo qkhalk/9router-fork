@@ -153,7 +153,7 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
  * @param {object|null} options.credentials  Provider credentials
  * @param {object}   [options.log]           Logger
  */
-export async function handleSearchCore({ body, provider, providerConfig, credentials, log }) {
+export async function handleSearchCore({ body, provider, providerConfig, credentials, log, onRequestSuccess }) {
   const globalStartTime = Date.now();
 
   // 1. Sanitize query
@@ -185,7 +185,13 @@ export async function handleSearchCore({ body, provider, providerConfig, credent
     return errorResult(400, `Provider ${provider.id} does not support web search`);
   }
 
-  if (result.success) return successResult(result.data);
+  if (result.success) {
+    // C5: a successful search clears the scoped modelLock_websearch:* — the
+    // callback was accepted-but-never-invoked before, so one bad search kept
+    // the account locked out of search until cooldown expiry.
+    try { await onRequestSuccess?.(); } catch { /* unlock is best-effort */ }
+    return successResult(result.data);
+  }
 
   // 3. Failover within global timeout for retriable errors
   if (
@@ -203,7 +209,10 @@ export async function handleSearchCore({ body, provider, providerConfig, credent
       credentials,
       log
     });
-    if (fallback.success) return successResult(fallback.data);
+    if (fallback.success) {
+      try { await onRequestSuccess?.(); } catch { /* unlock is best-effort */ }
+      return successResult(fallback.data);
+    }
   }
 
   return errorResult(result.status || 502, result.error || "Search failed");

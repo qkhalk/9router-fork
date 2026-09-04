@@ -174,14 +174,19 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Auto-strip media blocks the model can't read (vision/audio/pdf) before translation.
   if (!passthrough) {
     const caps = getCapabilitiesForModel(provider, model);
-    if (stripUnsupportedModalities(body, sourceFormat, caps)) {
+    // C2: stripping and image prefetch mutate the body IN PLACE. Combo-fusion
+    // panel members and fallback attempts share ONE caller body object — every
+    // attempt must see pristine blocks, so work on a private deep copy.
+    const workingBody = structuredClone(body);
+    if (stripUnsupportedModalities(workingBody, sourceFormat, caps)) {
       log?.debug?.("MODALITY", `stripped unsupported media for ${provider}/${model}`);
     }
     // Convert remote image URLs to base64 for targets that can't fetch URLs.
     try {
-      const n = await prefetchRemoteImages(body, sourceFormat, targetFormat, { signal: undefined });
+      const n = await prefetchRemoteImages(workingBody, sourceFormat, targetFormat, { signal: undefined });
       if (n > 0) log?.debug?.("MODALITY", `prefetched ${n} remote image(s) for ${targetFormat}`);
     } catch (e) { log?.warn?.("MODALITY", `image prefetch failed: ${e.message}`); }
+    body = workingBody;
   }
 
   let translatedBody;
@@ -301,7 +306,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // PXPIPE: image bulky context (Claude-format bodies only), last saver before dispatch
   let pxpipeSummary = null;
-  if (pxpipeEnabled) {
+  if (tokenSaverEnabled && pxpipeEnabled) {
     const pxpipeResult = await compressWithPxpipe(translatedBody, {
       enabled: true, format: finalFormat, model: upstreamModel,
       minChars: pxpipeMinChars, timeoutMs: pxpipeTimeoutMs, transform: pxpipeTransform,
