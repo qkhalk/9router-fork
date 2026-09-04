@@ -38,6 +38,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getSelectedXrayConfig } from "../db/repos/xrayRepo.js";
+import { DATA_DIR } from "@/lib/dataDir.js";
 import { getNextHealthyConfigsForModel, getModelFilterResult, upsertModelFilterResult } from "../db/repos/modelFilterResultsRepo.js";
 import { isProxyIpBanError } from "../network/proxyRotation.js";
 
@@ -91,7 +92,7 @@ async function loadManager() {
 // in headless deploys). Append-only, best-effort.
 const ROTATION_LOG_FILE =
   process.env.NINEROUTER_ROTATION_LOG ||
-  path.join(process.env.HOME || "/tmp", ".9router", "logs", "managed-rotation.log");
+  path.join(DATA_DIR, "logs", "managed-rotation.log");
 
 function logRotation(level, message, extra = {}) {
   const line = JSON.stringify({

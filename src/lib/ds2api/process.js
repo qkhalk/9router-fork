@@ -3,6 +3,7 @@ import path from "path";
 import crypto from "node:crypto";
 import { spawn } from "child_process";
 import { findDS2APIBinary, getDS2APIDataDir } from "./detect.js";
+import { isOurProcess } from "@/lib/processGuard.js";
 
 const DS2API_DIR = getDS2APIDataDir();
 const PID_FILE = path.join(DS2API_DIR, "ds2api.pid");
@@ -42,6 +43,22 @@ export function getManagedPid() {
   return pid && isPidAlive(pid) ? pid : null;
 }
 
+/**
+ * Like getManagedPid, but verifies the live process's command line actually
+ * references the DS2API binary before trusting the PID file (X7 kill-safety).
+ * A recycled PID owned by an unrelated process is treated as stale: removed,
+ * never killed.
+ */
+export function getVerifiedManagedPid() {
+  const pid = getManagedPid();
+  if (!pid) return null;
+  if (!isOurProcess(pid, "ds2api")) {
+    try { clearPid(); } catch { /* best-effort */ }
+    return null;
+  }
+  return pid;
+}
+
 // Strong, auto-generated secrets so 9router can talk to the sidecar's admin API and
 // so callers route through it — the user never handles these. Env override wins.
 function generateCredentials() {
@@ -51,16 +68,28 @@ function generateCredentials() {
   };
 }
 
+function enforceCredentialsPerms() {
+  // 0600 on POSIX (X12) — mode on write only applies at creation, so re-apply
+  // to also fix pre-existing files that were created with looser perms.
+  if (process.platform !== "win32") {
+    try { fs.chmodSync(CREDENTIALS_FILE, 0o600); } catch { /* best-effort */ }
+  }
+}
+
 export function ensureCredentials() {
   ensureDir();
   try {
     if (fs.existsSync(CREDENTIALS_FILE)) {
       const raw = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, "utf8"));
-      if (raw?.adminKey && raw?.apiKey) return raw;
+      if (raw?.adminKey && raw?.apiKey) {
+        enforceCredentialsPerms();
+        return raw;
+      }
     }
   } catch { /* corrupt file — regenerate */ }
   const creds = generateCredentials();
   fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  enforceCredentialsPerms();
   return creds;
 }
 
@@ -84,7 +113,7 @@ export async function startDS2API({ port } = {}) {
     throw err;
   }
 
-  const existing = getManagedPid();
+  const existing = getVerifiedManagedPid();
   if (existing) return { pid: existing, alreadyRunning: true };
 
   ensureDir();
@@ -138,7 +167,7 @@ export async function startDS2API({ port } = {}) {
 }
 
 export function stopDS2API() {
-  const pid = getManagedPid();
+  const pid = getVerifiedManagedPid();
   if (!pid) return { stopped: false, reason: "not_running" };
   try {
     process.kill(pid, "SIGTERM");

@@ -43,6 +43,7 @@ const STARTUP_DEFER_MS = 3000;
 // Survive Next.js hot reload
 const g = global.__appSingleton ??= {
   signalHandlersRegistered: false,
+  isShuttingDown: false,
   watchdogInterval: null,
   networkMonitorInterval: null,
   lastNetworkFingerprint: null,
@@ -53,21 +54,39 @@ const g = global.__appSingleton ??= {
   tailscaleAutoResumed: false,
 };
 
+// Hard upper bound for shutdown work (X3): a stuck managed-stop must not hang
+// Ctrl+C forever — bounded wait, then exit.
+const SHUTDOWN_TIMEOUT_MS = 5000;
+
 export async function initializeApp() {
   try {
     // Register cleanup + exit-respawn callback immediately so signals and
     // unexpected cloudflared exits are handled even during the deferred window.
     if (!g.signalHandlersRegistered) {
-      const cleanup = () => {
-        try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
-        try { killAllBridges(); } catch { /* best effort */ }
-        killCloudflared();
-        // Stop the managed xray proxy so its PID/port are released cleanly.
-        try { import("@/lib/xray/manager.js").then(({ stopXrayService }) => stopXrayService().catch(() => {})); } catch {}
-        process.exit();
+      const shutdown = () => {
+        // Double-SIGINT: the user insists — exit immediately.
+        if (g.isShuttingDown) process.exit(0);
+        g.isShuttingDown = true;
+        const finish = () => process.exit(0);
+        // X3: the old handler called process.exit() BEFORE the dynamic
+        // import() of the xray stopper resolved, leaking a detached xray on
+        // every Ctrl+C. Await the managed stop, bounded by a hard timeout.
+        Promise.race([
+          (async () => {
+            try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
+            try { killAllBridges(); } catch { /* best effort */ }
+            killCloudflared();
+            try {
+              const { stopXrayService } = await import("@/lib/xray/manager.js");
+              await stopXrayService().catch(() => {});
+            } catch { /* manager unavailable — nothing to stop */ }
+            try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
+          })(),
+          new Promise((r) => setTimeout(r, SHUTDOWN_TIMEOUT_MS)),
+        ]).then(finish, finish);
       };
-      process.on("SIGINT", cleanup);
-      process.on("SIGTERM", cleanup);
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
       process.on("exit", () => { try { removeAllDNSEntriesSync(); } catch { /* ignore */ } });
       g.signalHandlersRegistered = true;
     }
@@ -139,13 +158,11 @@ async function runHeavyStartup() {
       .catch((e) => console.log("[AutoPing] scheduler start failed:", e.message));
   }
 
-  // TOTU AI account auto-fetch scheduler. Idempotent; start only when the
-  // user has toggled it on in settings.
-  if (settings.totuAutoFetch === true) {
-    import("@/lib/totuAutoFetch")
-      .then(({ startTotuAutoFetch }) => startTotuAutoFetch())
-      .catch((e) => console.log("[TotuAutoFetch] scheduler start failed:", e.message));
-  }
+  // TOTU AI account auto-fetch scheduler. Idempotent; configure from settings
+  // so the configured interval (including 0 = manual-only) is honored (X8/N6).
+  import("@/lib/totuAutoFetch")
+    .then(({ configureTotuAutoFetch }) => configureTotuAutoFetch(settings))
+    .catch((e) => console.log("[TotuAutoFetch] scheduler start failed:", e.message));
 
   // Proactive OAuth token refresh (e.g. grok-cli ~6h TTL). Module is idempotent
   // and also started from custom-server.js when that entry is used.

@@ -14,6 +14,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawn, execFile } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { createWriteStream } from "node:fs";
@@ -214,9 +215,26 @@ function winPath(p) {
   return p.replace(/\//g, "\\");
 }
 
+/** Stream a file through sha256 and return the hex digest. */
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const rs = fs.createReadStream(filePath);
+    rs.on("error", reject);
+    rs.on("data", (chunk) => hash.update(chunk));
+    rs.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
 /**
  * Download and install the xray binary for the current platform.
  * Skips if the requested version is already installed.
+ *
+ * X5 supply-chain hardening: the published `.dgst` checksum is fetched and
+ * the archive's sha256 verified BEFORE extraction; extraction goes to a
+ * staging dir; a running managed instance is stopped before the verified
+ * files are swapped into place. A missing/unparseable .dgst fails the install
+ * (fail-closed — never run an unverified binary).
  *
  * @param {{ version?: string, onProgress?: (msg) => void, signal?: AbortSignal }} opts
  * @returns {{ installed: true, version: string, path: string }}
@@ -246,12 +264,57 @@ export async function installXray(opts = {}) {
   } catch (e) {
     throw new Error(`Failed to download ${asset}: ${e.message}`);
   }
-  log(`Downloaded ${asset}, extracting...`);
 
+  // Verify the published checksum before touching the install dir (X5).
+  log(`Verifying checksum (${asset}.dgst)...`);
+  let expectedHashes;
   try {
-    await extractZip(zipPath, XRAY_DIR, { signal });
+    const dgstRes = await fetch(`${zipUrl}.dgst`, { redirect: "follow", signal });
+    if (!dgstRes.ok) throw new Error(`HTTP ${dgstRes.status} ${dgstRes.statusText}`);
+    const dgstText = await dgstRes.text();
+    // The .dgst lists digests in several algorithms; 64-hex tokens are sha256.
+    expectedHashes = [...dgstText.matchAll(/\b[a-f0-9]{64}\b/gi)].map((m) => m[0].toLowerCase());
+    if (expectedHashes.length === 0) throw new Error("no sha256 digest found in .dgst");
   } catch (e) {
-    throw new Error(`Failed to extract ${asset}: ${e.message}`);
+    try { fs.unlinkSync(zipPath); } catch {}
+    throw new Error(`Checksum verification unavailable for ${asset} (${e.message}) — refusing to install an unverified binary`);
+  }
+  const actualHash = await sha256File(zipPath);
+  if (!expectedHashes.includes(actualHash)) {
+    try { fs.unlinkSync(zipPath); } catch {}
+    throw new Error(`Checksum mismatch for ${asset} (got sha256 ${actualHash}) — refusing to install`);
+  }
+  log(`Checksum verified (sha256 ${actualHash.slice(0, 12)}…), extracting to staging...`);
+
+  const stagingDir = path.join(XRAY_DIR, `.staging-${Date.now()}`);
+  try {
+    await extractZip(zipPath, stagingDir, { signal });
+
+    const stagedBinary = path.join(stagingDir, BINARY_NAME);
+    if (!fs.existsSync(stagedBinary) || fs.statSync(stagedBinary).size === 0) {
+      throw new Error(`archive did not contain a usable ${BINARY_NAME}`);
+    }
+
+    // Stop a running managed instance before swapping the binary out from
+    // under it (Windows also refuses to replace a running .exe) (X5).
+    try {
+      const { getManagedPid, terminateXrayPid } = await import("./process.js");
+      const runningPid = getManagedPid();
+      if (runningPid) {
+        log("Stopping running xray before binary swap...");
+        await terminateXrayPid(runningPid);
+      }
+    } catch { /* process module/pid unavailable — proceed with the swap */ }
+
+    for (const name of fs.readdirSync(stagingDir)) {
+      const dest = path.join(XRAY_DIR, name);
+      try { fs.rmSync(dest, { force: true, recursive: true }); } catch { /* dest absent */ }
+      fs.renameSync(path.join(stagingDir, name), dest);
+    }
+  } catch (e) {
+    throw new Error(`Failed to install verified archive: ${e.message}`);
+  } finally {
+    try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
   }
 
   // chmod +x on Unix so the binary is executable.

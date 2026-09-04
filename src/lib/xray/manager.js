@@ -75,6 +75,7 @@ import {
   waitForLiveTrafficQuiet,
 } from "./modelFilterTraffic.js";
 import { buildModelProbeBody, withProbeTimeout } from "./modelProbe.js";
+import { createSerialized } from "@/lib/serialize.js";
 
 // Fixed pool id so re-runs update the same row rather than creating dupes.
 const MANAGED_POOL_ID = "v2go-xray-managed";
@@ -518,6 +519,13 @@ export async function stopXrayService() {
   return result;
 }
 
+// X4: serialize config switches. doSwitchConfig performs blue-green promotion
+// (spawn → probe → repoint → drain); overlapping callers (auto-rotate, health
+// check, UI) previously raced the PID-file writes and could double-spawn
+// instances. The promise-chain wrapper queues every caller while preserving
+// each one's own result/error.
+export const switchConfig = createSerialized(doSwitchConfig);
+
 /**
  * Switch to a different server — BLUE-GREEN, zero-downtime.
  *
@@ -544,9 +552,8 @@ export async function stopXrayService() {
  * @param {{ avoidExitIps?: Set<string> }} [opts] exit IPs the new instance
  *   must NOT egress from (empty/unknown probe result passes).
  */
-export async function switchConfig(configId, opts = {}) {
-  const config = await getXrayConfigById(configId);
-  if (!config) {
+export async function doSwitchConfig(configId, opts = {}) {
+  const config = await getXrayConfigById(configId);  if (!config) {
     const e = new Error(`Config ${configId} not found`);
     e.code = "NOT_FOUND";
     throw e;
@@ -1383,18 +1390,30 @@ export async function runHealthCheck() {
   } else if (activeConfigId) {
     await updateXrayTestResult(activeConfigId, { ok: false });
     state.lastHealth = null;
-    // Auto-rotate to the next healthy server if enabled.
+    // Auto-rotate to the next healthy server if enabled (X6): a candidate
+    // whose switch fails is downgraded and the NEXT candidate is tried —
+    // bounded at MAX_ROTATE_ATTEMPTS. If every candidate fails, keep the
+    // current active node serving (never deactivate the whole cluster).
     if (settings.xrayAutoRotate) {
+      const MAX_ROTATE_ATTEMPTS = 5;
       const all = await getXrayConfigs({ isActive: true, healthyOnly: false });
-      const next = all.find((c) => c.id !== activeConfigId);
-      if (next) {
+      const candidates = all.filter((c) => c.id !== activeConfigId).slice(0, MAX_ROTATE_ATTEMPTS);
+      let rotatedTo = null;
+      for (const next of candidates) {
         try {
           console.log(`[Xray] active server unhealthy, auto-rotating to ${next.name}`);
           await switchConfig(next.id);
+          rotatedTo = next.id;
+          break;
         } catch (e) {
-          console.error(`[Xray] auto-rotation failed: ${e.message}`);
-          setStatus("error", { lastError: e.message });
+          console.warn(`[Xray] auto-rotation to ${next.name} failed (${e.message}) — downgrading candidate, trying next`);
+          try { await updateXrayTestResult(next.id, { ok: false }); } catch { /* best-effort */ }
         }
+      }
+      if (!rotatedTo) {
+        const msg = `auto-rotation failed for all ${candidates.length} candidate(s); keeping current active node`;
+        console.error(`[Xray] ${msg}`);
+        setStatus("error", { lastError: msg });
       }
     }
   }

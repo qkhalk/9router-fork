@@ -26,6 +26,7 @@ import {
   bulkUpsertXrayConfigs,
   markStaleXrayConfigs,
   cleanupStaleXrayConfigs,
+  getXrayConfigs,
   getXraySyncState,
   setXraySyncState,
 } from "../db/repos/xrayRepo.js";
@@ -77,6 +78,27 @@ export async function syncSubscription(opts = {}) {
     if (!entry) continue;
     entries.push(entry);
     keepIds.push(entry.id);
+  }
+
+  // Fail-closed guard (X2): an HTTP 200 whose body yields ZERO parseable links
+  // (HTML error page, captive portal, truncated body) must never wipe a
+  // non-empty catalog — abort the sync and keep every existing row instead of
+  // deactivating/deleting them below.
+  if (entries.length === 0) {
+    const current = await getXrayConfigs({ isActive: true });
+    if (current.length > 0) {
+      const reason = "empty-parse";
+      const msg = `subscription returned 0 parseable links over HTTP 200 — keeping ${current.length} existing config(s) (fail-closed)`;
+      console.error(`[XraySync] ${msg}`);
+      await setXraySyncState({
+        sourceUrl,
+        lastSyncAt: new Date().toISOString(),
+        lastSyncError: msg,
+        incrementRuns: true,
+      });
+      return { count: current.length, error: msg, sourceUrl, aborted: reason };
+    }
+    // Catalog is already empty (fresh install) — a zero-link result is fine.
   }
 
   // Preserve isSelected state for configs that already exist.

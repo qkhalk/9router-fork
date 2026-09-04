@@ -79,20 +79,20 @@ Fix Windows-first process-lifecycle defects (reaper scans wrong dir; SIGINT hand
 
 ## Todo list
 
-- [ ] N5 legacy `~/.9router` hardcodes removed (4 sites)
-- [ ] X1 reaper scans DATA_DIR/xray (+ legacy sweep)
-- [ ] X9+N4 reaper patterns + Windows cmdline-verified kill
-- [ ] X2 empty-parse abort guard
-- [ ] X3 awaited, bounded shutdown + double-SIGINT force exit
-- [ ] X4 switchConfig promise-chain mutex
-- [ ] X5 installer checksum/staging/stop-first
-- [ ] X6 auto-rotate candidate advance + attempt cap
-- [ ] X7 PID cmdline verification (xray + ds2api)
-- [ ] X8+N6 configureTotuAutoFetch at boot; interval 0 = off; `|| 60` removed
-- [ ] X10 OTP digits-only regex
-- [ ] X11 waitForPort child-owned check
-- [ ] X12 credentials.json 0600 (POSIX) + loginToken export redaction
-- [ ] Tests added; suite 0 pass→fail; detect_changes() clean; committed
+- [x] N5 legacy `~/.9router` hardcodes removed (4 sites)
+- [x] X1 reaper scans DATA_DIR/xray (+ legacy sweep)
+- [x] X9+N4 reaper patterns + Windows cmdline-verified kill
+- [x] X2 empty-parse abort guard
+- [x] X3 awaited, bounded shutdown + double-SIGINT force exit
+- [x] X4 switchConfig promise-chain mutex
+- [x] X5 installer checksum/staging/stop-first
+- [x] X6 auto-rotate candidate advance + attempt cap
+- [x] X7 PID cmdline verification (xray + ds2api)
+- [x] X8+N6 configureTotuAutoFetch at boot; interval 0 = off; `|| 60` removed
+- [x] X10 OTP digits-only regex
+- [x] X11 waitForPort child-owned check
+- [x] X12 credentials.json 0600 (POSIX) + loginToken export redaction
+- [x] Tests added; suite 0 pass→fail; detect_changes() clean; committed
 
 ## Success Criteria
 
@@ -120,3 +120,20 @@ Fix Windows-first process-lifecycle defects (reaper scans wrong dir; SIGINT hand
 
 - Phase 07 depends on X6 (step 8) and the health-check surfaces here.
 - Alert insertion points added later: tick catch (totuAutoFetch/index.js:209-210), batch errors (:167-185), health-check failure summary (manager.js:1249) — tag with TODO(phase-05) comments only.
+
+## Implementation notes (2026-09-04, executed)
+
+- New shared helpers: `src/lib/processGuard.js` (`isOurProcess` — cmdline verification, CIM on Windows, /proc→ps on POSIX) and `src/lib/serialize.js` (`createSerialized` promise-chain mutex used by `switchConfig`).
+- X4 shape: `switchConfig = createSerialized(doSwitchConfig)`; the original function was renamed `doSwitchConfig` (exported). Callers unchanged.
+- X1/N5: reaper/apiFilter/managedRotation now derive paths from `DATA_DIR` (logs → `DATA_DIR/logs`); reaper also sweeps the legacy `~/.9router/xray` as a read-fallback; `skipProcessKill` test option added so tests never run the host-wide sweep.
+- X9/N4: reaper file patterns cover `config.json.model-test-*`, `filter-api-*` (+ `.ob-*` overlays); Windows kills go through a CIM cmdline-matched query (kill-safe by construction); draining retirees are `isOurProcess`-verified on every platform.
+- X2: `syncSubscription` aborts with `{aborted:"empty-parse"}` when 0 links parse over a non-empty catalog; empty-catalog + empty-parse still proceeds.
+- X3: async shutdown bounded by 5s `Promise.race`; second SIGINT exits immediately.
+- X5: installer verifies the published `.dgst` (any 64-hex token) against the zip's sha256 before extracting to `.staging-<ts>`, stops a running managed instance via dynamic import (avoids the installer↔process module cycle), then swaps.
+- X6: health-check auto-rotate tries up to 5 candidates, downgrades each failure via `updateXrayTestResult({ok:false})`, and keeps the current node if all fail. (No direct unit test — manager.js's import graph; covered by the xray-manager-smoke import test + full suite.)
+- X7: `getVerifiedManagedPid()` on both process modules; used by start (alreadyRunning), stop, restart. Recycled pid → file removed, reported not-running.
+- X8/N6: boot calls `configureTotuAutoFetch(settings)`; interval ≤ 0 stops/never starts the timer (no `|| 60` clamping).
+- X10: OTP regex digits-only; the existing totu-autofetch fixture updated from "8e1b0c" to a numeric code to match the red-team-confirmed spec.
+- X11: `waitForPortOwnedByChild` — TCP accept + netstat/lsof PID ownership (undeterminable-owner falls back to child-alive); stale orphan holding the port fails fast.
+- X12: DS2API credentials re-chmodded 0600 on POSIX on every read/write; `exportDb` redacts TOTU `providerSpecificData.loginToken` (per plan ordering, this lands with phase 04's db/index.js guard work which follows next).
+- Verification: 7 new test files (24 tests) green; full-suite diff vs clean tree = 0 new failures (121 pre-existing env failures unchanged). detect_changes(): medium risk, 13 files, all in intended scope.

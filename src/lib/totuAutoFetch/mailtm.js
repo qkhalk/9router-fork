@@ -104,10 +104,12 @@ export async function getMessage(
   return await jsonOrNull(res);
 }
 
-// NewAPI OTP is 6-char alphanumeric (e.g. "8e1b0c"). Match per-block with a
-// word-boundary regex and prefer values found in the subject (mail.tm truncates
-// long subjects) or plain-text body over the raw HTML dump.
-const OTP_RE = /\b([A-Za-z0-9]{6})\b/g;
+// NewAPI OTP is 6 DIGITS (X10). The previous alphanumeric class matched
+// ordinary 6-letter words in subjects/bodies ("Verify", "Please", …) and
+// submitted those as the code. Match per-block with a word-boundary regex and
+// prefer values found in the subject (mail.tm truncates long subjects) or
+// plain-text body over the raw HTML dump.
+const OTP_RE = /\b(\d{6})\b/g;
 
 export function extractVerificationCode(message) {
   if (!message) return null;

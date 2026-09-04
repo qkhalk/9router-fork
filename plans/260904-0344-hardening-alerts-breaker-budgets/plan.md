@@ -30,7 +30,7 @@ Upstream prerequisite (user decision 2026-09-04): merge upstream v0.5.65 BEFORE 
 | # | Phase | Status | Release | Effort | Scope |
 |---|---|---|---|---|---|
 | 01 | [Proxy pool fixes](phase-01-proxy-pool-fixes.md) | done | A | M/L 14h | P1-P12, N1-N3 — strictProxy fail-closed, delta-writes, deactivation streak, ordering, dispatcher cache |
-| 02 | [Managed subsystems fixes](phase-02-managed-subsystems-fixes.md) | pending | A | L 16h | X1-X12, N4-N6 — reaper DATA_DIR, shutdown await, switchConfig mutex, installer checksum, TOTU interval |
+| 02 | [Managed subsystems fixes](phase-02-managed-subsystems-fixes.md) | done | A | L 16h | X1-X12, N4-N6 — reaper DATA_DIR, shutdown await, switchConfig mutex, installer checksum, TOTU interval |
 | 03 | [Core path fixes](phase-03-core-path-fixes.md) | pending | A | L 16h | C1-C10, N7-N9 — CommandCode peek rewrite, body clone per attempt, fallback no-fallback set, stream finalize |
 | 04 | [Security fixes](phase-04-security-fixes.md) | pending | A | L 14h | S1-S10, N10-N12 — CLI-token auth, SSRF verify/port (upstream-fixed), key hashing at rest, tunnel default flip; + Windows CI + fuzz tests |
 | 05 | [Alert system](phase-05-alert-system.md) | pending | B | L 20h | New `src/lib/alerts/` — TG/Discord/webhook senders, queue+limits, dedup, settings UI |

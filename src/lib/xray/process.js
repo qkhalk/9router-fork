@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { DATA_DIR } from "@/lib/dataDir.js";
+import { isOurProcess } from "@/lib/processGuard.js";
 import { getXrayBinaryPath, isXrayInstalled } from "./installer.js";
 
 const XRAY_DIR = path.join(DATA_DIR, "xray");
@@ -93,6 +94,22 @@ export function getManagedPid() {
 }
 
 /**
+ * Like getManagedPid, but also verifies the live process's command line is
+ * actually an xray binary before trusting the PID file (X7 kill-safety). A
+ * recycled PID now owned by an unrelated process is treated as a stale file:
+ * removed and reported as not running — never killed.
+ */
+export function getVerifiedManagedPid() {
+  const pid = getManagedPid();
+  if (!pid) return null;
+  if (!isOurProcess(pid, "xray")) {
+    try { clearPid(); } catch { /* best-effort */ }
+    return null;
+  }
+  return pid;
+}
+
+/**
  * Start a managed xray process bound to the given config file.
  * Idempotent: if a managed process is already running, returns it as-is.
  *
@@ -108,7 +125,7 @@ export async function startManagedXray({ configPath }) {
     throw err;
   }
 
-  const existing = getManagedPid();
+  const existing = getVerifiedManagedPid();
   if (existing) return { pid: existing, alreadyRunning: true };
 
   ensureDir();
@@ -163,7 +180,7 @@ export async function startManagedXray({ configPath }) {
  * @returns {{ stopped: boolean, pid?: number, reason?: string }}
  */
 export function stopXray() {
-  const pid = getManagedPid();
+  const pid = getVerifiedManagedPid();
   if (!pid) return { stopped: false, reason: "not_running" };
 
   try {
@@ -199,7 +216,7 @@ export function stopXray() {
  * @param {{ configPath: string }} opts
  */
 export async function restartXray({ configPath }) {
-  const pid = getManagedPid();
+  const pid = getVerifiedManagedPid();
   if (pid) {
     await terminateXrayPid(pid);
     clearPid();
