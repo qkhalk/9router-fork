@@ -1,3 +1,48 @@
+# v0.6.36 (2026-09-05)
+
+Hardening release A of the 57-finding audit program: all **45 bug/hygiene
+findings** (proxy pools, managed subsystems, core request path, security) plus
+CI/fuzz quality infrastructure. Releases B (alerts + circuit breaker) and C
+(v2go scheduler, per-key budgets, cache analytics) follow under
+`plans/260904-0344-hardening-alerts-breaker-budgets/`.
+
+## Security
+- **DB export/import auth closed (S1/N12)**: `/api/settings/database` now validates the REAL per-install CLI token (constant-time) instead of trusting header presence; imports can no longer overwrite the dashboard password hash or sudo ciphertext (current values survive); exports are served `Cache-Control: no-store`.
+- **Default password refused remotely (N11)**: the printed `123456` fallback only works from the host itself — stolen-session + crafted-import re-auth chains are dead.
+- **API keys hashed at rest (S7)**: keys are stored as HMAC-SHA256 under a per-install secret (0600 file), never plaintext. Legacy keys keep working and migrate lazily on first use; listings/UI show only `sk-{keyId}-••••{last4}`; backups export hashes, never raw keys. **Migration note:** take a DB backup before upgrading; rollback = revert + restore snapshot.
+- **Per-install secrets everywhere (S5/N10/S9)**: the MITM sudo-password AES key and the API-key CRC secret derive from random per-install secret files — the public `machineId + committed salt` derivation (and its universal fallback key) is gone. Old sudo ciphertext is intentionally undecryptable — re-enter the password once. `mitmSudoEncrypted` no longer appears in settings API responses.
+- **Tunnel dashboard access is opt-in (S6)**: `tunnelDashboardAccess` defaults to **false** for installs that never saved the setting explicitly (saved values are preserved; the endpoint page offers the toggle and warns on cleartext `http://` external tunnels).
+- **SSRF: last two call sites wired (S2)**: provider-node validation and the `/v1/fetch` direct-URL path now use `fetchPublic` (manual redirects, per-hop DNS revalidation) on top of the v0.5.65 guard.
+- **Request-log masking restored (S3)**: authorization / x-api-key / cookie values are masked in every log sink, even with `ENABLE_REQUEST_LOGS=true`.
+- **MITM dir 0700 + root CA key 0600 (S4)**, including a post-hoc chmod for existing installs (POSIX; Windows is ACL-based).
+- **No hostnames pre-auth (S8)**: `/api/settings/require-login` returns booleans only.
+- **cloudflared token off argv (S10)**: passed via `TUNNEL_TOKEN` env — no longer visible in `ps` on multi-user hosts.
+
+## Fixes
+- **Strict proxy pools fail closed (P1/P9/N3, N1)**: exhausted or errored strict pools return 503 with retry-after instead of silently direct-fetching; every caller shares one `isStrictProxyFailure` guard; the dead `_excludedProxyEntryIds` path is removed.
+- **No more lost pool updates (P2/N2)**: proxy-pool entry writes (cooldowns, rotation cursors, usage stamps) are transactional read-modify-write deltas instead of stale whole-snapshot overwrites.
+- **Pool ordering and entry hygiene (P4/P5/P6)**: stable createdAt ordering; entries without a usable URL are skipped; group cursors reset deterministically.
+- **failStreak deactivation (P7/P8)**: three consecutive test failures deactivate an entry; group cooldowns applied per entry; deleting a bound pool now 409s with the bound providers listed (and `?force` unbinds).
+- **Managed xray/v2go safety (X1-X7, N4)**: PID-reuse kill safety via cmdline verification, single-flight config switching, staged binary install with sha256 verification, empty-parse fail-closed subscription sync, port-ownership checks, bounded rotate attempts, reaper patterns that no longer match unrelated processes.
+- **Graceful shutdown (X8/X9)**: 5s bounded shutdown with double-signal protection; TOTU auto-fetch interval validation (X10-X12, N5/N6).
+- **CommandCode peek rewritten (C1/N8/N9/C8)**: post-sentinel lines in the same TCP read are replayed in order instead of dropped (silent prefix truncation on every provider that flushes sentinel + deltas together); pre-sentinel buffering capped at 1 MiB with passthrough degrade; wrapped SSE responses whitelist headers (no stale content-length/content-encoding); mid-body errors replay buffered bytes. Escape hatch: `9R_CC_PEEK_LEGACY=1`.
+- **Per-attempt body isolation (C2)**: modality stripping works on a deep copy — combo-fusion members and fallback attempts always see the client's original blocks.
+- **Deterministic client errors stop locking accounts (C4)**: bare 400/401/402/404/405/413/422 no longer lock every account for 30s (text evidence like "quota exceeded" still falls back — that one account really is out of credits).
+- **Search unlocks on success (C5)**: a successful `/v1/search` clears the scoped `modelLock_websearch:*` immediately, and search-only failures no longer stamp account-wide `unavailable`.
+- **Combo cycle protection (C6)**: combo create/update reject alias cycles (400); the chat path has a visited-set backstop for legacy rows.
+- **PXPIPE respects the saver kill-switch (C3)**: `X-9Router-Token-Saver: off` now disables PXPIPE like every other saver.
+- **Passthrough stream honesty (C7/C9)**: `[DONE]` finalizes usage the moment it is forwarded (a client closing right after it no longer loses usage logging) and never emits a duplicate frame.
+- **Search body-read timeout (C10)**: stalled search upstreams abort at 15s during body read instead of hanging the request forever.
+- **First-byte success signal (N7)**: account locks only heal when a byte actually reaches the client — an upstream that dies right after accept no longer marks the account healthy.
+
+## CI
+- **Windows process-lifecycle job**: boots the server, verifies clean shutdown leaves no orphaned `xray.exe` (soft-fail rollout — `continue-on-error` for the first two weeks).
+- **Stream fuzz harness**: seeded 1000-iteration random chunk-split properties over the CommandCode peek and passthrough stream rewriters.
+
+## Notes
+- Test count **+113** this release (phases 01-04); failing-set diff vs the pre-release baseline is clean (0 pass→fail). Local environment caveat unchanged: the dev install lives under `tests/node_modules` only.
+- **Rollback for S7** (keys hashed at rest): revert its commit and restore the DB snapshot taken before upgrade — plaintext is only cleared after the hash was verified working.
+
 # v0.6.35 (2026-09-04)
 
 Upstream-sync + self-hosting release: merges upstream **v0.5.65** into the
