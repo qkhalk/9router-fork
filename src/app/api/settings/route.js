@@ -21,6 +21,14 @@ export async function GET() {
     // S5: mitmSudoEncrypted is an AES-GCM blob under a per-install key — it has
     // no business crossing the API surface at all.
     const { password, oidcClientSecret, mitmSudoEncrypted, ...safeSettings } = settings;
+    // Alert channel values are credentials (bot token, webhook URLs) — send
+    // configured-booleans, never the values (risk table: token leak via GET).
+    safeSettings.alertsTelegramConfigured = Boolean(safeSettings.alertsTelegramBotToken && safeSettings.alertsTelegramChatId);
+    safeSettings.alertsDiscordConfigured = Boolean(safeSettings.alertsDiscordWebhookUrl);
+    safeSettings.alertsWebhookConfigured = Boolean(safeSettings.alertsWebhookUrl);
+    delete safeSettings.alertsTelegramBotToken;
+    delete safeSettings.alertsDiscordWebhookUrl;
+    delete safeSettings.alertsWebhookUrl;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
     
     const enableRequestLogs = process.env.ENABLE_REQUEST_LOGS === "true";
@@ -102,6 +110,43 @@ export async function PATCH(request) {
       }
     }
 
+    // Alerts (phase 05): trim channel fields, validate URL shapes, clamp
+    // numeric knobs. Credential fields follow the oidcClientSecret
+    // convention: absent/empty means "keep the stored value" (the GET
+    // response masks them), invalid non-empty URLs clear themselves.
+    for (const field of ["alertsTelegramBotToken", "alertsTelegramChatId"]) {
+      if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
+      const trimmed = typeof body[field] === "string" ? body[field].trim() : "";
+      if (!trimmed) delete body[field];
+      else body[field] = trimmed;
+    }
+    for (const field of ["alertsDiscordWebhookUrl", "alertsWebhookUrl"]) {
+      if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
+      const trimmed = typeof body[field] === "string" ? body[field].trim() : "";
+      if (!trimmed) { delete body[field]; continue; }
+      body[field] = /^https:\/\/\S+$/.test(trimmed) ? trimmed : "";
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "alertsDedupMin")) {
+      const raw = Number(body.alertsDedupMin);
+      body.alertsDedupMin = Number.isFinite(raw) ? Math.min(1440, Math.max(1, Math.floor(raw))) : 10;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "alertsQuotaThresholdPct")) {
+      const raw = Number(body.alertsQuotaThresholdPct);
+      body.alertsQuotaThresholdPct = Number.isFinite(raw) ? Math.min(90, Math.max(1, Math.floor(raw))) : 20;
+    }
+    if (body.alertsEvents && typeof body.alertsEvents === "object" && !Array.isArray(body.alertsEvents)) {
+      const allowed = new Set([
+        "all-accounts-locked", "breaker-open", "breaker-recovered", "proxy-pool-exhausted",
+        "strictproxy-violation", "quota-near-limit", "budget-threshold", "xray-node-down",
+        "xray-rotation-failed", "totu-fetch-failed",
+      ]);
+      const events = {};
+      for (const key of allowed) {
+        if (key in body.alertsEvents) events[key] = body.alertsEvents[key] !== false;
+      }
+      body.alertsEvents = events;
+    }
+
     const settings = await updateSettings(body);
 
     // Apply outbound proxy settings immediately (no restart required)
@@ -180,6 +225,12 @@ export async function PATCH(request) {
 
     const { password, oidcClientSecret, mitmSudoEncrypted, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
+    safeSettings.alertsTelegramConfigured = Boolean(safeSettings.alertsTelegramBotToken && safeSettings.alertsTelegramChatId);
+    safeSettings.alertsDiscordConfigured = Boolean(safeSettings.alertsDiscordWebhookUrl);
+    safeSettings.alertsWebhookConfigured = Boolean(safeSettings.alertsWebhookUrl);
+    delete safeSettings.alertsTelegramBotToken;
+    delete safeSettings.alertsDiscordWebhookUrl;
+    delete safeSettings.alertsWebhookUrl;
     return NextResponse.json(safeSettings, { headers: SETTINGS_RESPONSE_HEADERS });
   } catch (error) {
     console.log("Error updating settings:", error);

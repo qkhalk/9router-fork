@@ -76,6 +76,7 @@ import {
 } from "./modelFilterTraffic.js";
 import { buildModelProbeBody, withProbeTimeout } from "./modelProbe.js";
 import { createSerialized } from "@/lib/serialize.js";
+import { emitAlert, EVENT_TYPES, SEVERITY } from "@/lib/alerts";
 
 // Fixed pool id so re-runs update the same row rather than creating dupes.
 const MANAGED_POOL_ID = "v2go-xray-managed";
@@ -1390,6 +1391,14 @@ export async function runHealthCheck() {
   } else if (activeConfigId) {
     await updateXrayTestResult(activeConfigId, { ok: false });
     state.lastHealth = null;
+    try {
+      emitAlert(EVENT_TYPES.XRAY_NODE_DOWN, {
+        severity: SEVERITY.CRITICAL,
+        dedupKey: String(activeConfigId),
+        title: "Active xray node down",
+        body: `Health probe failed for the active node (${activeConfigId}) on port ${socksPort}.`,
+      });
+    } catch { /* alerts must never break the health check */ }
     // Auto-rotate to the next healthy server if enabled (X6): a candidate
     // whose switch fails is downgraded and the NEXT candidate is tried —
     // bounded at MAX_ROTATE_ATTEMPTS. If every candidate fails, keep the

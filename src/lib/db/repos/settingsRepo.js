@@ -85,6 +85,28 @@ const DEFAULT_SETTINGS = {
   // interval in minutes (0 = manual-only, positive values clamped to >= 5).
   totuAutoFetch: false,
   totuAutoFetchIntervalMin: 60,
+  // Alert system (phase 05): master gate, channel credentials, dedup window
+  // (minutes, clamped 1-1440 on save), quota alert threshold (percent
+  // remaining), and per-event-type enable map.
+  alertsEnabled: false,
+  alertsTelegramBotToken: "",
+  alertsTelegramChatId: "",
+  alertsDiscordWebhookUrl: "",
+  alertsWebhookUrl: "",
+  alertsDedupMin: 10,
+  alertsQuotaThresholdPct: 20,
+  alertsEvents: {
+    "all-accounts-locked": true,
+    "breaker-open": true,
+    "breaker-recovered": true,
+    "proxy-pool-exhausted": true,
+    "strictproxy-violation": true,
+    "quota-near-limit": true,
+    "budget-threshold": true,
+    "xray-node-down": true,
+    "xray-rotation-failed": true,
+    "totu-fetch-failed": true,
+  },
   xrayStaleRetentionDays: 7,
   xrayAutoRotate: false,
   xrayHealthCheckIntervalMin: 10,

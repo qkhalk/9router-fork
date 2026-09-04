@@ -36,6 +36,7 @@ import { beginLiveModelTraffic, wrapLiveModelResponse } from "@/lib/xray/modelFi
 import { triggerManagedRotationOnProxyError, waitForManagedRotationSettle, noteManagedPoolConnFailure } from "@/lib/xray/managedRotation.js";
 import { MANAGED_POOL_ID } from "@/lib/xray/manager.js";
 import { waitForSocksPortOpen } from "@/lib/xray/tester.js";
+import { emitAlert, EVENT_TYPES, SEVERITY } from "@/lib/alerts";
 
 // Max times a single request will retry after a managed-pool *connection*
 // failure (SOCKS port down during a rotation's teardown/respawn window). These
@@ -294,6 +295,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = HTTP_STATUS.SERVICE_UNAVAILABLE;
         log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
+        try {
+          emitAlert(EVENT_TYPES.ALL_ACCOUNTS_LOCKED, {
+            severity: SEVERITY.CRITICAL,
+            dedupKey: String(provider || "unknown"),
+            title: "All accounts locked",
+            body: `Every ${provider} account is locked/rate-limited (${model}): ${errorMsg}. Retry after ${credentials.retryAfterHuman || "cooldown"}.`,
+          });
+        } catch { /* alerts must never break the error path */ }
         return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
       }
       if (excludeConnectionIds.size === 0) {

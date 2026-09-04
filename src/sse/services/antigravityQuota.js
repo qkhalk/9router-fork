@@ -6,6 +6,7 @@
 
 import { resolveConnectionProxyConfig, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { getAntigravityUsage } from "open-sse/services/usage/google.js";
+import { emitAlert, EVENT_TYPES, SEVERITY } from "@/lib/alerts";
 import * as log from "../utils/logger.js";
 
 // In-memory cache: connectionId → { [modelId]: { remainingPercentage, resetAt } }
@@ -127,6 +128,25 @@ async function _doRefresh(connectionId, accessToken, providerSpecificData, now) 
     // Strike blocks are re-asserted after every refresh so an optimistic
     // upstream reading cannot resurrect a pair we just circuit-broke.
     quotaCache.set(connectionId, applyActiveStrikeBlocks(connectionId, usage.quotas));
+
+    // quota-near-limit: iterate the PRISTINE upstream readings, BEFORE strike
+    // blocks are re-applied, and skip currently-blocked pairs — synthesized 0%
+    // entries are circuit-breaker state, not quota state (phase-05 caveat).
+    // The threshold itself is applied inside emitAlert (single settings read).
+    for (const [model, q] of Object.entries(usage.quotas)) {
+      if (typeof q?.remainingPercentage !== "number") continue;
+      const blockedUntil = strikeBlocks.get(`${connectionId}|${model}`);
+      if (blockedUntil && blockedUntil > now) continue;
+      try {
+        emitAlert(EVENT_TYPES.QUOTA_NEAR_LIMIT, {
+          severity: SEVERITY.WARN,
+          dedupKey: `${connectionId}|${model}`,
+          title: "Quota near limit",
+          body: `${model} on ${connectionId.slice(0, 8)}…: ${q.remainingPercentage}% remaining (resets ${q.resetAt || "unknown"}).`,
+          remainingPct: q.remainingPercentage,
+        });
+      } catch { /* alerts must never break the refresh */ }
+    }
 
     return usage.quotas;
   } catch (e) {
