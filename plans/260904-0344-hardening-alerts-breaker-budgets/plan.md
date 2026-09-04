@@ -17,13 +17,13 @@ Upstream prerequisite (user decision 2026-09-04): merge upstream v0.5.65 BEFORE 
 
 ## Release mapping (user decision, FINAL)
 
-| Release group | Tag (CONFIRMED by user 2026-09-04) | Phases | Content |
+| Release group | Tag (shifted 2026-09-04: v0.6.35 taken by the upstream-merge release 26b99473) | Phases | Content |
 |---|---|---|---|
-| A — Robustness | **v0.6.35** | 01-04 | All bug fixes + hardening (P/X/C/S/N) + CI/fuzz quality infra — S2 SSRF arrives upstream-fixed via the v0.5.65 merge (verify/port only, phase-04) |
-| B — Alerts + Breaker | **v0.6.36** | 05-06 | Alert system + per-account circuit breaker |
-| C — Scheduler + Budgets | **v0.6.37** | 07-09 | v2go health scheduler + per-key budgets + cache analytics |
+| A — Robustness | **v0.6.36** | 01-04 | All bug fixes + hardening (P/X/C/S/N) + CI/fuzz quality infra — S2 SSRF arrives upstream-fixed via the v0.5.65 merge (verify/port only, phase-04) |
+| B — Alerts + Breaker | **v0.6.37** | 05-06 | Alert system + per-account circuit breaker |
+| C — Scheduler + Budgets | **v0.6.38** | 07-09 | v2go health scheduler + per-key budgets + cache analytics |
 
-> **Tag collision resolved:** v0.6.34 was shipped (2026-09-04, "OpenCode Free reliability release", git 8fdc0ea3) while this plan was being researched; user confirmed v0.6.35/36/37 on 2026-09-04. P9 disposition confirmed: REMOVE dead `_excludedProxyEntryIds` code (KISS).
+> **Tag history:** v0.6.34 shipped (2026-09-04, "OpenCode Free reliability release") during research; user confirmed v0.6.35/36/37 for this plan; then v0.6.35 was consumed by the upstream v0.5.65 merge + donate release (26b99473, 2026-09-04) — program tags shift to v0.6.36/37/38. P9 disposition confirmed: REMOVE dead `_excludedProxyEntryIds` code (KISS).
 
 ## Phases
 
