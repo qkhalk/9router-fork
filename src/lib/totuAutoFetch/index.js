@@ -4,6 +4,7 @@
 
 import { getSettings, getProviderConnections, createProviderConnection } from "@/lib/localDb";
 import { createMailbox, getMailTmToken, listDomains, waitForVerificationCode } from "./mailtm.js";
+import { emitAlert, EVENT_TYPES, SEVERITY } from "@/lib/alerts";
 import {
   login,
   requestVerification,
@@ -204,10 +205,26 @@ export async function runTotuAutoFetchTick(deps = createDefaultDeps(), state = g
     const settings = await deps.getSettings();
     if (settings.totuAutoFetch !== true) return;
     const intervalMin = settings.totuAutoFetchIntervalMin ?? 60;
-    await runTotuFetchOnce(deps, { maxAccounts: intervalMin >= 5 ? 3 : 1 });
+    const result = await runTotuFetchOnce(deps, { maxAccounts: intervalMin >= 5 ? 3 : 1 });
     console.log("[TotuAutoFetch] scheduled fetch completed");
+    if (result?.failed > 0) {
+      emitAlert(EVENT_TYPES.TOTU_FETCH_FAILED, {
+        severity: SEVERITY.WARN,
+        dedupKey: "totu-batch",
+        title: "TOTU auto-fetch partially failed",
+        body: `${result.failed}/${result.failed + result.added + result.skipped} account fetches failed (${(result.errors?.[0]?.error || "unknown").slice(0, 200)}).`,
+      });
+    }
   } catch (error) {
     console.warn("[TotuAutoFetch] tick error:", getErrorText(error));
+    try {
+      emitAlert(EVENT_TYPES.TOTU_FETCH_FAILED, {
+        severity: SEVERITY.WARN,
+        dedupKey: "totu-tick",
+        title: "TOTU auto-fetch failed",
+        body: `Scheduler tick error: ${getErrorText(error)}`,
+      });
+    } catch { /* alerts must never break the tick */ }
   } finally {
     state.running = false;
   }

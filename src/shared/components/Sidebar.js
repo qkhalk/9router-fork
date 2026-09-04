@@ -38,6 +38,7 @@ const systemItems = [
   { href: "/dashboard/proxy-pools", label: "Proxy Pools", icon: "lan" },
   { href: "/dashboard/xray", label: "V2Ray Proxy", icon: "vpn_lock" },
   { href: "/dashboard/skills", label: "Skills", icon: "extension" },
+  { href: "/dashboard/alerts", label: "Alerts", icon: "notifications" },
 ];
 
 export default function Sidebar({ onClose }) {

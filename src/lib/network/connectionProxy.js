@@ -1,5 +1,6 @@
 import { getProxyPoolById, stampProxyEntryUsed } from "@/models";
 import { pickProxyGroupEntry } from "./proxyRotation.js";
+import { emitAlert, EVENT_TYPES, SEVERITY } from "@/lib/alerts";
 
 // Safely normalize any value into a trimmed string.
 function normalizeString(value) {
@@ -87,6 +88,16 @@ function normalizeLegacyProxy(providerSpecificData = {}) {
  * callers must treat it as "this attempt cannot proceed", never as "go direct".
  */
 function strictPoolFailure(source, proxyPoolId, proxyPool, noProxy) {
+  // Fire-and-forget: this runs inside auth's selectionMutex — the alert
+  // queues asynchronously and must never gate proxy resolution.
+  try {
+    emitAlert(EVENT_TYPES.PROXY_POOL_EXHAUSTED, {
+      severity: source === "exhausted" ? SEVERITY.WARN : SEVERITY.CRITICAL,
+      dedupKey: String(proxyPoolId || "unknown"),
+      title: source === "exhausted" ? "Strict proxy pool exhausted" : "Strict proxy pool errored",
+      body: `Pool ${proxyPoolId || "(unknown)"} has no usable entry (${source}); bound requests fail closed.`,
+    });
+  } catch { /* alerts must never break proxy resolution */ }
   return {
     source,
     proxyPoolId: proxyPoolId || null,

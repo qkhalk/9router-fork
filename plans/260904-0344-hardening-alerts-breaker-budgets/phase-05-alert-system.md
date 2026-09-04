@@ -73,14 +73,14 @@ src/lib/alerts/
 
 ## Todo list
 
-- [ ] Module skeleton + emitAlert + dedup + master gate (step 1)
-- [ ] DEFAULT_SETTINGS keys + route sanitize (step 2)
-- [ ] queue.js rate limits + 429/retry_after + backoff (step 3)
-- [ ] telegram/discord/webhook senders (+ payload escaping) (step 3)
-- [ ] 6 emit sites wired w/ impact() run (step 4)
-- [ ] UI modal + dashboard entry + test-alert button + route (step 5)
-- [ ] i18n keys (step 6)
-- [ ] Tests added; suite 0 pass→fail; detect_changes() clean; committed
+- [x] Module skeleton + emitAlert + dedup + master gate (step 1)
+- [x] DEFAULT_SETTINGS keys + route sanitize (step 2)
+- [x] queue.js rate limits + 429/retry_after + backoff (step 3)
+- [x] telegram/discord/webhook senders (+ payload escaping) (step 3)
+- [x] 6 emit sites wired w/ impact() run (step 4)
+- [x] UI modal + dashboard entry + test-alert button + route (step 5)
+- [x] i18n keys (step 6)
+- [x] Tests added; suite 0 pass→fail; detect_changes() clean; committed
 
 ## Success Criteria
 
@@ -109,3 +109,14 @@ src/lib/alerts/
 
 - Phase 06 (breaker) and 07 (scheduler) import `emitAlert` + EVENT_TYPES — their events (`breaker-open`, `breaker-recovered`, `xray-rotation-failed`) become active as those phases land; budget-threshold in phase 08.
 - Optional later (out of scope): digest emails, per-event channel routing (v1: all channels get all enabled events).
+
+## Implementation notes (2026-09-05)
+
+1. **Module built by subagent** (general-purpose), spec-faithful: eventTypes (10 events), SendQueue (pacing + 429 retryAfterMs + 3-try backoff + noRetry drop), telegram (HTML-escaped, retry_after), discord (embeds, retry-after header), webhook (versioned schema, redirect:manual, private/own-host block, 5s timeout), index (30s settings cache via the single dynamic localDb import, master/per-type gates, dedup map, lazy singleton queues, sendTestAlert). 19 module tests.
+2. **Test-env inertness guard added by orchestrator**: hot paths (connectionProxy, proxyFetch, xray manager, totu, chat) now statically import the module, so ~15 existing suites would transitively trigger the dynamic settings import against the REAL dev DB. `ALERTS_INERT` no-ops emit/sendTest under NODE_ENV=test; the module's own suite opts in via `vi.hoisted(() => process.env.ALERTS_ENABLE_IN_TESTS = "1")` (plain assignment is hoisted under ESM imports — classic trap).
+3. **quota-near-limit threshold lives in emitAlert** (not the producer): antigravityQuota passes raw remainingPct; the alert module applies alertsQuotaThresholdPct — keeps settings access in one module (import-graph rule). Strike-block caveat handled: emit iterates the PRISTINE upstream quotas BEFORE applyActiveStrikeBlocks re-synthesizes 0% entries, and skips currently-blocked pairs.
+4. **Emit sites (6)**: chat.js allRateLimited → all-accounts-locked (dedupKey provider); strictPoolFailure() → proxy-pool-exhausted (one place covers both exhausted returns; fire-and-forget inside auth's selectionMutex); proxyFetch strictProxy resolution throw → strictproxy-violation; xray runHealthCheck probe failure → xray-node-down (dedupKey configId); totu tick catch + partial batch failures → totu-fetch-failed; antigravityQuota _doRefresh → quota-near-limit.
+5. **UI**: standalone /dashboard/alerts page (sidebar "Alerts" under system items) rather than a modal — the endpoint-page card pattern didn't fit ten event toggles + three channels; page follows the codebase convention of English literals (the RuntimeI18nProvider translates the DOM; no page-level i18n keys exist to follow). Credentials masked server-side with *Configured booleans; blank-on-save keeps stored values (oidcClientSecret convention); test-alert route at /api/settings/alerts/test.
+6. **Settings sanitize**: URL fields must match ^https:// (invalid → cleared), dedup clamped 1-1440, threshold 1-90, events map filtered to the 10 known keys.
+7. **impact()**: handleSingleModelChat HIGH (8), runHealthCheck LOW, resolveConnectionProxyConfig CRITICAL-39 (pre-assessed phase 01; change is a non-blocking emit). detect_changes: 11 symbols/9 files HIGH — settings + proxy resolution + totu/xray/chat emits, as planned.
+8. Manual channel smoke (TG/Discord/webhook.site) NOT run — headless session; flagged for the release runbook.

@@ -2,6 +2,7 @@ import { Readable } from "stream";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
 import { canonicalizeProxyUrl } from "@/lib/proxy/parseProxy.js";
+import { emitAlert, EVENT_TYPES, SEVERITY } from "@/lib/alerts";
 
 const originalFetch = globalThis.fetch;
 
@@ -373,6 +374,11 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   if (strict && proxyEnabled && !connectionProxyUrl && !noProxyBypassed) {
     // Enabled but unresolvable (empty/unparseable URL) under strict — refuse
     // rather than silently egressing from the origin IP.
+    emitAlert(EVENT_TYPES.STRICTPROXY_VIOLATION, {
+      severity: SEVERITY.CRITICAL,
+      title: "strictProxy direct-fetch refused",
+      body: "strictProxy=true but the connection proxy could not be resolved; the direct fetch was refused.",
+    });
     throw new Error("[ProxyFetch] strictProxy=true but connection proxy could not be resolved; refusing direct fetch");
   }
   const envProxyUrl = connectionProxyUrl || noProxyBypassed || strict
