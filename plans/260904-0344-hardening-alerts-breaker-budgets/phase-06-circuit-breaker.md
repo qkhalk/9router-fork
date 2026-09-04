@@ -72,14 +72,14 @@ src/sse/services/circuitBreaker.js
 
 ## Todo list
 
-- [ ] circuitBreaker.js state machine + unit tests (step 1)
-- [ ] DEFAULT_SETTINGS keys (step 2)
-- [ ] chat.js wrapper wiring (skip/failure/success feeds) w/ impact() (step 3)
-- [ ] breaker-open / breaker-recovered alerts (step 4)
-- [ ] Dashboard state panel + reset button (step 5)
-- [ ] Reconcile with upstream antigravity strike-breaker (R9): skip double-counting strike-blocked (connectionId, model) pairs for quota-429s; panel shows strike-block state; keep allRateLimited always-503 (no status passthrough reintroduced)
-- [ ] Integration tests incl. probe-fallback-not-harmed (step 6)
-- [ ] Suite 0 pass→fail; detect_changes() clean; committed
+- [x] circuitBreaker.js state machine + unit tests (step 1)
+- [x] DEFAULT_SETTINGS keys (step 2)
+- [x] chat.js wrapper wiring (skip/failure/success feeds) w/ impact() (step 3)
+- [x] breaker-open / breaker-recovered alerts (step 4)
+- [x] Dashboard state panel + reset button (step 5)
+- [x] Reconcile with upstream antigravity strike-breaker (R9): skip double-counting strike-blocked (connectionId, model) pairs for quota-429s; panel shows strike-block state; keep allRateLimited always-503 (no status passthrough reintroduced)
+- [x] Integration tests incl. probe-fallback-not-harmed (step 6)
+- [x] Suite 0 pass→fail; detect_changes() clean; committed
 
 ## Success Criteria
 
