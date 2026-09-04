@@ -9,6 +9,8 @@ import {
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { AI_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
 import { normalizeProviderId, normalizeProviderSpecificData, normalizeProviderApiKey } from "@/lib/providerNormalization";
+import { getBreakerStates } from "@/sse/services/circuitBreaker.js";
+import { getStrikeBlockStates } from "@/sse/services/antigravityQuota.js";
 
 export const dynamic = "force-dynamic";
 
@@ -76,7 +78,16 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json({ connections: safeConnections });
+    // Circuit-breaker health (phase 06): in-memory state only — piggybacked
+    // here so the dashboard panel needs no separate polling route.
+    let breakerStates = [];
+    let strikeBlocks = [];
+    try {
+      breakerStates = getBreakerStates();
+      strikeBlocks = getStrikeBlockStates();
+    } catch { }
+
+    return NextResponse.json({ connections: safeConnections, breakerStates, strikeBlocks });
   } catch (error) {
     console.log("Error fetching providers:", error);
     return NextResponse.json({ error: "Failed to fetch providers" }, { status: 500 });
