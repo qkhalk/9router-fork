@@ -1,3 +1,14 @@
+# v0.6.37 (2026-09-05)
+
+Hardening release B: the **alert system** and the **per-account circuit
+breaker** from `plans/260904-0344-hardening-alerts-breaker-budgets/`
+(phases 05–06).
+
+## Features
+- **Alert system (phase 05)**: Telegram / Discord / generic-webhook alerting with per-channel send queues (pacing + 3-try backoff + 429 retry-after), a 10-minute dedup window, and per-event-type enable map. New dashboard page (Dashboard → Alerts) with credential masking (blank = keep stored) and a per-channel test button. Six wired events: all-accounts-locked, proxy-pool-exhausted, strictproxy-violation, xray-node-down, totu-fetch-failed, quota-near-limit. Alert sends are fire-and-forget and never block or break request paths; inert under test.
+- **Per-account circuit breaker (phase 06)**: a connectionId-keyed breaker wraps account selection in the chat fallback loop — 5 account-level failures within 60s open the breaker for 60s (re-opens back off 60s×2, cap 10 min), after cooldown exactly one real request is admitted as a passive probe; success closes it, failure re-opens with a longer cooldown. Users are never sacrificed: a denied or failed probe simply falls through to the next account. Antigravity quota-429s already handled by the upstream strike-block are not double-counted. `breaker-open` / `breaker-recovered` alerts feed the phase-05 channels. Kill switch: `breakerEnabled=false` restores byte-identical behavior; thresholds tunable via `breakerFailureThreshold` / `breakerWindowSec` / `breakerBaseCooldownSec` settings.
+- **Breaker dashboard panel**: the Quota Tracker page shows open/half-open breakers, recent failure counts, cooldown countdowns, antigravity strike-blocks, and a manual reset button (states piggyback on `GET /api/providers`; reset via `POST /api/providers/{id}/breaker`).
+
 # v0.6.36 (2026-09-05)
 
 Hardening release A of the 57-finding audit program: all **45 bug/hygiene
