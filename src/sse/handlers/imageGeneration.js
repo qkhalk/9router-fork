@@ -105,6 +105,17 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
     }
 
+    // Strict-proxy failure (pool exhausted/errored): never direct - skip this
+    // account and try the next one (P1 fail-closed; pool state, not account).
+    if (credentials?.proxyExhausted) {
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = credentials.reason === "error"
+        ? `Strict proxy pool ${credentials.poolId || ""} resolution failed`.trim()
+        : `Strict proxy pool ${credentials.poolId || ""} exhausted`.trim();
+      lastStatus = HTTP_STATUS.SERVICE_UNAVAILABLE;
+      continue;
+    }
+
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
     const result = await handleImageGenerationCore({

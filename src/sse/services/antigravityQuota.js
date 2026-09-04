@@ -4,7 +4,7 @@
  * Also triggered by 409/429 error handler to sync exact resetAt from upstream.
  */
 
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { getAntigravityUsage } from "open-sse/services/usage/google.js";
 import * as log from "../utils/logger.js";
 
@@ -105,6 +105,11 @@ export async function refreshAntigravityQuota(connectionId, accessToken, provide
 async function _doRefresh(connectionId, accessToken, providerSpecificData, now) {
   try {
     const proxyCfg = await resolveConnectionProxyConfig(providerSpecificData || {});
+    if (isStrictProxyFailure(proxyCfg)) {
+      // Keep the last known quota instead of refreshing — a strict pool with
+      // no usable entry must not degrade to a direct usage fetch (P1).
+      return null;
+    }
     const proxyOptions = {
       connectionProxyEnabled: proxyCfg.connectionProxyEnabled === true,
       connectionProxyUrl: proxyCfg.connectionProxyUrl || "",

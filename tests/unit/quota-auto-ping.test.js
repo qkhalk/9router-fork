@@ -10,6 +10,7 @@ vi.mock("@/lib/localDb", () => ({
 
 vi.mock("@/lib/network/connectionProxy", () => ({
   resolveConnectionProxyConfig: vi.fn(),
+  isStrictProxyFailure: () => false,
 }));
 
 vi.mock("@/app/api/usage/[connectionId]/route.js", () => ({

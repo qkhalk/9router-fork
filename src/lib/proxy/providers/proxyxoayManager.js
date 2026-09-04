@@ -24,7 +24,7 @@
  */
 
 import net from "net";
-import { getProxyPoolById, getProxyPools, updateProxyPool } from "@/models";
+import { getProxyPoolById, getProxyPools, updateProxyPool, mutateProxyPoolEntries } from "@/models";
 import { fetchProxyXoay, ProxyXoayError } from "./proxyxoayClient.js";
 // Namespace import: proxy-chain is a transpiled CJS module (sets __esModule but
 // no `.default`), so a default import resolves to `undefined` under webpack —
@@ -133,15 +133,16 @@ function reconcileEntries(pool) {
 
 // --- persistence -----------------------------------------------------------
 
-/** Replace a single entry in the pool and persist. Best-effort (non-throwing). */
+/**
+ * Patch a single entry in the pool and persist as a transactional delta-write
+ * (read-modify-write inside one transaction — no stale whole-entries snapshot
+ * can clobber a concurrent runtime cooldown; P2/N2). Best-effort (non-throwing).
+ */
 async function persistEntry(poolId, entryId, patch) {
   try {
-    const pool = await getProxyPoolById(poolId);
-    if (!pool || !Array.isArray(pool.entries)) return null;
-    const entries = pool.entries.map((e) => (e.id === entryId ? { ...e, ...patch } : e));
-    const merged = { entries, updatedAt: new Date().toISOString() };
-    if (pool.forwardPorts) merged.forwardPorts = pool.forwardPorts;
-    return await updateProxyPool(poolId, merged);
+    return await mutateProxyPoolEntries(poolId, (entries) =>
+      entries.map((e) => (e.id === entryId ? { ...e, ...patch } : e))
+    );
   } catch (e) {
     console.warn(`[proxyxoay] persistEntry failed for ${poolId}/${entryId}:`, e?.message || e);
     return null;
@@ -182,6 +183,8 @@ async function rotateKey(state, pool, entry, { force = false } = {}) {
       proxyUrl: info.canonicalUrl,
       isActive: true,
       lastError: null,
+      // Clear any runtime cooldown so the fresh IP is immediately selectable (P10).
+      cooldownUntil: null,
       _px: {
         proxyhttp: info.proxyhttp,
         proxysocks5: info.proxysocks5,
@@ -261,6 +264,7 @@ async function refreshForwardUpstream(state, entryId, upstreamUrl) {
 }
 
 async function startForwardServer(state, pool, entry) {
+  if (!pool?.id || !entry?.id) return null;
   if (state.forwardServers.has(entry.id)) return state.forwardServers.get(entry.id);
   const preferred = FORWARD_BASE + Math.abs(hashCode(entry.id)) % 200;
   const port = await findFreePort(preferred);
@@ -285,9 +289,19 @@ async function startForwardServer(state, pool, entry) {
     return null;
   }
   const actualPort = server.port;
+  // P11: the pool row can vanish mid-registration (deleted while the port was
+  // being probed/listened). Null-guard instead of crashing — if it's gone,
+  // tear the just-started server back down and skip.
+  const poolRow = await getProxyPoolById(pool.id).catch(() => null);
+  if (!poolRow) {
+    console.warn(`[proxyxoay] pool ${pool.id} vanished mid-registration; stopping forward server for ${entry.id}`);
+    state.forwardServers.delete(entry.id);
+    try { await server.close(true); } catch { /* ignore */ }
+    return null;
+  }
   state.forwardServers.set(entry.id, { server, port: actualPort });
   // Persist the port so the UI/API can show it.
-  const forwardPorts = { ...(await getProxyPoolById(pool.id)).forwardPorts, [entry.id]: actualPort };
+  const forwardPorts = { ...poolRow.forwardPorts, [entry.id]: actualPort };
   await updateProxyPool(pool.id, { forwardPorts }).catch(() => {});
   return { server, port: actualPort };
 }

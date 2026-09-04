@@ -7,7 +7,7 @@ import { getCodexUsage } from "open-sse/services/usage/codex.js";
 import { getExecutor } from "open-sse/executors/index.js";
 import { CLAUDE_CLI_SPOOF_HEADERS } from "open-sse/providers/shared.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { refreshAndUpdateCredentials } from "@/app/api/usage/[connectionId]/route.js";
 import { QUOTA_AUTOPING_CONFIG } from "@/shared/constants/config";
 
@@ -99,7 +99,7 @@ function buildProxyOptions(cfg) {
     connectionProxyUrl: cfg.connectionProxyUrl || "",
     connectionNoProxy: cfg.connectionNoProxy || "",
     vercelRelayUrl: cfg.vercelRelayUrl || "",
-    strictProxy: false,
+    strictProxy: cfg.strictProxy === true,
   };
 }
 
@@ -196,6 +196,12 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
   if (shouldSkipAfterFailure(state, key)) return;
 
   const proxyCfg = await deps.resolveConnectionProxyConfig(conn.providerSpecificData);
+  if (isStrictProxyFailure(proxyCfg)) {
+    // Auxiliary ping — skipping is graceful; never ping provider auth endpoints
+    // from the origin IP when the strict pool has no usable entry (P1).
+    console.warn(`[AutoPing] ${provider}:${conn.id}: strict proxy pool ${proxyCfg.proxyPoolId || "?"} exhausted — skipping ping (no direct)`);
+    return;
+  }
   const proxyOptions = buildProxyOptions(proxyCfg);
 
   let connection = conn;

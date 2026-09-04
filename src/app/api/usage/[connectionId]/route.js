@@ -4,7 +4,7 @@ import "open-sse/index.js";
 import { getProviderConnectionById, updateProviderConnection } from "@/lib/localDb";
 import { getUsageForProvider } from "open-sse/services/usage.js";
 import { getExecutor } from "open-sse/executors/index.js";
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { USAGE_APIKEY_PROVIDERS } from "@/shared/constants/providers";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
@@ -145,14 +145,20 @@ export async function GET(request, { params }) {
       return Response.json({ message: "Usage not available for this connection" });
     }
 
-    // Resolve connection proxy config; force strictProxy=false so quota/refresh fall back to direct on failure
+    // Resolve connection proxy config. Under a strict pool, quota/refresh
+    // must fail rather than leak the origin IP with a direct fetch (P1).
     const proxyConfig = await resolveConnectionProxyConfig(connection.providerSpecificData);
+    if (isStrictProxyFailure(proxyConfig)) {
+      return Response.json({
+        error: `Strict proxy pool ${proxyConfig.proxyPoolId || ""} ${proxyConfig.source === "error" ? "resolution failed" : "exhausted"} — usage fetch refused to go direct`,
+      }, { status: 503 });
+    }
     const proxyOptions = {
       connectionProxyEnabled: proxyConfig.connectionProxyEnabled === true,
       connectionProxyUrl: proxyConfig.connectionProxyUrl || "",
       connectionNoProxy: proxyConfig.connectionNoProxy || "",
       vercelRelayUrl: proxyConfig.vercelRelayUrl || "",
-      strictProxy: false,
+      strictProxy: proxyConfig.strictProxy === true,
     };
 
     // Refresh credentials only for OAuth connections (apikey has no token refresh)

@@ -131,6 +131,17 @@ export async function handleVideoCreate(request, action) {
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
     }
 
+    // Strict-proxy failure (pool exhausted/errored): never direct - skip this
+    // account and try the next one (P1 fail-closed; pool state, not account).
+    if (credentials?.proxyExhausted) {
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = credentials.reason === "error"
+        ? `Strict proxy pool ${credentials.poolId || ""} resolution failed`.trim()
+        : `Strict proxy pool ${credentials.poolId || ""} exhausted`.trim();
+      lastStatus = HTTP_STATUS.SERVICE_UNAVAILABLE;
+      continue;
+    }
+
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
     const result = await handleVideoProxyCore({
@@ -192,6 +203,11 @@ export async function handleVideoGet(request, requestId) {
   if (!credentials || credentials.allRateLimited) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
   }
+  // Strict-proxy failure: never direct - refuse instead of fetching from the origin IP (P1).
+  if (credentials?.proxyExhausted) {
+    return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `Strict proxy pool ${credentials.poolId || ""} exhausted - refusing direct fetch`);
+  }
+
 
   const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 

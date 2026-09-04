@@ -1,5 +1,5 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
-import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig, pickProxyPoolId, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
@@ -58,6 +58,23 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         pickedId = pickProxyPoolId(poolIds, strategy, providerId);
       }
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
+      // No fallback candidate exists for no-auth providers (single pick), so a
+      // strict pool with no usable entry surfaces as the all-rate-limited
+      // shape — the chat loop turns that into a 503 with retry-after instead
+      // of silently fetching direct from the origin IP (P1).
+      if (isStrictProxyFailure(resolvedProxy)) {
+        const retryAfter = new Date(Date.now() + 60_000).toISOString();
+        log.warn("AUTH", `No-auth ${providerId}: strict proxy pool ${resolvedProxy.proxyPoolId || "?"} ${resolvedProxy.source === "error" ? "resolution failed" : "exhausted"} — refusing direct`);
+        return {
+          allRateLimited: true,
+          retryAfter,
+          retryAfterHuman: formatRetryAfter(retryAfter),
+          lastError: resolvedProxy.source === "error"
+            ? "Strict proxy pool resolution failed"
+            : `Strict proxy pool ${resolvedProxy.proxyPoolId || ""} exhausted`.trim(),
+          lastErrorCode: 503,
+        };
+      }
       return {
         id: "noauth",
         connectionName: "Public",
@@ -199,6 +216,21 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+
+    // Fail-closed (P1): a strict pool with no usable entry must never degrade
+    // to a direct fetch. Signal the caller's fallback loop to skip this
+    // account and try the next one; when every account is skipped the request
+    // ends in 503. The account itself is NOT locked — the pool is the problem.
+    if (isStrictProxyFailure(resolvedProxy)) {
+      log.warn("AUTH", `${provider} | ${connection.id?.slice(0, 8)} strict proxy pool ${resolvedProxy.proxyPoolId || "?"} ${resolvedProxy.source === "error" ? "resolution failed" : "exhausted"} — skipping account (never direct)`);
+      return {
+        proxyExhausted: true,
+        reason: resolvedProxy.source,
+        connectionId: connection.id,
+        connectionName: connection.displayName || connection.name || connection.email || connection.id,
+        poolId: resolvedProxy.proxyPoolId || null,
+      };
+    }
 
     return {
       authType: connection.authType,

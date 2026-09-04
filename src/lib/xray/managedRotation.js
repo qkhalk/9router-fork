@@ -119,6 +119,7 @@ const RECENT_SWITCH_SKIP_MS = 5 * 60 * 1000;  // skip configs rotated-to recentl
 const MAX_RECENTLY_TRIED = 8;                  // cap the in-memory try history
 
 let inflight = null;        // Promise<{rotated:boolean, reason:string}> | null
+let deciding = false;       // synchronous single-flight for the cooldown-bypass decision (P8)
 let lastRotateAt = 0;       // epoch ms of last successful rotation
 let lastRotatedToConfigId = null; // the configId we most recently rotated TO
 const recentlyTried = new Map(); // configId -> epoch ms it was rotated to
@@ -368,16 +369,28 @@ export async function triggerManagedRotationOnProxyError({ status, error, model 
     logRotation("debug", "managed-pool rotation skipped: already in flight", { status, model });
     return inflight;
   }
+  // Single-flight for the cooldown-bypass decision (P8): deciding involves an
+  // await (shouldBypassCooldown reads the active xray config), so a plain
+  // `inflight` guard would let concurrent callers pile past this point and
+  // start overlapping rotations. deciding is set synchronously BEFORE that
+  // first await and only cleared once inflight is assigned (or we bail).
+  if (deciding) {
+    logRotation("debug", "managed-pool rotation skipped: bypass decision in flight", { status, model });
+    return { rotated: false, reason: "cooldown" };
+  }
   if (nowMs() - lastRotateAt < ROTATION_COOLDOWN_MS) {
     // Adaptive bypass: if the CURRENT active config is the one we just rotated
     // to, the new IP is also erroring — don't make the user wait out cooldown,
     // rotate again immediately. recentlyTried prevents re-picking the same IP.
-    if (await shouldBypassCooldown()) {
-      logRotation("info", "managed-pool rotation cooldown bypassed (active == last rotated-to)", {
-        status, model, sinceLastRotateMs: nowMs() - lastRotateAt, cooldownMs: ROTATION_COOLDOWN_MS,
-      });
-      // Fall through to start a new rotation below.
-    } else {
+    deciding = true;
+    let bypass = false;
+    try {
+      bypass = await shouldBypassCooldown();
+    } catch {
+      bypass = false;
+    }
+    if (!bypass) {
+      deciding = false;
       logRotation("debug", "managed-pool rotation skipped: cooldown", {
         status,
         model,
@@ -386,6 +399,16 @@ export async function triggerManagedRotationOnProxyError({ status, error, model 
       });
       return { rotated: false, reason: "cooldown" };
     }
+    logRotation("info", "managed-pool rotation cooldown bypassed (active == last rotated-to)", {
+      status, model, sinceLastRotateMs: nowMs() - lastRotateAt, cooldownMs: ROTATION_COOLDOWN_MS,
+    });
+    // Fall through to start a new rotation below. deciding stays true across
+    // this synchronous stretch (no await between here and the inflight
+    // assignment); the rotation's finally clears it.
+    inflight = doRotate({ status, errorText: typeof error === "string" ? error : "", model })
+      .catch((e) => ({ rotated: false, reason: `exception:${e?.message || String(e)}` }))
+      .finally(() => { inflight = null; deciding = false; });
+    return inflight;
   }
   inflight = doRotate({ status, errorText: typeof error === "string" ? error : "", model })
     .catch((e) => ({ rotated: false, reason: `exception:${e?.message || String(e)}` }))
@@ -409,6 +432,7 @@ async function shouldBypassCooldown() {
 /** Reset all in-memory state. Intended for tests. */
 export function _resetManagedRotationState() {
   inflight = null;
+  deciding = false;
   lastRotateAt = 0;
   lastRotatedToConfigId = null;
   recentlyTried.clear();

@@ -97,6 +97,17 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
     }
 
+    // Strict-proxy failure (pool exhausted/errored): never direct - skip this
+    // account and try the next one (P1 fail-closed; pool state, not account).
+    if (credentials?.proxyExhausted) {
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = credentials.reason === "error"
+        ? `Strict proxy pool ${credentials.poolId || ""} resolution failed`.trim()
+        : `Strict proxy pool ${credentials.poolId || ""} exhausted`.trim();
+      lastStatus = HTTP_STATUS.SERVICE_UNAVAILABLE;
+      continue;
+    }
+
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
     const result = await handleTtsCore({ provider, model, input: body.input, credentials, responseFormat, language, style });

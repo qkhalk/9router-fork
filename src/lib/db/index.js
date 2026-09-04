@@ -26,6 +26,10 @@ export {
   getProxyPools, getProxyPoolById,
   createProxyPool, updateProxyPool, deleteProxyPool,
   markProxyEntryCooldown,
+  mutateProxyPoolEntries,
+  stampProxyEntryUsed,
+  setEntryCooldown,
+  normalizeCooldownUntil,
 } from "./repos/proxyPoolsRepo.js";
 
 // API keys

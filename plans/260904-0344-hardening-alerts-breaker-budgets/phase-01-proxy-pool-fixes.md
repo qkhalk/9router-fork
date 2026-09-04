@@ -74,21 +74,21 @@ Fix the proxy-pool subsystem's systemic fail-open behavior. Centerpiece: **stric
 
 ## Todo list
 
-- [ ] P1+N3 connectionProxy strict-exhausted/error signals (steps 1)
-- [ ] P1 auth.js candidate-skip + chat.js strict-aware rotation (steps 2-3)
-- [ ] P1+N1 test-route failStreak=3 + v2go exemption + no-entries guard (step 4)
-- [ ] P2+N2 delta-write repo helpers + both lost-update writers (step 5)
-- [ ] P3 DELETE providerStrategies 409 (step 6)
-- [ ] P4 empty-URL filter (step 7)
-- [ ] P5 dispatcher close + inflight guard (step 8)
-- [ ] P6 import dedup unification (step 9)
-- [ ] P7 stable ordering + per-pool rr counter (step 10)
-- [ ] P8 synchronous single-flight flag (step 11)
-- [ ] P9 dead-code removal decision + logged persists (step 12)
-- [ ] P10 rotateKey clears cooldown (step 13)
-- [ ] P11 null-guard (step 14)
-- [ ] P12 cooldownUntil normalization (step 15)
-- [ ] Tests added; suite 0 pass→fail; detect_changes() clean; committed
+- [x] P1+N3 connectionProxy strict-exhausted/error signals (steps 1)
+- [x] P1 auth.js candidate-skip + chat.js strict-aware rotation (steps 2-3)
+- [x] P1+N1 test-route failStreak=3 + v2go exemption + no-entries guard (step 4)
+- [x] P2+N2 delta-write repo helpers + both lost-update writers (step 5)
+- [x] P3 DELETE providerStrategies 409 (step 6)
+- [x] P4 empty-URL filter (step 7)
+- [x] P5 dispatcher close + inflight guard (step 8)
+- [x] P6 import dedup unification (step 9)
+- [x] P7 stable ordering + per-pool rr counter (step 10)
+- [x] P8 synchronous single-flight flag (step 11)
+- [x] P9 dead-code removal decision + logged persists (step 12)
+- [x] P10 rotateKey clears cooldown (step 13)
+- [x] P11 null-guard (step 14)
+- [x] P12 cooldownUntil normalization (step 15)
+- [x] Tests added; suite 0 pass→fail; detect_changes() clean; committed
 
 ## Success Criteria
 
@@ -117,3 +117,13 @@ Fix the proxy-pool subsystem's systemic fail-open behavior. Centerpiece: **stric
 - Phase 02 (managed subsystems) is independent — can start in parallel with different files.
 - The `proxy-pool-exhausted` / `strictproxy-violation` signals added in steps 1-3 become phase-05 alert insertion points (tag call sites with TODO(comments) referencing phase-05).
 - Constraint for phase-05 wiring: emitAlert calls inside `resolveConnectionProxyConfig` run inside auth.js's `selectionMutex` (auth.js:34-40 wraps :201) — emit must be strictly fire-and-forget (never awaited; sync dedup check only).
+
+## Implementation notes (2026-09-04, executed)
+
+- **failStreak storage deviation (KISS):** stored in the pool's JSON `data` blob (like `strictProxy`/`rrCounter`), NOT a new SQL column — proxyPools rows already carry all pool fields in `data`; no schema.js change or migration needed.
+- **P1 contract:** `resolveConnectionProxyConfig` returns `{source:"exhausted"}` for strict pools with no usable entry (inactive/empty/group-exhausted) and propagates the real `strictProxy` flag on `source:"error"` (N3). New shared guard `isStrictProxyFailure()` consumed by auth.js (noauth→allRateLimited shape; authed→`proxyExhausted` marker consumed by all 9 handler fallback loops — chat/image/tts/stt/video/fetch/search/embeddings) and all 9 peripheral callers (fail the operation, never direct). One documented gap: if `getProxyPoolById` itself throws, strictness is unknowable → non-strict graceful shape (P3's DELETE guard prevents the deleted-while-bound state).
+- **P2/N2:** new `mutateProxyPoolEntries` transactional delta helper + `stampProxyEntryUsed`/`setEntryCooldown`/`rotateGroupCursor`; connectionProxy pick path, test route, and proxyxoay `persistEntry` no longer persist stale whole-`entries` snapshots. `updateProxyPool` unchanged (PUT user edits legitimately replace entries; tx merge is per-field safe for scalars).
+- **P7:** `pickProxyGroupEntry` round-robin now uses a module-level per-pool cursor (no per-pick DB write, no updatedAt churn); return shape changed `{entry, updatedPool}` → `{entry}`. `getProxyPools` sorts by `createdAt,id`.
+- **P12:** `normalizeCooldownUntil()` exported from the repo; applied in `setEntryCooldown` and PUT-route `normalizeGroupEntry`.
+- **quotaAutoPing/usage/codex-reset strict passthrough:** the hard-coded `strictProxy:false` in usage/codex-reset proxyOptions was flipped to the resolved pool's real flag — strict pools never direct-fallback on auxiliary auth/quota fetches either.
+- **Verification:** 8 new test files (52 tests) all green; full-suite diff vs. stashed clean tree = 0 new failures (121 pre-existing local-env failures identical on master: missing packages in tests/node_modules). `node --check` clean on all 28 changed source files. detect_changes() scope = intended proxy subsystem only. eslint unavailable locally (not installed) — CI lint gate pending.

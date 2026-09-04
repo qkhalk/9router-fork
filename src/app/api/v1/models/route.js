@@ -16,7 +16,7 @@ import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { resolveCursorModels } from "open-sse/services/cursorModels.js";
 import { resolveZedModels } from "open-sse/shared/zedAuth.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 
 // Per-provider live model resolvers. Each receives a connection record and
@@ -78,6 +78,9 @@ const LIVE_MODEL_RESOLVERS = {
   },
   "grok-cli": async (conn) => {
     const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
+    if (isStrictProxyFailure(proxy)) {
+      throw new Error(`Strict proxy pool ${proxy.proxyPoolId || ""} ${proxy.source === "error" ? "resolution failed" : "exhausted"} — refusing direct model fetch`);
+    }
     const result = await resolveGrokCliModels({
       ...conn,
       connectionId: conn.id,

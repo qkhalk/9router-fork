@@ -4,7 +4,6 @@ import { dbg } from "./debugLog.js";
 import { canonicalizeProxyUrl } from "@/lib/proxy/parseProxy.js";
 
 const originalFetch = globalThis.fetch;
-const proxyDispatchers = new Map();
 
 // ─── TLS fingerprinting via got-scraping (browser-like JA3) ───────────────
 // Disabled: not in use. Kept commented for future re-enable.
@@ -197,43 +196,88 @@ function normalizeProxyUrl(proxyUrl) {
   return canonicalizeProxyUrl(normalizedInput);
 }
 
-function resolveConnectionProxyUrl(targetUrl, proxyOptions) {
-  const enabled = proxyOptions?.enabled === true || proxyOptions?.connectionProxyEnabled === true;
-  if (!enabled) return null;
+/**
+ * Dispatcher cache: normalized proxy url → { agent, refCount, closeOnRelease }.
+ * - refCount tracks in-flight requests using the agent so an evicted agent is
+ *   only closed once idle (closing a busy agent aborts its streams).
+ * - closeOnRelease defers that close to the moment the last request finishes.
+ */
+const proxyDispatchers = new Map();
+// Single-flight creation guard: concurrent requests for the same proxy must not
+// each build their own agent before the first lands in the cache (P5).
+const dispatcherCreation = new Map();
 
-  const proxyUrlRaw = normalizeString(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl);
-  if (!proxyUrlRaw) return null;
+function closeDispatcherEntry(agent) {
+  Promise.resolve(agent.close?.()).catch((e) =>
+    console.warn(`[ProxyFetch] failed closing evicted proxy dispatcher: ${e?.message || e}`)
+  );
+}
 
-  const noProxy = normalizeString(proxyOptions?.noProxy ?? proxyOptions?.connectionNoProxy);
-  if (noProxy && shouldBypassByNoProxy(targetUrl, noProxy)) return null;
+function maybeCloseEntry(entry) {
+  if (entry.refCount > 0) {
+    entry.closeOnRelease = true;
+    return;
+  }
+  closeDispatcherEntry(entry.agent);
+}
 
-  return normalizeProxyUrl(proxyUrlRaw);
+async function createDispatcherEntry(normalized) {
+  // ProxyAgent speaks HTTP CONNECT only — SOCKS proxies (e.g. the local
+  // xray socks inbound) need a SOCKS-tunnelling connector instead.
+  const { createSocksDispatcher, isSocksProxyUrl } = await import("@/lib/network/socksDispatcher.js");
+  const agent = isSocksProxyUrl(normalized)
+    ? createSocksDispatcher(normalized)
+    : new (await import("undici")).ProxyAgent({ uri: normalized });
+  return { agent, refCount: 0, closeOnRelease: false };
+}
+
+function evictOldestDispatcher() {
+  if (proxyDispatchers.size < MEMORY_CONFIG.proxyDispatchersMaxSize) return;
+  const oldestKey = proxyDispatchers.keys().next().value;
+  const evicted = proxyDispatchers.get(oldestKey);
+  proxyDispatchers.delete(oldestKey);
+  if (evicted) maybeCloseEntry(evicted);
+}
+
+async function getDispatcherEntry(normalized) {
+  const cached = proxyDispatchers.get(normalized);
+  if (cached) return cached;
+  let creating = dispatcherCreation.get(normalized);
+  if (!creating) {
+    creating = createDispatcherEntry(normalized)
+      .then((entry) => {
+        evictOldestDispatcher();
+        proxyDispatchers.set(normalized, entry);
+        dispatcherCreation.delete(normalized);
+        return entry;
+      })
+      .catch((err) => {
+        dispatcherCreation.delete(normalized);
+        throw err;
+      });
+    dispatcherCreation.set(normalized, creating);
+  }
+  return creating;
 }
 
 /**
- * Create proxy dispatcher lazily (undici-compatible)
+ * Acquire a proxy dispatcher with usage tracking. The returned release() must
+ * be called when the request finishes; it closes an evicted agent once idle.
  */
-async function getDispatcher(proxyUrl) {
+async function acquireDispatcher(proxyUrl) {
   const normalized = normalizeProxyUrl(proxyUrl);
-  if (!normalized) return null;
-
-  if (!proxyDispatchers.has(normalized)) {
-    // Evict oldest entry if max size reached
-    if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
-      proxyDispatchers.delete(proxyDispatchers.keys().next().value);
-    }
-    // ProxyAgent speaks HTTP CONNECT only — SOCKS proxies (e.g. the local
-    // xray socks inbound) need a SOCKS-tunnelling connector instead.
-    const { createSocksDispatcher, isSocksProxyUrl } = await import("@/lib/network/socksDispatcher.js");
-    proxyDispatchers.set(
-      normalized,
-      isSocksProxyUrl(normalized)
-        ? createSocksDispatcher(normalized)
-        : new (await import("undici")).ProxyAgent({ uri: normalized })
-    );
-  }
-
-  return proxyDispatchers.get(normalized);
+  const entry = await getDispatcherEntry(normalized);
+  entry.refCount += 1;
+  return {
+    agent: entry.agent,
+    release: () => {
+      entry.refCount = Math.max(0, entry.refCount - 1);
+      if (entry.refCount === 0 && entry.closeOnRelease) {
+        entry.closeOnRelease = false;
+        closeDispatcherEntry(entry.agent);
+      }
+    },
+  };
 }
 
 /**
@@ -310,8 +354,30 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     return originalFetch(vercelRelayUrl, { ...options, headers: relayHeaders });
   }
 
-  const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
-  const envProxyUrl = connectionProxyUrl ? null : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
+  // Strict connections must egress via THEIR proxy only (P1): an env-var
+  // proxy is never an acceptable substitute, and a direct fetch is worse.
+  const strict = proxyOptions?.strictProxy === true;
+  const proxyEnabled = proxyOptions?.enabled === true || proxyOptions?.connectionProxyEnabled === true;
+  const rawConnUrl = normalizeString(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl);
+  let connectionProxyUrl = null;
+  let noProxyBypassed = false;
+  if (proxyEnabled && rawConnUrl) {
+    const noProxy = normalizeString(proxyOptions?.noProxy ?? proxyOptions?.connectionNoProxy);
+    if (noProxy && shouldBypassByNoProxy(targetUrl, noProxy)) {
+      // Explicit per-host direct exclusion — honored even under strictProxy.
+      noProxyBypassed = true;
+    } else {
+      connectionProxyUrl = normalizeProxyUrl(rawConnUrl);
+    }
+  }
+  if (strict && proxyEnabled && !connectionProxyUrl && !noProxyBypassed) {
+    // Enabled but unresolvable (empty/unparseable URL) under strict — refuse
+    // rather than silently egressing from the origin IP.
+    throw new Error("[ProxyFetch] strictProxy=true but connection proxy could not be resolved; refusing direct fetch");
+  }
+  const envProxyUrl = connectionProxyUrl || noProxyBypassed || strict
+    ? null
+    : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
   const proxyUrl = connectionProxyUrl || envProxyUrl;
 
   // MITM DNS bypass: for known MITM-intercepted hosts, resolve real IP to avoid DNS spoof
@@ -319,10 +385,14 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     if (proxyUrl) {
       // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
       try {
-        const dispatcher = await getDispatcher(proxyUrl);
-        return await originalFetch(url, { ...options, dispatcher });
+        const { agent: dispatcher, release } = await acquireDispatcher(proxyUrl);
+        try {
+          return await originalFetch(url, { ...options, dispatcher });
+        } finally {
+          release();
+        }
       } catch (proxyError) {
-        if (proxyOptions?.strictProxy === true) {
+        if (strict) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
         console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
@@ -340,11 +410,15 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
 
   if (proxyUrl) {
     try {
-      const dispatcher = await getDispatcher(proxyUrl);
-      return await originalFetch(url, { ...options, dispatcher });
+      const { agent: dispatcher, release } = await acquireDispatcher(proxyUrl);
+      try {
+        return await originalFetch(url, { ...options, dispatcher });
+      } finally {
+        release();
+      }
     } catch (proxyError) {
       // If strictProxy is enabled, fail hard instead of falling back to direct
-      if (proxyOptions?.strictProxy === true) {
+      if (strict) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
