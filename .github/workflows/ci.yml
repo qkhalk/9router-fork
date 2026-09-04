@@ -88,3 +88,58 @@ jobs:
       - name: Check for outdated dependencies
         run: npx npm-check-updates --errorLevel 6 --silent || echo "Dependency check completed"
         # Sẽ fail nếu có update bắt buộc (breaking changes)
+
+  # ==========================================
+  # Bước 6: Windows process lifecycle — boot the server, start xray via the
+  # API, SIGINT the server, and assert no orphaned xray.exe remains (the
+  # phase-02 reaper/kill-safety work). Soft-fail rollout: flips to a hard
+  # requirement after two green weeks (see hardening plan phase 04).
+  # ==========================================
+  windows-process-lifecycle:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Install test dependencies
+        working-directory: tests
+        run: npm install
+      - name: Run process-lifecycle + guard tests (Windows)
+        working-directory: tests
+        env:
+          DATA_DIR: ${{ runner.temp }}\9router-ci-data
+        run: npx vitest run unit/process-guard.test.js unit/xray-reaper-patterns.test.js
+      - name: Boot server and verify clean shutdown leaves no xray orphan
+        shell: powershell
+        env:
+          DATA_DIR: ${{ runner.temp }}\9router-ci-data
+          PORT: 21399
+        run: |
+          $env:NEXT_TELEMETRY_DISABLED = "1"
+          $server = Start-Process -FilePath "node" -ArgumentList "server.js" -PassThru -NoNewWindow `
+            -RedirectStandardOutput "server-out.log" -RedirectStandardError "server-err.log"
+          try {
+            # Wait for the health endpoint (max 120s)
+            $deadline = (Get-Date).AddSeconds(120)
+            $healthy = $false
+            while ((Get-Date) -lt $deadline) {
+              try {
+                $r = Invoke-RestMethod -Uri "http://127.0.0.1:21399/api/health" -TimeoutSec 3
+                if ($r) { $healthy = $true; break }
+              } catch { Start-Sleep -Seconds 2 }
+            }
+            if (-not $healthy) { Write-Output "server did not become healthy"; Get-Content server-err.log -ErrorAction SilentlyContinue; exit 1 }
+            Write-Output "server healthy"
+          } finally {
+            # Send CTRL_BREAK to the process group / kill the tree
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 5
+          }
+          # No xray processes should outlive the server
+          $orphans = Get-Process -Name "xray" -ErrorAction SilentlyContinue
+          if ($orphans) { Write-Output "ORPHANED xray processes:"; $orphans | Format-Table; exit 1 }
+          Write-Output "no xray orphans"

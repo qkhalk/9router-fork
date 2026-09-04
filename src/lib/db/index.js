@@ -123,6 +123,11 @@ export async function exportDb() {
   return out;
 }
 
+// Settings keys an imported archive must never overwrite (S1): a crafted
+// import could otherwise swap the bcrypt password hash or replant the sudo
+// ciphertext. Current values are preserved over imported ones.
+const PROTECTED_SETTING_KEYS = ["password", "mitmSudoEncrypted"];
+
 export async function importDb(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("Invalid database payload");
@@ -130,6 +135,11 @@ export async function importDb(payload) {
   const db = await getAdapter();
 
   db.transaction(() => {
+    // Snapshot protected settings BEFORE the wipe — they must survive the
+    // import (see PROTECTED_SETTING_KEYS below).
+    const currentRow = db.get(`SELECT data FROM settings WHERE id = 1`);
+    const currentSettings = parseJson(currentRow?.data, null) ?? {};
+
     // Wipe all tables (keep _meta)
     db.run(`DELETE FROM settings`);
     db.run(`DELETE FROM providerConnections`);
@@ -141,7 +151,12 @@ export async function importDb(payload) {
 
     // Settings
     if (payload.settings) {
-      db.run(`INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`, [stringifyJson(payload.settings)]);
+      const importedSettings = { ...payload.settings };
+      for (const key of PROTECTED_SETTING_KEYS) {
+        if (key in currentSettings) importedSettings[key] = currentSettings[key];
+        else delete importedSettings[key];
+      }
+      db.run(`INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`, [stringifyJson(importedSettings)]);
     }
 
     for (const c of payload.providerConnections || []) {

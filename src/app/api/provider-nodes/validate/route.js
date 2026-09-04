@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { assertPublicUrl } from "@/shared/utils/ssrfGuard.js";
+import { assertPublicUrl, fetchPublic } from "@/shared/utils/ssrfGuard.js";
 import { isLocalRequest } from "@/dashboardGuard";
 
-// Fetch with timeout wrapper
+// Fetch with timeout wrapper. Routes through fetchPublic (S2): every hop is
+// DNS-resolved against the private-IP blocklist and redirects are re-validated
+// — a plain fetch() would auto-follow into 169.254.169.254 et al.
 const fetchWithTimeout = (url, options, timeout = 10000) => {
   return Promise.race([
-    fetch(url, options),
+    fetchPublic(url, options),
     new Promise((_, reject) => 
       setTimeout(() => reject(new Error("Request timeout")), timeout)
     )

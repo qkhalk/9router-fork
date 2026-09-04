@@ -36,7 +36,7 @@ function generateRootCA() {
   }
 
   if (!fs.existsSync(MITM_DIR)) {
-    fs.mkdirSync(MITM_DIR, { recursive: true });
+    fs.mkdirSync(MITM_DIR, { recursive: true, mode: 0o700 });
   }
 
   console.log("🔐 Generating Root CA certificate...");
@@ -85,8 +85,13 @@ function generateRootCA() {
   const privateKeyPem = forge.pki.privateKeyToPem(keys.privateKey);
   const certPem = forge.pki.certificateToPem(cert);
 
-  fs.writeFileSync(ROOT_CA_KEY_PATH, privateKeyPem);
+  fs.writeFileSync(ROOT_CA_KEY_PATH, privateKeyPem, { mode: 0o600 });
   fs.writeFileSync(ROOT_CA_CERT_PATH, certPem);
+  // Tighten pre-existing installs too (mode on write only applies at creation).
+  if (process.platform !== "win32") {
+    try { fs.chmodSync(ROOT_CA_KEY_PATH, 0o600); } catch { /* best-effort */ }
+    try { fs.chmodSync(MITM_DIR, 0o700); } catch { /* best-effort */ }
+  }
 
   console.log("✅ Root CA generated successfully");
   return { key: ROOT_CA_KEY_PATH, cert: ROOT_CA_CERT_PATH };

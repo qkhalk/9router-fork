@@ -195,11 +195,14 @@ export function setUnexpectedExitHandler(handler) {
 export async function spawnCloudflared(tunnelToken) {
   const binaryPath = await ensureCloudflared();
 
-  const child = spawn(binaryPath, ["tunnel", "run", "--dns-resolver-addrs", "1.1.1.1:53", "--token", tunnelToken], {
+  // S10: token goes via the TUNNEL_TOKEN env var (cloudflared's supported
+  // channel) — never argv, where `ps` on a multi-user host would show it.
+  const child = spawn(binaryPath, ["tunnel", "run", "--dns-resolver-addrs", "1.1.1.1:53"], {
     detached: false,
     windowsHide: true,
     cwd: os.tmpdir(),
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, TUNNEL_TOKEN: tunnelToken }
   });
 
   cloudflaredProcess = child;

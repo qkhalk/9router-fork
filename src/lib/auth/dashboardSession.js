@@ -5,6 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { DATA_DIR } from "@/lib/dataDir";
 import { getSettings } from "@/lib/localDb";
+import { isLocalRequest } from "./requestLocality.js";
 
 const DEFAULT_PASSWORD = "123456";
 
@@ -72,11 +73,17 @@ export function clearDashboardAuthCookie(cookieStore) {
 }
 
 // Verify the current dashboard password (re-auth for sensitive actions).
-export async function verifyDashboardPassword(password) {
+// `request` enables the locality gate on the default-password fallback (N11):
+// the printed "123456" (or INITIAL_PASSWORD) is only acceptable from the host
+// itself — remotely it would admit anyone into a fresh install.
+export async function verifyDashboardPassword(password, request = null) {
   if (typeof password !== "string" || !password) return false;
   const settings = await getSettings();
   const storedHash = settings?.password;
   if (storedHash) return bcrypt.compare(password, storedHash);
+  if (!process.env.INITIAL_PASSWORD && !(request && isLocalRequest(request))) {
+    return false;
+  }
   const initialPassword = process.env.INITIAL_PASSWORD || DEFAULT_PASSWORD;
   return password === initialPassword;
 }
