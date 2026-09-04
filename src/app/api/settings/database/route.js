@@ -2,22 +2,27 @@ import { NextResponse } from "next/server";
 import { exportDb, getSettings, importDb } from "@/lib/localDb";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { verifyDashboardPassword } from "@/lib/auth/dashboardSession";
+import { hasValidCliToken } from "@/dashboardGuard";
 
-const CLI_TOKEN_HEADER = "x-9r-cli-token";
 const PASSWORD_HEADER = "x-9r-password";
 
-// CLI token requests are already trusted (local machine); skip password re-auth.
-function isCliRequest(request) {
-  return Boolean(request.headers.get(CLI_TOKEN_HEADER));
+// S1: the CLI-token path must present the REAL per-install token (constant-time
+// compared in the guard) — not just any value in the header. Previously any
+// dashboard session could add the header and skip password re-auth if the
+// middleware layer were ever bypassed.
+async function authorized(request, password) {
+  if (await hasValidCliToken(request)) return true;
+  return verifyDashboardPassword(password, request);
 }
 
 export async function GET(request) {
   try {
-    if (!isCliRequest(request) && !(await verifyDashboardPassword(request.headers.get(PASSWORD_HEADER)))) {
+    if (!(await authorized(request, request.headers.get("x-9r-password")))) {
       return NextResponse.json({ error: "Invalid password" }, { status: 401 });
     }
     const payload = await exportDb();
-    return NextResponse.json(payload);
+    // N12: full-credential artifact — never cacheable by intermediaries.
+    return NextResponse.json(payload, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.log("Error exporting database:", error);
     return NextResponse.json({ error: "Failed to export database" }, { status: 500 });
@@ -27,7 +32,7 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const { password, ...payload } = await request.json();
-    if (!isCliRequest(request) && !(await verifyDashboardPassword(password))) {
+    if (!(await authorized(request, password))) {
       return NextResponse.json({ error: "Invalid password" }, { status: 401 });
     }
     await importDb(payload);

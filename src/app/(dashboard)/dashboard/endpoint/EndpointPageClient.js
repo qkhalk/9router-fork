@@ -983,6 +983,9 @@ export default function APIPageClient({ machineId }) {
                 }}
               />
             )}
+            {externalTunnelUrl && externalTunnelUrl.startsWith("http://") && (
+              <SecurityWarning message="External tunnel URL uses http:// — dashboard credentials and API keys cross the network in cleartext. Use an HTTPS URL or disable the external tunnel." />
+            )}
           </div>
         )}
 

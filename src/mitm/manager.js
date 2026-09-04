@@ -95,7 +95,26 @@ function ensureRuntimeServer(bundledPath) {
 
 const SERVER_PATH = ensureRuntimeServer(resolveBundledServerPath());
 const ENCRYPT_ALGO = "aes-256-gcm";
-const ENCRYPT_SALT = "9router-mitm-pwd";
+
+// S5+N10: the AES key for the sudo-password ciphertext derives from a random
+// per-install secret file (0o600, DATA_DIR/auth) — never from the public
+// machineId + a committed salt. This file is CJS (src/lib/auth/installSecret.js
+// is its ESM twin); both use the same DATA_DIR/auth location.
+let cachedMitmSecret = null;
+function loadMitmSecret() {
+  if (cachedMitmSecret) return cachedMitmSecret;
+  const dir = path.join(DATA_DIR, "auth");
+  const file = path.join(dir, "mitm-secret");
+  try {
+    cachedMitmSecret = fs.readFileSync(file, "utf8").trim() || null;
+  } catch { /* first run */ }
+  if (!cachedMitmSecret) {
+    fs.mkdirSync(dir, { recursive: true });
+    cachedMitmSecret = crypto.randomBytes(32).toString("hex");
+    fs.writeFileSync(file, cachedMitmSecret, { mode: 0o600 });
+  }
+  return cachedMitmSecret;
+}
 
 function getProcessUsingPort443() {
   try {
@@ -152,13 +171,11 @@ function killProcess(pid, force = false, sudoPassword = null) {
 }
 
 function deriveKey() {
-  try {
-    const { machineIdSync } = require("node-machine-id");
-    const raw = machineIdSync();
-    return crypto.createHash("sha256").update(raw + ENCRYPT_SALT).digest();
-  } catch {
-    return crypto.createHash("sha256").update(ENCRYPT_SALT).digest();
-  }
+  // Fail-closed by design (N10): if the per-install secret cannot be loaded,
+  // decryption must NOT fall back to any public constant — ciphertext saved
+  // under the old scheme simply becomes undecryptable and the sudo prompt
+  // re-asks (the caller treats a null password as "not stored").
+  return crypto.createHash("sha256").update(loadMitmSecret()).digest();
 }
 
 function encryptPassword(plaintext) {

@@ -1,6 +1,8 @@
 // Web Fetch handler — dispatches to firecrawl, jina-reader, tavily, exa, ollama
 // Returns normalized shape across all providers
 
+import { fetchPublic } from "../../../src/shared/utils/ssrfGuard.js";
+
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_FORMAT = "markdown";
 
@@ -32,7 +34,9 @@ async function tryFetch(url, init, timeoutMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...init, headers: sanitizeHeaders(init.headers), signal: ctrl.signal });
+    // fetchPublic (S2): manual redirects, per-hop SSRF revalidation — the
+    // initial assertPublicUrlResolved in the caller covers only the first URL.
+    const res = await fetchPublic(url, { ...init, headers: sanitizeHeaders(init.headers), signal: ctrl.signal });
     return { ok: true, res };
   } catch (err) {
     const isAbort = err?.name === "AbortError";

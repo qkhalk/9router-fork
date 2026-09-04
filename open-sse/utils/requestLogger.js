@@ -69,25 +69,24 @@ function writeJsonFile(sessionPath, filename, data) {
   }
 }
 
-// Mask sensitive data in headers (DISABLED - keep full token for testing)
+// Mask sensitive data in headers (S3: re-enabled — ENABLE_REQUEST_LOGS is
+// opt-in debugging, not a license to persist bearer tokens to disk).
 function maskSensitiveHeaders(headers) {
   if (!headers) return {};
-  return { ...headers };
-  
-  // Old masking code (disabled):
-  // const masked = { ...headers };
-  // const sensitiveKeys = ["authorization", "x-api-key", "cookie", "token"];
-  // 
-  // for (const key of Object.keys(masked)) {
-  //   const lowerKey = key.toLowerCase();
-  //   if (sensitiveKeys.some(sk => lowerKey.includes(sk))) {
-  //     const value = masked[key];
-  //     if (value && value.length > 20) {
-  //       masked[key] = value.slice(0, 10) + "..." + value.slice(-5);
-  //     }
-  //   }
-  // }
-  // return masked;
+  const masked = { ...headers };
+  const sensitiveKeys = ["authorization", "x-api-key", "cookie", "token", "api-key", "set-cookie"];
+  for (const key of Object.keys(masked)) {
+    const lowerKey = String(key).toLowerCase();
+    if (sensitiveKeys.some((sk) => lowerKey.includes(sk))) {
+      const value = masked[key];
+      if (typeof value === "string" && value.length > 8) {
+        masked[key] = value.slice(0, 6) + "..." + value.slice(-4);
+      } else if (value != null) {
+        masked[key] = "[REDACTED]";
+      }
+    }
+  }
+  return masked;
 }
 
 // No-op logger when logging is disabled
@@ -170,7 +169,9 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
         timestamp: new Date().toISOString(),
         status,
         statusText,
-        headers: headers ? (typeof headers.entries === "function" ? Object.fromEntries(headers.entries()) : headers) : {},
+        headers: maskSensitiveHeaders(
+          headers ? (typeof headers.entries === "function" ? Object.fromEntries(headers.entries()) : headers) : {}
+        ),
         body
       });
     },

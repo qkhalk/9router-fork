@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { getSettings, validateApiKey } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { isKnownTunnelHost } from "@/lib/auth/tunnelAccess";
-import { hasTrustedPeerHeaders } from "@/lib/auth/trustedPeer";
 
 const CLI_TOKEN_HEADER = "x-9r-cli-token";
 const CLI_TOKEN_SALT = "9r-cli-auth";
@@ -14,10 +14,19 @@ async function getCliToken() {
   return cachedCliToken;
 }
 
-async function hasValidCliToken(request) {
+// Constant-time equality for hex-string secrets (S1): a plain === compare
+// leaks prefix match timing on the token boundary.
+function timingSafeEqualHex(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ba.length !== bb.length || ba.length === 0) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+
+export async function hasValidCliToken(request) {
   const token = request.headers.get(CLI_TOKEN_HEADER);
   if (!token) return false;
-  return token === await getCliToken();
+  return timingSafeEqualHex(token, await getCliToken());
 }
 
 // Public API paths — no auth required (LLM API has its own key auth inside handler).
@@ -112,44 +121,11 @@ const STRICT_LOCAL_ONLY = [
   "/api/cli-tools/cowork-settings",
 ];
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
-
-// Accepts a Host header, a URL hostname or a raw socket address. Splitting on the first
-// colon only works for IPv4 and would reduce every IPv6 form to "", so a dual-stack
-// listener handing back ::ffff:127.0.0.1 would not read as loopback.
-function isLoopbackHostname(h) {
-  if (!h) return false;
-  let name = String(h).trim().toLowerCase();
-  if (name.startsWith("[")) {
-    const end = name.indexOf("]");
-    if (end === -1) return false;
-    name = name.slice(1, end);
-  } else if (name.indexOf(":") !== -1 && name.indexOf(":") === name.lastIndexOf(":")) {
-    name = name.slice(0, name.indexOf(":"));
-  }
-  if (name.startsWith("::ffff:")) name = name.slice(7);
-  return LOOPBACK_HOSTS.has(name);
-}
-
-function hostnameFromHeader(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  if (raw.startsWith("[")) {
-    const end = raw.indexOf("]");
-    return end >= 0 ? raw.slice(1, end) : raw.slice(1);
-  }
-  const colonCount = (raw.match(/:/g) || []).length;
-  return colonCount === 1 ? raw.split(":")[0] : raw;
-}
-
-function isPrivateNetworkHostname(h) {
-  const name = hostnameFromHeader(h);
-  const parts = name.split(".").map((p) => Number(p));
-  if (parts.length === 4 && parts.every((p) => Number.isInteger(p) && p >= 0 && p <= 255)) {
-    const [a, b] = parts;
-    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
-  }
-  return name.startsWith("fc") || name.startsWith("fd") || name.startsWith("fe80:");
-}
+// Locality helpers now live in lib/auth/requestLocality.js (shared with
+// dashboardSession's re-auth gate). Imported for local use and re-exported
+// for existing consumers.
+import { isLocalRequest, isLoopbackHostname, hostnameFromHeader, isPrivateNetworkHostname } from "@/lib/auth/requestLocality.js";
+export { isLocalRequest, isLoopbackHostname };
 
 async function canAccessFromPrivateDashboard(request) {
   // Direct authenticated dashboard access over a private LAN IP should be able
@@ -167,32 +143,6 @@ async function canAccessFromPrivateDashboard(request) {
     return false;
   }
   return await hasValidToken(request);
-}
-
-function isLoopbackPeer(request) {
-  if (hasTrustedPeerHeaders(request)) {
-    return isLoopbackHostname(request.headers.get("x-9r-real-ip"));
-  }
-  // Bare `next dev` forks its server, so the wrapper never loads and no peer address
-  // reaches us. Host is spoofable, so this stays confined to development.
-  if (process.env.NODE_ENV === "development") {
-    return isLoopbackHostname(request.headers.get("host"));
-  }
-  return false;
-}
-
-export function isLocalRequest(request) {
-  // Stamped by custom-server.js when forwarding headers exist: request came through
-  // a reverse proxy, so the loopback socket is the proxy hop, not the end-user.
-  if (request.headers.get("x-9r-via-proxy")) return false;
-  if (!isLoopbackPeer(request)) return false;
-  const origin = request.headers.get("origin");
-  if (origin) {
-    try {
-      if (!isLoopbackHostname(new URL(origin).hostname)) return false;
-    } catch { return false; }
-  }
-  return true;
 }
 
 function isPublicLlmApi(pathname) {
@@ -312,7 +262,7 @@ export async function proxy(request) {
   // Protect all dashboard routes
   if (pathname.startsWith("/dashboard")) {
     let requireLogin = true;
-    let tunnelDashboardAccess = true;
+    let tunnelDashboardAccess = false; // fail-closed when settings can't load
 
     try {
       const settings = await loadSettings();

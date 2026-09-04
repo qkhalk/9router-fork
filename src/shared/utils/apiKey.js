@@ -1,6 +1,15 @@
 import crypto from "crypto";
+import { getOrCreateInstallSecret } from "@/lib/auth/installSecret.js";
 
-const API_KEY_SECRET = process.env.API_KEY_SECRET || "endpoint-proxy-api-key-secret";
+// S9: no committed fallback constant. When the env var is unset the HMAC
+// secret is the per-install secret file (0o600, DATA_DIR/auth) — an attacker
+// who knows the source can no longer forge key CRCs.
+let cachedSecret = null;
+function apiKeySecret() {
+  if (process.env.API_KEY_SECRET) return process.env.API_KEY_SECRET;
+  if (!cachedSecret) cachedSecret = getOrCreateInstallSecret("api-key-secret");
+  return cachedSecret;
+}
 
 /**
  * Generate 6-char random keyId
@@ -19,7 +28,7 @@ function generateKeyId() {
  */
 function generateCrc(machineId, keyId) {
   return crypto
-    .createHmac("sha256", API_KEY_SECRET)
+    .createHmac("sha256", apiKeySecret())
     .update(machineId + keyId)
     .digest("hex")
     .slice(0, 8);

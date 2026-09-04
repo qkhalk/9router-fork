@@ -29,7 +29,10 @@ const DEFAULT_SETTINGS = {
   },
   requireLogin: true,
   requireApiKey: true,
-  tunnelDashboardAccess: true,
+  // S6: opt-in. Pre-existing installs that saved an explicit value keep it;
+  // installs that only ever ran on the old implicit default flip to false
+  // (fail-closed for an exposure-surface toggle).
+  tunnelDashboardAccess: false,
   authMode: "password",
   ssoType: "oidc",
   oidcIssuerUrl: "",
@@ -128,6 +131,9 @@ async function readRaw() {
 // Merge raw settings with defaults; backward-compat for missing keys
 export function mergeWithDefaults(raw) {
   const merged = { ...DEFAULT_SETTINGS, ...(raw || {}) };
+  // S6: for this one key, an EXPLICITLY saved value wins but absence must NOT
+  // inherit the (old) permissive default — resolve absent to false.
+  if (raw && !("tunnelDashboardAccess" in raw)) merged.tunnelDashboardAccess = false;
   for (const [key, defVal] of Object.entries(DEFAULT_SETTINGS)) {
     if (merged[key] === undefined) {
       if (
