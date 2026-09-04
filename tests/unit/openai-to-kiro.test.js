@@ -11,7 +11,23 @@ import { openaiToKiroRequest } from "../../open-sse/translator/request/openai-to
 
 const contentOf = (result) =>
   result.conversationState.currentMessage.userInputMessage.content;
-const systemPromptOf = (result) => result.systemPrompt || "";
+// Since upstream v0.5.65 the Kiro system prompt no longer travels as a
+// top-level payload field: it is frozen into the session-start user message
+// ahead of the "[Context: Current time is ...]" marker (payload.systemPrompt
+// only reappears on executor repair paths). Extract that prefix.
+const KIRO_TIME_MARKER = "[Context: Current time is";
+const systemPromptOf = (result) => {
+  if (result.systemPrompt) return result.systemPrompt;
+  const candidates = [
+    result.conversationState?.currentMessage?.userInputMessage?.content,
+    ...(result.conversationState?.history || []).map((m) => m?.userInputMessage?.content),
+  ].filter(Boolean);
+  for (const content of candidates) {
+    const idx = content.indexOf(KIRO_TIME_MARKER);
+    if (idx > 0) return content.slice(0, idx).trim();
+  }
+  return "";
+};
 
 describe("openaiToKiroRequest", () => {
   describe("basic message conversion", () => {
@@ -582,8 +598,8 @@ describe("openaiToKiroRequest", () => {
         {}
       );
 
-      expect(first.systemPrompt).toBe(second.systemPrompt);
-      expect(first.systemPrompt).not.toContain("Current time");
+      expect(systemPromptOf(first)).toBe(systemPromptOf(second));
+      expect(systemPromptOf(first)).not.toContain("Current time");
       expect(first.conversationState.currentMessage.userInputMessage.content).toContain("Current time");
     });
 

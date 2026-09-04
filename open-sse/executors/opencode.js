@@ -4,6 +4,7 @@ import { PROVIDERS } from "../config/providers.js";
 import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
+import { isMuseSparkModel } from "../providers/models/helpers.js";
 
 import { getModelTargetFormat, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { ensureOpencodeCatalog, isResponsesServed } from "../providers/opencodeCatalog.js";
@@ -35,11 +36,15 @@ function baseModelId(model) {
 // to the live api.json catalog (same metadata the official CLI reads), which
 // picks up newly released responses-only models without a code change.
 function isResponsesModel(model) {
-  ensureOpencodeCatalog();
   const base = baseModelId(model);
+  // muse-spark family is always served by /zen/v1/responses (upstream pattern
+  // check catches future releases even before the registry/catalog knows them).
+  if (isMuseSparkModel(base)) return true;
+  ensureOpencodeCatalog();
   const declared = getModelTargetFormat(PROVIDER_ID_TO_ALIAS.opencode, base);
   if (declared) return declared === "openai-responses";
   return isResponsesServed(base);
+
 }
 
 function resolveOpencodeSession(body, credentials) {

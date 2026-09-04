@@ -43,6 +43,8 @@ COPY --from=builder /app/node_modules/sql.js ./node_modules/sql.js
 # open-sse/translator/concerns/image.js imports undici at module scope; if open-sse is
 # loaded as plain files at runtime (outside the webpack bundle), undici must be present.
 COPY --from=builder /app/node_modules/undici ./node_modules/undici
+# node-machine-id is createRequire-loaded at runtime; tracing omits it.
+COPY --from=builder /app/node_modules/node-machine-id ./node_modules/node-machine-id
 
 RUN mkdir -p /app/data && chown -R node:node /app && \
   mkdir -p /app/data-home && chown node:node /app/data-home && \

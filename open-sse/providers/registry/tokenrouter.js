@@ -35,6 +35,7 @@ export default {
     { id: "openai/gpt-5", name: "Gpt 5" },
     { id: "anthropic/claude-opus-4.8", name: "Claude Opus 4.8" },
     { id: "google/gemini-3.6-flash", name: "Gemini 3.6 Flash" },
+
   ],
   features: { usage: true, usageApikey: true },
   serviceKinds: ["llm", "embedding", "image"],
