@@ -107,6 +107,13 @@ const DEFAULT_SETTINGS = {
     "xray-rotation-failed": true,
     "totu-fetch-failed": true,
   },
+  // Per-account circuit breaker (phase 06): kill switch, failure threshold
+  // inside the window, window length, and base open cooldown (backoff =
+  // base × 2 per consecutive open, capped at 10 min in the module).
+  breakerEnabled: true,
+  breakerFailureThreshold: 5,
+  breakerWindowSec: 60,
+  breakerBaseCooldownSec: 60,
   xrayStaleRetentionDays: 7,
   xrayAutoRotate: false,
   xrayHealthCheckIntervalMin: 10,

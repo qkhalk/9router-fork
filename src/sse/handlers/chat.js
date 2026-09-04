@@ -7,7 +7,9 @@ import {
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
+import { handleAntigravityQuotaError, clearAntigravityStrikes, isStrikeBlocked } from "../services/antigravityQuota.js";
+import { checkBreaker, recordFailure, recordSuccess } from "../services/circuitBreaker.js";
+import { formatRetryAfter } from "open-sse/services/accountFallback.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
@@ -285,6 +287,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // ran; true = port kept accepting connections (so the failure is NOT
   // teardown noise); false = port never came back.
   let managedConnPortOpen = null;
+  // Circuit breaker (phase 06): shortest retry-after promised by a breaker
+  // that denied a candidate this request. Infinity until one does; only the
+  // all-candidates-denied terminal path reads it.
+  let breakerRetryAfterMs = Infinity;
 
   while (true) {
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
@@ -316,6 +322,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         log.warn("CHAT", `[${provider}/${model}] ${lastError || "All strict proxy pools exhausted"} (retry in 30s)`);
         return unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `[${provider}/${model}] ${lastError || "All strict proxy pools exhausted"}`, retryAfter, "retry in 30s");
       }
+      if (breakerRetryAfterMs !== Infinity) {
+        // Every remaining candidate was skipped by an open breaker. The loop
+        // has no access to modelLock's retry data, so it reports the shortest
+        // breaker cooldown itself (error.js expects an ISO timestamp).
+        const retryAfter = new Date(Date.now() + breakerRetryAfterMs).toISOString();
+        const msg = `[${provider}/${model}] ${lastError || "All candidates skipped by circuit breaker"}`;
+        log.warn("CHAT", `${msg} (${formatRetryAfter(retryAfter)})`);
+        return unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, msg, retryAfter, formatRetryAfter(retryAfter));
+      }
       log.warn("CHAT", "No more accounts available", { provider });
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
     }
@@ -332,6 +347,23 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       lastStatus = HTTP_STATUS.SERVICE_UNAVAILABLE;
       lastProxyExhausted = true;
       continue;
+    }
+
+    // Circuit breaker (phase 06): per-account gate BEFORE attempting. An
+    // open breaker skips the candidate like any other unavailable account.
+    // The exclusion-set add is load-bearing — a bare continue would re-pick
+    // the same account forever. noauth free-provider credentials have no
+    // connectionId and bypass the gate entirely.
+    if (credentials.connectionId) {
+      const gate = checkBreaker(credentials.connectionId, provider);
+      if (!gate.allowed) {
+        log.warn("BREAKER", `⏸ ACC:${credentials.connectionName} breaker-open (retry in ${Math.ceil(gate.retryAfterMs / 1000)}s) → NEXT ACCOUNT`);
+        excludeConnectionIds.add(credentials.connectionId);
+        breakerRetryAfterMs = Math.min(breakerRetryAfterMs, gate.retryAfterMs);
+        lastError = lastError || "All remaining accounts circuit-broken";
+        lastStatus = lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE;
+        continue;
+      }
     }
 
     // Account selection shown in the unified "▶" line (acc:...)
@@ -389,6 +421,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         await clearAccountError(credentials.connectionId, credentials, model);
         // "Consecutive" strikes: a success clears the breaker for this pair.
         clearAntigravityStrikes(credentials.connectionId, model);
+        // Circuit breaker (phase 06): a success at first forwarded byte (N7
+        // signal) closes any open/half-open breaker for this account.
+        recordSuccess(credentials.connectionId);
       }
     });
 
@@ -582,6 +617,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;
       lastStatus = result.status;
+      // Feed the per-account circuit breaker — EXCEPT antigravity quota-429s
+      // already owned by the upstream strike-block, which excludes the pair
+      // at selection time (R9: no double-blocking the same account).
+      if (!(provider === "antigravity" && isStrikeBlocked(credentials.connectionId, model))) {
+        recordFailure(credentials.connectionId, provider);
+      }
       continue;
     }
 

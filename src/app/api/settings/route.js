@@ -147,6 +147,21 @@ export async function PATCH(request) {
       body.alertsEvents = events;
     }
 
+    // Circuit breaker (phase 06): clamp the admin-tunable knobs. The module
+    // re-reads these on its own TTL; no restart needed.
+    if (Object.prototype.hasOwnProperty.call(body, "breakerEnabled")) {
+      body.breakerEnabled = body.breakerEnabled !== false;
+    }
+    for (const [field, min, max, fallback] of [
+      ["breakerFailureThreshold", 1, 50, 5],
+      ["breakerWindowSec", 10, 3600, 60],
+      ["breakerBaseCooldownSec", 10, 3600, 60],
+    ]) {
+      if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
+      const raw = Number(body[field]);
+      body[field] = Number.isFinite(raw) ? Math.min(max, Math.max(min, Math.floor(raw))) : fallback;
+    }
+
     const settings = await updateSettings(body);
 
     // Apply outbound proxy settings immediately (no restart required)

@@ -69,6 +69,40 @@ export function clearAntigravityStrikes(connectionId, model) {
 }
 
 /**
+ * Is this (connectionId, model) pair currently strike-blocked? The generic
+ * per-account circuit breaker consults this so a quota-429 already handled by
+ * the strike mechanism is not counted a second time (phase 06 R9 — the strike
+ * block already excludes the candidate at selection time).
+ */
+export function isStrikeBlocked(connectionId, model) {
+  const until = strikeBlocks.get(`${connectionId}|${model}`);
+  return until !== undefined && until > Date.now();
+}
+
+/**
+ * Active strike blocks for the dashboard breaker panel (expired entries
+ * pruned as a side effect).
+ */
+export function getStrikeBlockStates() {
+  const now = Date.now();
+  const states = [];
+  for (const [key, until] of strikeBlocks) {
+    if (until <= now) {
+      strikeBlocks.delete(key);
+      continue;
+    }
+    const sep = key.indexOf("|");
+    states.push({
+      connectionId: key.slice(0, sep),
+      model: key.slice(sep + 1),
+      blockedUntil: new Date(until).toISOString(),
+      remainingMs: until - now,
+    });
+  }
+  return states;
+}
+
+/**
  * Get the quota cache (read-only reference for auth.js pre-filter).
  */
 export function getAntigravityQuotaCache() {
