@@ -3,6 +3,9 @@ import { isDeprecatedModel } from "open-sse/providers/opencodeCatalog.js";
 
 const KNOWN_FREE_OPENCODE_MODELS = ["big-pickle"];
 
+// Upstream returns "Model is unavailable" for this id (2026-09-02) — re-enable when fixed
+const DEAD_FREE_OPENCODE_MODELS = new Set(["deepseek-v4-flash-free"]);
+
 export const FILTERS = {
   "openrouter-free": (models) =>
     models
@@ -20,8 +23,10 @@ export const FILTERS = {
       .filter((m) => m.id?.endsWith("-free") || KNOWN_FREE_OPENCODE_MODELS.includes(m.id))
       // api.json flags models that are still listed but broken upstream
       // (e.g. deepseek-v4-flash-free) — stop suggesting them. Fail-open:
-      // until the catalog syncs, nothing is dropped.
-      .filter((m) => !isDeprecatedModel(m.id))
+      // until the catalog syncs, nothing is dropped, so also keep the static
+      // DEAD set below as an unconditional guard.
+      .filter((m) => !DEAD_FREE_OPENCODE_MODELS.has(m.id) && !isDeprecatedModel(m.id))
+
       .map((m) => ({ id: m.id, name: m.id })),
 
   // models.dev returns a large catalog; keep only mimo models

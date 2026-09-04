@@ -17,6 +17,7 @@ import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
 import { getNewApiBalanceUsage } from "./usage/newapi.js";
 import { getOrcarouterUsage } from "./usage/orcarouter.js";
+import { getGroqUsage } from "./usage/groq.js";
 import { getZedUsage } from "./usage/zed.js";
 import { resolveQoderCredentials } from "./qoderModels.js";
 import { getGlmUsage } from "./usage/glm.js";
@@ -74,6 +75,8 @@ const USAGE_HANDLERS = {
     proxyOptions: c.proxyOptions,
   }),
   orcarouter: (c) => getOrcarouterUsage(c.apiKey, c.proxyOptions),
+  groq: (c) => getGroqUsage(c.apiKey, c.proxyOptions),
+
   zed: (c) => getZedUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
 };
 
