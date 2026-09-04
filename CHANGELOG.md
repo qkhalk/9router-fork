@@ -1,3 +1,53 @@
+# v0.6.35 (2026-09-04)
+
+Upstream-sync + self-hosting release: merges upstream **v0.5.65** into the
+fork (v0.5.59 → v0.5.65, 97 commits) and self-hosts the donate modal's data.
+Every fork subsystem is preserved — v2go/Xray managed pool + rotation, proxy
+pools/groups, DS2API, web-cookie providers, TOTU auto-fetch, MITM, tunnel
+access — and the opencode anti-fingerprint (official UA + `x-opencode-client:
+cli`) now coexists with upstream's muse-spark Responses routing.
+
+## Upstream highlights now in the fork
+- **Security**: SSRF guard hardening (#3714) — alternate IPv6 encodings,
+  trailing-dot hostnames, DNS resolution checks, safe redirect handling via
+  the new `fetchPublic` wrapper (manual redirects, per-hop revalidation).
+- **Antigravity**: strike-break optimistic quota readings — 3 strike-429s in
+  60s blocks the connection+model pair for 15 minutes with live quota refresh.
+- **Chat**: all-credentials-rate-limited now returns a real **503** instead of
+  passing the last upstream status through.
+- **Model markers**: the `[1m]` context marker Claude Code appends to model
+  names (`claude-opus-5[1m]`) is stripped before model resolution.
+- **Fetch**: new Ollama Cloud web fetch provider (`/v1/fetch`).
+- **Models**: Gemini 3.8 Flash, Claude Fable 5.1 (adaptive thinking), Groq
+  usage + rate-limit tracking, Codebuddy-CN catalog refresh, tokenrouter
+  catalog streamlining, capability toggles (vision/reasoning) for custom
+  models, single-model lookup route `/v1/models/<provider>/<model>`.
+- **OpenCode**: muse-spark models route to `/zen/v1/responses` with vision
+  declared (upstream's fix composes with the fork's registry-driven
+  `isResponsesModel`, which remains authoritative).
+- **Usage**: Responses-shape `cached_tokens` read for non-streaming traffic
+  (cache hits no longer billed at full input rate on those paths).
+- **CLI tools**: save and manage custom API-key presets per tool card.
+- **i18n**: complete Indonesian translation (1391 keys; the fork's 69
+  TOTU/MITM-specific keys re-merged on top).
+
+## Features (fork)
+- **Donate info is self-hosted**: the donate modal reads `public/donate.json`
+  served from GitHub raw (CDN-friendly, no app-server dependency) with a
+  bundled local fallback — no more third-party endpoint.
+
+## Merge notes
+- Tests: **2554 total, 0 pass→fail** vs the pre-merge baseline (103 new
+  upstream tests; 105 pre-existing local failures byte-identical pre/post).
+  Upstream shipped with 2 broken Kiro test files (28 tests fail on vanilla
+  v0.5.65 — `systemPrompt` moved to the session-start content prefix without
+  the tests following); both adapted on the fork side with no assertions
+  weakened.
+- Known behavior change (upstream, kept deliberately): the rate-limited
+  response no longer passes `lastStatus`/`lastErrorCode` through — always 503.
+- The v0.6.36+ hardening program (57-finding audit fix plan, alerts, circuit
+  breaker, budgets) is committed under `plans/260904-0344-hardening-alerts-breaker-budgets/`.
+
 # v0.6.34 (2026-09-04)
 
 OpenCode Free reliability release: muse-spark-1.3 no longer 500s (the
