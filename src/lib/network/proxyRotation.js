@@ -149,9 +149,24 @@ function isEntryAvailable(entry, now, excludeEntryIds) {
   if (!entry) return false;
   if (entry.isActive === false) return false;
   if (excludeEntryIds && excludeEntryIds.has(entry.id)) return false;
+  // A "direct" slot needs no URL; every other entry must carry a usable proxy
+  // URL — empty-URL placeholders (e.g. a proxyxoay key awaiting its first
+  // rotation) must never be selected (P4).
+  if (entry.type !== "direct" && !String(entry.proxyUrl || "").trim()) return false;
   const until = entry.cooldownUntil ? Number(entry.cooldownUntil) : 0;
   if (until && until > now) return false;
   return true;
+}
+
+// Round-robin cursor per pool id (in-memory). The legacy pool.rrCounter field
+// wrote the DB on every pick, churning updatedAt (which the pool list used to
+// sort by) — a module Map keeps cursors stable without per-request writes (P7).
+// Resets on restart, same trade-off as the pool-level rotate state.
+const groupRrCursors = new Map();
+
+/** Reset all round-robin cursors. Intended for tests. */
+export function _resetGroupRrCursors() {
+  groupRrCursors.clear();
 }
 
 /**
@@ -159,9 +174,9 @@ function isEntryAvailable(entry, now, excludeEntryIds) {
  *
  * @param {object} pool - a proxy pool with isGroup=true and an `entries` array.
  * @param {Set<string>} [excludeEntryIds] - entry ids to skip this turn (already tried).
- * @returns {{entry: object, updatedPool: object}|null} the chosen entry plus the
- *   pool with lastUsedAt/rrCounter stamped (caller persists updatedPool). null
- *   when no entry is available (all inactive/cooled-down/excluded).
+ * @returns {{entry: object}|null} the chosen entry with lastUsedAt stamped
+ *   (caller persists the stamp via stampProxyEntryUsed). null when no entry is
+ *   available (all inactive/cooled-down/excluded/empty-URL).
  */
 export function pickProxyGroupEntry(pool, excludeEntryIds = new Set()) {
   if (!pool || !pool.isGroup || !Array.isArray(pool.entries)) return null;
@@ -173,10 +188,10 @@ export function pickProxyGroupEntry(pool, excludeEntryIds = new Set()) {
   let chosen;
 
   if (mode === "round-robin") {
-    // Advance the persistent counter; wrap against available length.
-    const counter = Number(pool.rrCounter || 0);
+    // Advance the in-memory per-pool counter; wrap against available length.
+    const counter = groupRrCursors.get(pool.id) || 0;
     chosen = available[counter % available.length];
-    pool = { ...pool, rrCounter: counter + 1 };
+    groupRrCursors.set(pool.id, counter + 1);
   } else if (mode === "random") {
     chosen = available[Math.floor(Math.random() * available.length)];
   } else {
@@ -191,11 +206,8 @@ export function pickProxyGroupEntry(pool, excludeEntryIds = new Set()) {
   }
 
   // Stamp lastUsedAt so subsequent picks in the same rotation window prefer
-  // other entries. Return a shallow-updated pool for the caller to persist.
-  const entries = pool.entries.map((e) =>
-    e.id === chosen.id ? { ...e, lastUsedAt: new Date(now).toISOString() } : e
-  );
-  return { entry: { ...chosen, lastUsedAt: new Date(now).toISOString() }, updatedPool: { ...pool, entries } };
+  // other entries. The caller persists the stamp as a delta-write.
+  return { entry: { ...chosen, lastUsedAt: new Date(now).toISOString() } };
 }
 
 /**

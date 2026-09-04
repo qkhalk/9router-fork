@@ -539,6 +539,17 @@ export default function ProxyPoolsPage() {
     }
   };
 
+  // Dedup key (P6): host:port plus credentials (if any), scheme-insensitive,
+  // with noProxy folded in for single-pool imports. One key for both paths.
+  const proxyDedupeKey = (proxyUrl, noProxy = "") => {
+    try {
+      const u = new URL(proxyUrl);
+      return `${u.username ? `${u.username}@` : ""}${u.hostname}:${u.port}|||${noProxy}`.toLowerCase();
+    } catch {
+      return `${String(proxyUrl || "").trim().toLowerCase()}|||${noProxy}`;
+    }
+  };
+
   const parseProxyLine = (line) => {
     const trimmed = line.trim();
     if (!trimmed) return null;
@@ -595,7 +606,7 @@ export default function ProxyPoolsPage() {
     setImporting(true);
     try {
       const existingKeys = new Set(
-        proxyPools.map((pool) => `${(pool.proxyUrl || "").trim()}|||${(pool.noProxy || "").trim()}`)
+        proxyPools.map((pool) => proxyDedupeKey(pool.proxyUrl, pool.noProxy))
       );
 
       let created = 0;
@@ -603,7 +614,7 @@ export default function ProxyPoolsPage() {
       let failed = 0;
 
       for (const entry of parsedEntries) {
-        const dedupeKey = `${entry.proxyUrl}|||`;
+        const dedupeKey = proxyDedupeKey(entry.proxyUrl);
         if (existingKeys.has(dedupeKey)) {
           skipped += 1;
           continue;
@@ -648,23 +659,32 @@ export default function ProxyPoolsPage() {
       return;
     }
     const newEntries = [];
+    const seenKeys = new Set(formData.entries.map((e) => proxyDedupeKey(e.proxyUrl)).filter(Boolean));
     let failed = 0;
+    let duplicates = 0;
     for (const line of lines) {
       try {
         const parsed = parseProxyLine(line);
-        if (parsed?.proxyUrl) newEntries.push({ id: "", name: parsed.name || "", proxyUrl: parsed.proxyUrl, type: "http", isActive: true });
+        if (!parsed?.proxyUrl) continue;
+        const key = proxyDedupeKey(parsed.proxyUrl);
+        if (seenKeys.has(key)) {
+          duplicates += 1;
+          continue;
+        }
+        seenKeys.add(key);
+        newEntries.push({ id: "", name: parsed.name || "", proxyUrl: parsed.proxyUrl, type: "http", isActive: true });
       } catch {
         failed++;
       }
     }
     if (newEntries.length === 0) {
-      notify.error("No valid proxy lines found.");
+      notify.error(failed > 0 || duplicates > 0 ? "All lines were invalid or duplicates." : "No valid proxy lines found.");
       return;
     }
     setFormData((prev) => ({ ...prev, entries: [...prev.entries, ...newEntries] }));
     setGroupBatchText("");
     setShowGroupBatchImport(false);
-    notify.success(`Added ${newEntries.length} entr${newEntries.length === 1 ? "y" : "ies"}${failed ? `, ${failed} skipped` : ""}`);
+    notify.success(`Added ${newEntries.length} entr${newEntries.length === 1 ? "y" : "ies"}${duplicates ? `, ${duplicates} duplicate${duplicates === 1 ? "" : "s"} skipped` : ""}${failed ? `, ${failed} skipped` : ""}`);
   };
 
   const activeCount = useMemo(

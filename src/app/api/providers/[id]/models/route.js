@@ -9,7 +9,7 @@ import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { resolveCursorModels } from "open-sse/services/cursorModels.js";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
@@ -395,6 +395,9 @@ export const PROVIDER_MODELS_CONFIG = {
   "grok-cli": {
     customResolver: async (connection) => {
       const proxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+      if (isStrictProxyFailure(proxy)) {
+        throw new Error(`Strict proxy pool ${proxy.proxyPoolId || ""} ${proxy.source === "error" ? "resolution failed" : "exhausted"} — refusing direct model fetch`);
+      }
       const result = await resolveGrokCliModels({
         ...connection,
         connectionId: connection.id,

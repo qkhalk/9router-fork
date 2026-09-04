@@ -1,5 +1,5 @@
 import { getProviderConnectionById, updateProviderConnection, getSettings } from "@/lib/localDb";
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { getDefaultModel } from "open-sse/config/providerModels.js";
@@ -886,6 +886,18 @@ export async function testSingleConnection(id) {
   if (!connection) return { valid: false, error: "Connection not found", latencyMs: 0, testedAt: new Date().toISOString() };
 
   const effectiveProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+
+  if (isStrictProxyFailure(effectiveProxy)) {
+    // A strict pool with no usable entry must never degrade to a direct
+    // connection test (P1). The account itself is fine — the pool is not.
+    const err = `Strict proxy pool ${effectiveProxy.proxyPoolId || ""} ${effectiveProxy.source === "error" ? "resolution failed" : "exhausted"} — connection test refused to go direct`;
+    await updateProviderConnection(id, {
+      testStatus: "error",
+      lastError: err,
+      lastErrorAt: new Date().toISOString(),
+    });
+    return { valid: false, error: err, latencyMs: 0, testedAt: new Date().toISOString() };
+  }
 
   if (effectiveProxy.connectionProxyEnabled && effectiveProxy.connectionProxyUrl && !effectiveProxy.vercelRelayUrl) {
     const proxyResult = await testProxyUrl({ proxyUrl: effectiveProxy.connectionProxyUrl });

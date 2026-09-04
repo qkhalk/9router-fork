@@ -21,6 +21,7 @@ vi.mock("@/lib/localDb", () => ({
 
 vi.mock("@/lib/network/connectionProxy", () => ({
   resolveConnectionProxyConfig: mocks.resolveConnectionProxyConfig,
+  isStrictProxyFailure: () => false,
 }));
 
 vi.mock("@/app/api/usage/[connectionId]/route.js", () => ({

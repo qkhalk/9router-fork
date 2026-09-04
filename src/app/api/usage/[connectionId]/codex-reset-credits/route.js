@@ -3,7 +3,7 @@ import "open-sse/index.js";
 
 import { getProviderConnectionById } from "@/lib/localDb";
 import { consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits } from "open-sse/services/usage.js";
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { refreshAndUpdateCredentials } from "../route.js";
 
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
@@ -64,12 +64,20 @@ async function getCodexConnection(connectionId) {
   }
 
   const proxyConfig = await resolveConnectionProxyConfig(connection.providerSpecificData);
+  if (isStrictProxyFailure(proxyConfig)) {
+    // Under a strict pool, refuse instead of refreshing direct from the origin IP (P1).
+    return {
+      response: Response.json({
+        error: `Strict proxy pool ${proxyConfig.proxyPoolId || ""} ${proxyConfig.source === "error" ? "resolution failed" : "exhausted"} — refused to go direct`,
+      }, { status: 503 }),
+    };
+  }
   const proxyOptions = {
     connectionProxyEnabled: proxyConfig.connectionProxyEnabled === true,
     connectionProxyUrl: proxyConfig.connectionProxyUrl || "",
     connectionNoProxy: proxyConfig.connectionNoProxy || "",
     vercelRelayUrl: proxyConfig.vercelRelayUrl || "",
-    strictProxy: false,
+    strictProxy: proxyConfig.strictProxy === true,
   };
 
   return { connection, isOAuth, proxyOptions };

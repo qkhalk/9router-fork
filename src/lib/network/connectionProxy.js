@@ -1,10 +1,28 @@
-import { getProxyPoolById, updateProxyPool } from "@/models";
+import { getProxyPoolById, stampProxyEntryUsed } from "@/models";
 import { pickProxyGroupEntry } from "./proxyRotation.js";
 
 // Safely normalize any value into a trimmed string.
 function normalizeString(value) {
   if (value === undefined || value === null) return "";
   return String(value).trim();
+}
+
+/**
+ * Did proxy resolution fail in a way that must NEVER degrade to a direct
+ * (origin-IP) request? (P1 fail-closed contract.)
+ * - source "exhausted": a strictProxy pool had no usable entry (deactivated,
+ *   all entries cooling down, or empty).
+ * - source "error" with strictProxy=true: resolution threw after the pool's
+ *   strict flag was known.
+ * Callers must fail the operation / fall through to the next account instead
+ * of fetching directly.
+ */
+export function isStrictProxyFailure(resolved) {
+  return (
+    !!resolved &&
+    (resolved.source === "exhausted" ||
+      (resolved.source === "error" && resolved.strictProxy === true))
+  );
 }
 
 // ─── Proxy pool rotation state (in-memory) ─────────────────────────
@@ -64,9 +82,29 @@ function normalizeLegacyProxy(providerSpecificData = {}) {
  * 2. Legacy Proxy
  * 3. No Proxy
  */
+/**
+ * Shape shared by the strict-failure returns. Carries no proxy URL on purpose:
+ * callers must treat it as "this attempt cannot proceed", never as "go direct".
+ */
+function strictPoolFailure(source, proxyPoolId, proxyPool, noProxy) {
+  return {
+    source,
+    proxyPoolId: proxyPoolId || null,
+    proxyPool: proxyPool || null,
+    connectionProxyEnabled: false,
+    connectionProxyUrl: "",
+    connectionNoProxy: noProxy || "",
+    vercelRelayUrl: "",
+    strictProxy: true,
+  };
+}
+
 export async function resolveConnectionProxyConfig(
   providerSpecificData = {}
 ) {
+  // Best-known strictness of the bound pool. Hoisted so the catch path can
+  // propagate the real flag instead of a hard-coded false (N3).
+  let poolStrict = false;
   try {
     const proxyPoolIdRaw = normalizeString(
       providerSpecificData?.proxyPoolId
@@ -85,6 +123,7 @@ export async function resolveConnectionProxyConfig(
      */
     if (proxyPoolId) {
       const proxyPool = await getProxyPoolById(proxyPoolId);
+      poolStrict = proxyPool?.strictProxy === true;
 
       const proxyUrl = normalizeString(proxyPool?.proxyUrl);
       const noProxy = normalizeString(proxyPool?.noProxy);
@@ -103,26 +142,33 @@ export async function resolveConnectionProxyConfig(
         proxyPool.isActive === true &&
         (proxyUrl || hasGroupEntries);
 
+      // A strict pool that is unusable (deactivated, emptied, group emptied)
+      // must never degrade to legacy/direct — surface exhaustion so callers
+      // fail the attempt or fall through to the next account (P1).
+      if (poolStrict && !isValidPool) {
+        return strictPoolFailure("exhausted", proxyPoolId, proxyPool, noProxy);
+      }
+
       if (isValidPool) {
         /**
          * Proxy group (rotating): pick one entry from the group now. The entry
          * is chosen by rotationMode and skips cooled-down/inactive entries.
-         * Falls through to the standard/legacy path if no entry is available.
+         * Falls through to the legacy path if no entry is available — EXCEPT
+         * under strictProxy, where "no usable entry" is an exhausted signal.
          */
         if (proxyPool.isGroup === true) {
-          const excludeEntryIds = providerSpecificData?._excludedProxyEntryIds
-            ? new Set(providerSpecificData._excludedProxyEntryIds)
-            : new Set();
-          const picked = pickProxyGroupEntry(proxyPool, excludeEntryIds);
+          const picked = pickProxyGroupEntry(proxyPool);
           if (picked) {
-            // Persist lastUsedAt / rrCounter stamp so concurrent + subsequent
-            // picks spread load. Best-effort: a failure here must not break the
-            // request.
-            updateProxyPool(proxyPoolId, {
-              entries: picked.updatedPool.entries,
-              rrCounter: picked.updatedPool.rrCounter,
-            }).catch(() => {});
             const entry = picked.entry;
+            // Persist the lastUsedAt stamp as a delta-write so concurrent and
+            // subsequent picks spread load without clobbering each other's
+            // snapshots (P2). Best-effort: failure must not break the request.
+            stampProxyEntryUsed(proxyPoolId, entry.id).catch((err) => {
+              console.warn(
+                `[resolveConnectionProxyConfig] stampProxyEntryUsed failed for pool ${proxyPoolId}:`,
+                err?.message || err
+              );
+            });
             // "direct" entry → use the server's own IP (no proxy).
             if (entry.type === "direct") {
               return {
@@ -147,7 +193,11 @@ export async function resolveConnectionProxyConfig(
               strictProxy: proxyPool.strictProxy === true,
             };
           }
-          // No usable entry → fall through to legacy/none.
+          // No usable entry (all inactive/cooled-down/empty-URL).
+          if (poolStrict) {
+            return strictPoolFailure("exhausted", proxyPoolId, proxyPool, noProxy);
+          }
+          // Non-strict → fall through to legacy/none (direct allowed).
         }
 
         /**
@@ -237,7 +287,10 @@ export async function resolveConnectionProxyConfig(
       connectionProxyUrl: "",
       connectionNoProxy: "",
 
-      strictProxy: false,
+      // Propagate the pool's real strict flag when it was read before the
+      // failure (N3): a strict pool must fail closed, a non-strict pool keeps
+      // the graceful direct-allowed behavior.
+      strictProxy: poolStrict,
     };
   }
 }

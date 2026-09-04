@@ -264,6 +264,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const excludedProxyEntryIds = new Set();
   let lastError = null;
   let lastStatus = null;
+  // True when the last failed attempt was a strict-proxy failure (pool
+  // exhausted/errored, never the account itself) — drives the terminal 503
+  // with a retry-after instead of a bare error body.
+  let lastProxyExhausted = false;
   // Retries used so far for managed-pool connection failures (port-down during
   // rotation). Bounded by MAX_MANAGED_CONN_RETRIES per request.
   let managedConnRetries = 0;
@@ -287,8 +291,29 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         log.warn("AUTH", `No active credentials for provider: ${provider}`);
         return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
       }
+      if (lastProxyExhausted) {
+        // Every account was skipped for a dead strict pool — 503 with a short
+        // retry-after (entries cool down in ~60s; never fetch direct).
+        const retryAfter = new Date(Date.now() + 30_000).toISOString();
+        log.warn("CHAT", `[${provider}/${model}] ${lastError || "All strict proxy pools exhausted"} (retry in 30s)`);
+        return unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `[${provider}/${model}] ${lastError || "All strict proxy pools exhausted"}`, retryAfter, "retry in 30s");
+      }
       log.warn("CHAT", "No more accounts available", { provider });
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+    }
+
+    // Strict-proxy failure (pool exhausted / resolution error): never direct —
+    // treat as a failed ACCOUNT attempt, exclude it, and let the loop pick the
+    // next account (P1 fail-closed).
+    if (credentials?.proxyExhausted) {
+      log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} STRICT-PROXY-${credentials.reason === "error" ? "ERROR" : "EXHAUSTED"} (pool ${credentials.poolId || "?"}) → NEXT ACCOUNT`);
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = credentials.reason === "error"
+        ? `Strict proxy pool ${credentials.poolId || ""} resolution failed`.trim()
+        : `Strict proxy pool ${credentials.poolId || ""} exhausted`.trim();
+      lastStatus = HTTP_STATUS.SERVICE_UNAVAILABLE;
+      lastProxyExhausted = true;
+      continue;
     }
 
     // Account selection shown in the unified "▶" line (acc:...)
@@ -500,7 +525,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // Re-resolve will pick the next available entry from the group.
         continue;
       }
-      // Group exhausted → fall through to account fallback below.
+      // Group exhausted → account fallback. Under strictProxy the account
+      // itself is fine (its pool is dead), so skip the model-lock entirely and
+      // just exclude it for this request — pool cooldowns are pool state, not
+      // account state (P1). TODO(phase-05): emit proxy-pool-exhausted here.
+      if (psd.strictProxy === true) {
+        log.warn("PROXY", `Group ${usedPoolId} exhausted (strict) — skipping account without lock → NEXT ACCOUNT`);
+        excludeConnectionIds.add(credentials.connectionId);
+        lastError = result.error;
+        lastStatus = result.status;
+        lastProxyExhausted = true;
+        continue;
+      }
+      // Group exhausted → fall back to account fallback below.
       log.warn("PROXY", `Group ${usedPoolId} exhausted, falling back to next account`);
     }
 

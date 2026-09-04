@@ -5,7 +5,9 @@ import {
   getProxyPoolById,
   updateProxyPool,
 } from "@/models";
+import { getSettings, updateSettings } from "@/lib/localDb";
 import { normalizeProxyInput } from "@/lib/proxy/parseProxy";
+import { normalizeCooldownUntil } from "@/models";
 import { registerPool, unregisterPool } from "@/lib/proxy/providers/proxyxoayManager.js";
 
 const VALID_PROXY_SCHEMES = ["http:", "https:", "socks5:", "socks5h:", "socks4:", "socks4a:"];
@@ -18,7 +20,7 @@ function normalizeGroupEntry(e, i) {
       type: "direct",
       proxyUrl: "",
       isActive: e?.isActive !== false,
-      cooldownUntil: e?.cooldownUntil ?? null,
+      cooldownUntil: normalizeCooldownUntil(e?.cooldownUntil),
       lastError: e?.lastError ?? null,
       lastUsedAt: e?.lastUsedAt ?? null,
     };
@@ -37,7 +39,7 @@ function normalizeGroupEntry(e, i) {
     type: norm.parsed.scheme,
     proxyUrl: norm.canonicalUrl,
     isActive: e?.isActive !== false,
-    cooldownUntil: e?.cooldownUntil ?? null,
+    cooldownUntil: normalizeCooldownUntil(e?.cooldownUntil),
     lastError: e?.lastError ?? null,
     lastUsedAt: e?.lastUsedAt ?? null,
   };
@@ -268,6 +270,43 @@ export async function DELETE(request, { params }) {
         { error: "This pool is auto-managed by the V2Ray Proxy feature and cannot be deleted. Stop the proxy from the V2Ray Proxy page instead." },
         { status: 403 }
       );
+    }
+
+    // Provider strategies bound to this pool (P3): deleting under them would
+    // leave a dangling proxyPoolId whose provider silently goes direct. Names
+    // only — never leak connection credentials in the 409 body.
+    const settings = await getSettings();
+    const providerStrategies = settings?.providerStrategies || {};
+    const boundProviders = Object.entries(providerStrategies)
+      .filter(([, strategy]) => strategy?.proxyPoolId === id)
+      .map(([providerId]) => providerId);
+
+    let force = false;
+    try {
+      const body = await request.json();
+      force = body?.force === true;
+    } catch {
+      // No/invalid body — plain delete.
+    }
+
+    if (boundProviders.length > 0) {
+      if (!force) {
+        return NextResponse.json(
+          {
+            error: "Proxy pool is bound to provider strategies",
+            boundProviders,
+            hint: "Re-send with { force: true } to unbind these strategies and delete the pool.",
+          },
+          { status: 409 }
+        );
+      }
+      // Force: unbind each referencing strategy (explicit "__none__" so the
+      // provider never silently falls back to an unknown pool), then delete.
+      const next = { ...providerStrategies };
+      for (const providerId of boundProviders) {
+        next[providerId] = { ...next[providerId], proxyPoolId: "__none__" };
+      }
+      await updateSettings({ providerStrategies: next });
     }
 
     const connections = await getProviderConnections();
