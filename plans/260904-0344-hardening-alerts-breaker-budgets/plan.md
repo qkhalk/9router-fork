@@ -3,7 +3,7 @@ title: "9router Hardening, Alerts, Circuit Breaker & Budgets"
 description: "3-release program: fix all audit findings (P/X/C/S + N), then add alert system, per-account circuit breaker, v2go health scheduler, per-API-key budgets, cache analytics"
 status: pending
 priority: P1
-effort: 132h
+effort: 128h
 branch: master
 tags: [hardening, security, alerts, circuit-breaker, budgets, v2go, cache-analytics]
 created: 2026-09-04
@@ -13,12 +13,13 @@ created: 2026-09-04
 
 Source audit: `plans/reports/2026-09-03-research-feature-roadmap-and-edge-case-audit.md` (45 findings P1-P12/X1-X12/C1-C10/S1-S10, red-team verdicts 41 CONFIRMED / 4 PARTIAL, plus 12 new N1-N12).
 Integration research: `research/researcher-01-integration-points.md` (settings pattern, usage schema, apiKey enforcement point, modelLock internals, alert insertion points).
+Upstream prerequisite (user decision 2026-09-04): merge upstream v0.5.65 BEFORE implementing phase 01 — see reports/upstream-0.5.65-conflict-analysis.md. Plan line numbers below were verified against pre-merge master; post-merge drift is small/mechanical (chat.js +~10 lines above :232, requestDetail.js +6, search/index.js +1, antigravityQuota.js +~50 after :17) — re-verify anchors at each phase start (already mandated by Global rules).
 
 ## Release mapping (user decision, FINAL)
 
 | Release group | Tag (CONFIRMED by user 2026-09-04) | Phases | Content |
 |---|---|---|---|
-| A — Robustness | **v0.6.35** | 01-04 | All bug fixes + hardening (P/X/C/S/N) + CI/fuzz quality infra |
+| A — Robustness | **v0.6.35** | 01-04 | All bug fixes + hardening (P/X/C/S/N) + CI/fuzz quality infra — S2 SSRF arrives upstream-fixed via the v0.5.65 merge (verify/port only, phase-04) |
 | B — Alerts + Breaker | **v0.6.36** | 05-06 | Alert system + per-account circuit breaker |
 | C — Scheduler + Budgets | **v0.6.37** | 07-09 | v2go health scheduler + per-key budgets + cache analytics |
 
@@ -31,7 +32,7 @@ Integration research: `research/researcher-01-integration-points.md` (settings p
 | 01 | [Proxy pool fixes](phase-01-proxy-pool-fixes.md) | pending | A | M/L 14h | P1-P12, N1-N3 — strictProxy fail-closed, delta-writes, deactivation streak, ordering, dispatcher cache |
 | 02 | [Managed subsystems fixes](phase-02-managed-subsystems-fixes.md) | pending | A | L 16h | X1-X12, N4-N6 — reaper DATA_DIR, shutdown await, switchConfig mutex, installer checksum, TOTU interval |
 | 03 | [Core path fixes](phase-03-core-path-fixes.md) | pending | A | L 16h | C1-C10, N7-N9 — CommandCode peek rewrite, body clone per attempt, fallback no-fallback set, stream finalize |
-| 04 | [Security fixes](phase-04-security-fixes.md) | pending | A | L 18h | S1-S10, N10-N12 — CLI-token auth, SSRF hardening, key hashing at rest, tunnel default flip; + Windows CI + fuzz tests |
+| 04 | [Security fixes](phase-04-security-fixes.md) | pending | A | L 14h | S1-S10, N10-N12 — CLI-token auth, SSRF verify/port (upstream-fixed), key hashing at rest, tunnel default flip; + Windows CI + fuzz tests |
 | 05 | [Alert system](phase-05-alert-system.md) | pending | B | L 20h | New `src/lib/alerts/` — TG/Discord/webhook senders, queue+limits, dedup, settings UI |
 | 06 | [Circuit breaker](phase-06-circuit-breaker.md) | pending | B | L 16h | New `src/sse/services/circuitBreaker.js` — wrapper over modelLock, half-open single probe, dashboard panel |
 | 07 | [V2Go health scheduler](phase-07-v2go-health-scheduler.md) | pending | C | S/M 6h | Wire `xrayHealthCheckIntervalMin` boot scheduler + re-arm + alerts |
@@ -70,7 +71,7 @@ Integration research: `research/researcher-01-integration-points.md` (settings p
 
 ## Open Questions (remaining)
 
-1. C1 upstream cherry-pick: check upstream vibecoder11200 for a CommandCode peek fix before local rewrite (audit Unresolved Q2) — decide at phase-03 start. (Resolved: tags=v0.6.35/36/37 ✓, S7=HMAC per-install now ✓, P9=remove dead code ✓.)
+1. ~~C1 upstream cherry-pick: check upstream vibecoder11200 for a CommandCode peek fix before local rewrite (audit Unresolved Q2) — decide at phase-03 start.~~ **RESOLVED (2026-09-04):** verified against upstream tag v0.5.65 — upstream does NOT touch `open-sse/executors/commandcode.js` (v0.5.59→v0.5.65) → no cherry-pick exists; local rewrite confirmed. (Also resolved: tags=v0.6.35/36/37 ✓, S7=HMAC per-install now ✓, P9=remove dead code ✓.)
 
 ## Validation Summary
 
@@ -85,7 +86,7 @@ Integration research: `research/researcher-01-integration-points.md` (settings p
 - (Earlier) 3 phased releases; strictProxy try-all→fall-through→never-direct + N=3 deactivation streak; breaker wrapper on modelLock with passive half-open probe; budgets soft+hard per key; alerts 3 channels + event toggles + 10-min dedup; tunnel default flip preserving saved values; cache analytics dashboard panel per provider+model
 
 ### Action Items
-- [ ] Phase-03 start: check upstream for C1 CommandCode peek fix (cherry-pick vs rewrite)
+- [x] Phase-03 start: check upstream for C1 CommandCode peek fix (cherry-pick vs rewrite) — RESOLVED 2026-09-04: verified v0.5.65 does NOT touch commandcode.js → local rewrite
 - [ ] Phase-04 start: confirm HMAC secret mechanism shares getOrCreateInstallSecret with CLI-token/sudo-key work (single mechanism, no duplication)
 
 ### Plan Red-Team (2026-09-04) — 9 amendments applied

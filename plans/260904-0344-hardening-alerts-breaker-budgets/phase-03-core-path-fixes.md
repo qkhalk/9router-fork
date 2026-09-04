@@ -5,7 +5,7 @@
 - Audit: `plans/reports/2026-09-03-research-feature-roadmap-and-edge-case-audit.md` §A.3 (C1-C10) + Part D N7-N9 + Partial verdict on C2 (real manifestations: combo fusion + history-media, NOT the capacity-adapter headline).
 - Parent plan: [plan.md](plan.md) (release group A).
 - **Process rules (AGENTS.md):** GitNexus `impact()` before editing any symbol; `detect_changes()` before commit; HIGH/CRITICAL risk reported to user first. These files are the hottest path in the product (`open-sse/` executors/handlers run for every request).
-- **Pre-step (user-flagged):** check upstream vibecoder11200 >v0.5.59 for a shipped C1 (CommandCode peek) fix worth cherry-picking (audit Unresolved Q2). Decide cherry-pick vs local rewrite BEFORE step 1.
+- **Pre-step (user-flagged) — DECIDED (2026-09-04, verified against upstream tag v0.5.65):** upstream has NO CommandCode peek fix — `open-sse/executors/commandcode.js` is untouched upstream v0.5.59→v0.5.65 → do the LOCAL rewrite (steps 2-4). No cherry-pick candidate exists; the `9R_CC_PEEK_LEGACY=1` escape-hatch decision stands (Risk table).
 
 ## Overview
 
@@ -37,7 +37,7 @@ Fix the freshly-merged v0.5.59 regressions and long-lived edge bugs in the reque
 
 ## Architecture
 
-- **CommandCode peek rework (steps 1-4)** — internal state machine: `pending` (raw chunk tail), `sentinelFound`, `replayQueue` (lines after sentinel), `buffered` byte count. Consumers: peek loop → returns `{kind:"command"|"passthrough", replayPrefix}`. The wrapped Response (N9) composes `replayPrefix + transform(rest)`.
+- **CommandCode peek rework (steps 2-4; DECIDED 2026-09-04: local rewrite — upstream v0.5.59→v0.5.65 does not touch commandcode.js)** — internal state machine: `pending` (raw chunk tail), `sentinelFound`, `replayQueue` (lines after sentinel), `buffered` byte count. Consumers: peek loop → returns `{kind:"command"|"passthrough", replayPrefix}`. The wrapped Response (N9) composes `replayPrefix + transform(rest)`.
 - **Per-attempt body clone (step 5)** — in chatCore.js/chat.js call sites: `const attemptBody = stripNeeded ? structuredClone(body) : body` before `stripUnsupportedModalities(attemptBody)`. Keep translation pipeline's own per-attempt copy as-is (already correct per red team).
 - **Fallback policy (step 7)** — single exported `NO_FALLBACK_STATUSES = new Set([400,401,402,404,405,413,422])` in accountFallback.js; `checkFallbackError` consults it; keep provider-specific overrides intact (verify none of the 40+ executors relies on 400-fallback — impact() on `checkFallbackError`).
 - **Combo cycle (step 8)** — create/update route: DFS over alias graph (combos referencing combos), reject cycles with 400; chat resolver: `visited = new Set()` before recursion (backstop).
@@ -62,7 +62,7 @@ Fix the freshly-merged v0.5.59 regressions and long-lived edge bugs in the reque
 
 ## Implementation Steps
 
-1. **Upstream check (C1)** — search upstream vibecoder11200 repo/branches for a peek fix; if present and clean → cherry-pick + adapt; else proceed below. Record decision in PR description.
+1. **Upstream check (C1) — DECIDED (2026-09-04, verified against upstream tag v0.5.65):** upstream has NO CommandCode peek fix (file untouched upstream v0.5.59→v0.5.65) → do the LOCAL rewrite (steps 2-4). No search/cherry-pick work remains; record this decision in the PR description.
 2. **[C1] commandcode.js peek loop** — replace `break`-discard with replay queue (Architecture). Sentinel found ⇒ remaining complete lines in the SAME buffer are preserved in order and prepended to the outgoing stream.
 3. **[N8] bound the peek buffer** — 1 MiB cap on pre-sentinel accumulation; overflow ⇒ abandon stripping, stream buffered data + remainder verbatim (passthrough), warn once per request.
 4. **[N9+C8] wrapped Response + error path** — header whitelist on the constructed Response (:312-318), drop content-length/content-encoding; error path (:200-203) returns a stream that replays already-buffered bytes before continuing to read the original body.
@@ -78,7 +78,7 @@ Fix the freshly-merged v0.5.59 regressions and long-lived edge bugs in the reque
 
 ## Todo list
 
-- [ ] Upstream C1 cherry-pick decision recorded (step 1)
+- [x] Upstream C1 cherry-pick decision recorded (step 1) — DECIDED 2026-09-04: commandcode.js untouched upstream v0.5.59→v0.5.65 → local rewrite
 - [ ] C1 replay-queue peek (step 2)
 - [ ] N8 1 MiB buffer cap + passthrough degrade (step 3)
 - [ ] N9 header whitelist + C8 error replay (step 4)

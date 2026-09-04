@@ -19,6 +19,7 @@ Per-account (connectionId) circuit breaker as a wrapper layer ON TOP of the exis
 4. Scope is per-ACCOUNT (connectionId), not per (provider, account, model) — user decision. modelLock keeps handling per-model scoping underneath; the breaker answers one question: "is this account worth attempting at all right now?"
 5. Map idiom (antigravityQuota.js:12-16): module-level `const breakers = new Map()` + inflight-probe dedup — established in-repo pattern, no DB writes, restart = clean slate (acceptable: breakers re-learn within one window; document).
 6. SKIP the breaker entirely for noauth free-provider credentials — `credentials.connectionId` is undefined there (auth.js:61-75); keying a breaker on undefined would make ALL public providers share one breaker and poison each other.
+7. **RECONCILE with upstream antigravity strike-breaker (post-v0.5.65, commit ac98dd9d):** upstream adds an antigravity-only strike-breaker in antigravityQuota.js — `strikeCounts`/`strikeBlocks` Maps, 3×429/60s → 15min block per (connectionId, model), enforced inside `getProviderCredentials` filtering. The generic per-account breaker must LAYER on top, not double-block (R9). Related upstream semantic (commit 15687d19): `allRateLimited` now ALWAYS returns 503 (no lastStatus passthrough) — the breaker skip-path's self-constructed `unavailableResponse` (R4) is unaffected, but do NOT reintroduce status passthrough.
 
 ## Requirements
 
@@ -30,6 +31,7 @@ Per-account (connectionId) circuit breaker as a wrapper layer ON TOP of the exis
 - R6: `getBreakerStates()` for dashboard (list: connectionId → provider name, state, failures, openUntil, consecutiveOpens).
 - R7: emits `breaker-open` (dedupKey connectionId; include provider) and `breaker-recovered` on close-from-open, via phase-05 emitAlert.
 - R8: modelLock behavior byte-identical when breaker module disabled (config off) — dead-simple kill switch `breakerEnabled` setting (default true; defensive).
+- R9 (upstream strike-breaker layering, post-v0.5.65): when a (connectionId, model) pair is strike-blocked by upstream's antigravity mechanism (ac98dd9d: strikeCounts/strikeBlocks in antigravityQuota.js, 3×429/60s → 15min block, enforced inside getProviderCredentials filtering), the per-account breaker SKIPS counting those failures again for antigravity quota-429s — the strike block already excludes the candidate at selection time, so counting would double-block the same account. Breaker panel displays strike-block state alongside breaker state for antigravity accounts.
 
 ## Architecture
 
@@ -52,7 +54,7 @@ src/sse/services/circuitBreaker.js
 |---|---|
 | src/sse/services/circuitBreaker.js (new) | module |
 | src/sse/handlers/chat.js | integration :268-287 (skip path), :340 (success), :515 (failure) |
-| src/sse/services/antigravityQuota.js | Map-idiom reference :12-16 |
+| src/sse/services/antigravityQuota.js | Map-idiom reference :12-16; upstream strikeCounts/strikeBlocks (ac98dd9d) — R9 layering reconciliation + panel display |
 | src/lib/alerts/index.js | emitAlert + EVENT_TYPES (phase-05) |
 | src/lib/db/repos/settingsRepo.js | breaker* DEFAULT_SETTINGS keys |
 | dashboard connections/usage page (locate exact page during impl) | breaker panel |
@@ -64,7 +66,7 @@ src/sse/services/circuitBreaker.js
 2. **Settings keys** — `breakerEnabled/breakerFailureThreshold/breakerWindowSec/breakerBaseCooldownSec` in DEFAULT_SETTINGS (mergeWithDefaults auto-fills).
 3. **chat.js wiring** — impact() on the chat handler + getProviderCredentials call site. Skip logic (R4) with continue-loop semantics; failure feed at :515 region; success feed at :340 + N7 callback (guard: only once per request). Respect `breakerEnabled=false` → zero behavior change.
 4. **Alerts** — emit breaker-open on open transition, breaker-recovered on close-from-open (EVENT_TYPES from phase-05).
-5. **Dashboard panel** — small state table (connection, provider, state badge, failures, opens again in Xs); poll or piggyback existing connections GET; manual "reset breaker" button (calls resetBreaker) — minimal.
+5. **Dashboard panel** — small state table (connection, provider, state badge, failures, opens again in Xs); antigravity rows also show upstream strike-block state alongside breaker state (R9); poll or piggyback existing connections GET; manual "reset breaker" button (calls resetBreaker) — minimal.
 6. **Tests at integration level** — simulated provider failing N times (mock executor): assert attempt-skip after open (request count to provider stops), single probe after cooldown, recovery on success; assert fall-through: probe failure still serves user via next account (no 503 caused by breaker alone).
 7. Run `detect_changes()`; full suite; commit.
 
@@ -75,6 +77,7 @@ src/sse/services/circuitBreaker.js
 - [ ] chat.js wrapper wiring (skip/failure/success feeds) w/ impact() (step 3)
 - [ ] breaker-open / breaker-recovered alerts (step 4)
 - [ ] Dashboard state panel + reset button (step 5)
+- [ ] Reconcile with upstream antigravity strike-breaker (R9): skip double-counting strike-blocked (connectionId, model) pairs for quota-429s; panel shows strike-block state; keep allRateLimited always-503 (no status passthrough reintroduced)
 - [ ] Integration tests incl. probe-fallback-not-harmed (step 6)
 - [ ] Suite 0 pass→fail; detect_changes() clean; committed
 

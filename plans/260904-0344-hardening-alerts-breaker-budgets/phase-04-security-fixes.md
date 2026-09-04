@@ -10,7 +10,7 @@
 
 ## Overview
 
-Close the auth-bypass on DB export/import (S1 + N12 + N11), harden the SSRF guard (S2), re-enable secret masking (S3), fix key-at-rest hygiene (S4, S5 + N10, S7, S9, S10), flip the tunnel-dashboard default safely (S6), stop hostname leakage (S8), and land the two quality-infrastructure items from the audit (§B.6): Windows process-lifecycle CI + stream-parser chunk-boundary fuzz tests.
+Close the auth-bypass on DB export/import (S1 + N12 + N11), verify/port the upstream-fixed SSRF guard (S2 — upstream b870b5d4 arrives via the v0.5.65 merge; see step 3), re-enable secret masking (S3), fix key-at-rest hygiene (S4, S5 + N10, S7, S9, S10), flip the tunnel-dashboard default safely (S6), stop hostname leakage (S8), and land the two quality-infrastructure items from the audit (§B.6): Windows process-lifecycle CI + stream-parser chunk-boundary fuzz tests.
 
 ## Key Insights
 
@@ -19,13 +19,13 @@ Close the auth-bypass on DB export/import (S1 + N12 + N11), harden the SSRF guar
 3. **S6 is the only default-flip in the program:** `tunnelDashboardAccess: true` (settingsRepo.js:32, verified). Flip default to `false` ONLY where the stored raw JSON never explicitly contained the key: `mergeWithDefaults` (settingsRepo.js:129-131) currently spreads defaults under raw — add key-presence check for this one key, then persist the resolved value once so future merges treat it as explicit. UI adds an http:// external-tunnel warning banner.
 4. **S7 is THE schema-migration-risk item (user-marked):** apiKeys looked up `WHERE key = ?` (apiKeysRepo.js:41-44; schema.js:78). Hash-at-rest with SHA-256-family + plaintext fallback transition: `validateApiKey` tries `keyHash` first, falls back to legacy plaintext match and lazily backfills the hash. **DECIDED (2026-09-04 user validation): HMAC-SHA256 with per-install secret** — shared `getOrCreateInstallSecret` mechanism with the CLI-token/sudo-key work (R1/R6); no open decision remains.
 5. **S5+N10:** sudo-password AES-GCM key = public `machineIdSync()` + hardcoded salt (mitm/manager.js:97-98,154-171), and the `deriveKey()` catch falls back to `sha256(salt)` — every install identical if node-machine-id fails to load (N10, :159-161). Fix: derive from per-install secret (the 0o600 JWT-secret machinery already exists — reuse); on derivation failure, refuse to decrypt (fail-closed), not a public constant.
-6. **S2:** `assertPublicUrl` string-matches hostname (ssrfGuard.js:48-56); fetch follows redirects; DNS A-record to private IP works; `100.64.0.0/10` (CGNAT/Tailscale) missing. Fix = resolve DNS (all records), validate every IP against private ranges (RFC1918, loopback, link-local 169.254/16, CGNAT, IPv6 ULA/link-local), `redirect:"manual"` + re-validate each hop (cap 3).
+6. **S2 — FIXED UPSTREAM (b870b5d4, #3714, in v0.5.60-65; local scope = verify/port only, ~1h):** the pre-merge gaps (`assertPublicUrl` string-matching hostname ssrfGuard.js:48-56; redirect-following; DNS-to-private; missing CGNAT 100.64/10) are all closed upstream, beyond the plan spec: CGNAT 100.64/10, full IPv6 (ULA, link-local, v4-mapped, NAT64, v4-compat), trailing-dot normalize, `assertPublicUrlResolved` (dns.lookup all:true), `fetchPublic` (redirect:manual + per-hop revalidation + 5-hop cap), wired into search/index.js AND src/sse/handlers/fetch.js, test ssrf-guard-hardening.test.js. See step 3 for the verify/port procedure.
 
 ## Requirements
 
 - R1 (S1): export/import requires a VALID CLI token (constant-time compare against per-install secret) or password re-auth; import strips `PROTECTED_SETTING_KEYS` (password hash, sudo blob, JWT-relevant keys — enumerate from dashboardGuard's existing list); GET adds `Cache-Control: no-store` (N12).
 - R2 (N11): `verifyDashboardPassword` fallback path gets the login route's locality gate.
-- R3 (S2): SSRF guard blocks private-IP DNS results, all redirect hops, and CGNAT range; used by /v1/search caller path (search/callers.js:71-92).
+- R3 (S2 — SATISFIED UPSTREAM, verify/port only): SSRF guard blocks private-IP DNS results, all redirect hops, and CGNAT range (upstream b870b5d4: `assertPublicUrlResolved` + `fetchPublic` wired into search/index.js and fetch.js). Local scope: verify intact post-merge, port tests, confirm the /v1/search caller path (search/callers.js:71-92) and provider-nodes/validate route route through `fetchPublic`.
 - R4 (S3): requestLogger masks Authorization/cookie/bearer even with `ENABLE_REQUEST_LOGS=true`.
 - R5 (S4): MITM dir created 0700, root CA key 0600 (POSIX; Windows documented as ACL-based).
 - R6 (S5+N10): sudo-password key derived from per-install secret; derive failure = fail-closed decrypt; ciphertext stripped from `GET /api/settings` (settings/route.js:21 strip list).
@@ -40,7 +40,7 @@ Close the auth-bypass on DB export/import (S1 + N12 + N11), harden the SSRF guar
 
 - **Per-install secret reuse:** one helper (e.g. extend the existing JWT-secret module) `getOrCreateInstallSecret(file, 0o600)`; consumers: CLI-token validation (R1), sudo key (R6), apiKeys HMAC (R8), API_KEY_SECRET fallback (R10). One mechanism, four uses — DRY.
 - **S7 transition:** schema adds `keyHash TEXT` (+ keep `key` column). Writes (create key) store hash + masked display value. `validateApiKey`: exact hash hit → ok; else legacy `WHERE key=?` hit → backfill hash, clear plaintext `key` to masked form, ok; else invalid. Migration risk mitigations: run inside a transaction per key; full backup warning in changelog; feature test on a v0.6.33 DB snapshot.
-- **SSRF guard:** `assertPublicUrl(url)` → resolve + range-check; new `fetchPublic(url, opts)` wrapper (redirect:"manual", ≤3 hops, re-assert each Location). call-site: search callers path only (impact() to confirm no other consumers break).
+- **SSRF guard (upstream-provided — verify/port, not implement):** upstream b870b5d4 ships `assertPublicUrlResolved` + `fetchPublic` (redirect:"manual", 5-hop cap, per-hop revalidation) wired into search/index.js and fetch.js. Local work = verify intact in the v0.5.65 merge commit, port/extend ssrf-guard-hardening.test.js to the fork harness, optionally tighten hop cap 5→3 (decide during impl), confirm provider-nodes/validate also uses fetchPublic.
 - **CI job (.github/workflows/ci.yml — file verified):** `runs-on: windows-latest`, steps: checkout, setup-node, npm ci, boot server (background), trigger xray start via API, taskkill /INT equivalent (send CTRL event or node process kill), assert `tasklist | findstr xray.exe` empty; allowed to fail-soft initially (continue-on-error first 2 weeks) per rollout below.
 
 ## Related code files
@@ -51,8 +51,8 @@ Close the auth-bypass on DB export/import (S1 + N12 + N11), harden the SSRF guar
 | src/dashboardGuard.js | S1 (isCliRequest :41-48, :292-296), S6 (:104-112, :236-244) |
 | src/lib/db/index.js | S1 (exportDb/importDb :90-134), X12 redaction list |
 | src/dashboardSession.js | N11 (:75-82) |
-| src/shared/utils/ssrfGuard.js | S2 (:48-56) |
-| open-sse/handlers/search/callers.js | S2 consumer (:71-92) |
+| src/shared/utils/ssrfGuard.js | S2 upstream-fixed (b870b5d4) — verify/port; was :48-56 pre-merge |
+| open-sse/handlers/search/callers.js | S2 consumer (:71-92) — confirm routes via fetchPublic post-merge |
 | open-sse/utils/requestLogger.js | S3 (:72-91, :130-164) |
 | src/mitm/cert/rootCA.js | S4 (:88-90) |
 | src/mitm/manager.js | S5 (:97-98, :154-171), N10 (:159-161) |
@@ -69,7 +69,7 @@ Close the auth-bypass on DB export/import (S1 + N12 + N11), harden the SSRF guar
 
 1. **[S1+N12] route guard** — impact() on isCliRequest/exportDb/importDb. `isCliRequest` → validate token: constant-time compare against HMAC(per-install secret) of the token issued by the CLI (read CLI issuance code to match format; if CLI tokens are random strings in DB/settings, compare against that store). Import: strip `PROTECTED_SETTING_KEYS` + `mitmSudoEncrypted` + password hash before writing. GET: `Cache-Control: no-store`.
 2. **[N11] dashboardSession.js:75-82** — add locality gate (same helper the login route uses — extract shared `isLocalOrManagedTunnelRequest()` if not already shared).
-3. **[S2] ssrfGuard.js + search callers** — implement resolve+range-check+manual-redirect wrapper (Architecture); route /v1/search fetches through it. Unit tests with fixtures: `localhost`, `127.0.0.1`, `10.x`, `192.168.x`, `169.254.169.254`, `100.64.x`, `::1`, `fc00::`, DNS-to-private, redirect-to-private (all must throw).
+3. **[S2] SSRF — VERIFY/PORT ONLY (upstream-fixed; effort ~1h, was full implementation)** — upstream commit b870b5d4 (#3714, in v0.5.60-65) ALREADY implements the full S2 design and more: CGNAT 100.64/10, IPv6 ULA/link-local/v4-mapped/NAT64/v4-compat, trailing-dot normalize, `assertPublicUrlResolved` (dns.lookup all:true), `fetchPublic` (redirect:manual + per-hop revalidation + 5-hop cap), wired into search/index.js AND src/sse/handlers/fetch.js, test ssrf-guard-hardening.test.js. Local work: (i) after the v0.5.65 merge, VERIFY the fix landed intact in the merge commit (`assertPublicUrlResolved` + `fetchPublic` present and wired at both call sites); (ii) port/extend tests if the fork's test harness differs (keep the fixture matrix: `localhost`, `127.0.0.1`, `10.x`, `192.168.x`, `169.254.169.254`, `100.64.x`, `::1`, `fc00::`, DNS-to-private, redirect-to-private — all must throw); (iii) optional: tighten hop cap 5→3 (decide during impl); (iv) confirm the provider-nodes/validate route also uses `fetchPublic` (check during impl).
 4. **[S3] requestLogger.js** — restore masking of Authorization/cookie/`bearer ` substrings in both log sinks (:72-91 headers, :130-164 body/redaction); test asserts masked output with ENABLE_REQUEST_LOGS=true.
 5. **[S4] rootCA.js:88-90** — `fs.mkdirSync(dir, {recursive:true, mode:0o700})` + `fs.chmodSync(keyPath, 0o600)` after write (guard win32).
 6. **[S5+N10] mitm/manager.js** — derive AES key from per-install secret (helper, Architecture); delete the public `sha256(salt)` fallback — on derive failure throw (sudo prompt re-asks instead of decrypting with a universal key); strip ciphertext from GET /api/settings response (:21 list).
@@ -87,7 +87,7 @@ Close the auth-bypass on DB export/import (S1 + N12 + N11), harden the SSRF guar
 - [ ] S1 CLI-token validation + import strip + export auth path
 - [ ] N12 no-store header
 - [ ] N11 verifyDashboardPassword locality gate
-- [ ] S2 SSRF: DNS resolve + ranges + manual redirects (tests for all fixture classes)
+- [ ] S2 SSRF verify/port: fix intact post-merge + tests ported (upstream b870b5d4) + provider-nodes/validate fetchPublic confirmed
 - [ ] S3 requestLogger masking restored
 - [ ] S4 rootCA/dir permissions
 - [ ] S5+N10 per-install sudo key, fail-closed derive, GET strip
@@ -102,7 +102,7 @@ Close the auth-bypass on DB export/import (S1 + N12 + N11), harden the SSRF guar
 
 ## Success Criteria
 
-- Tests: SSRF fixture matrix (all blocked); masked logger output; import-with-hash-overwrite attempt → hash unchanged; hash-first validate + backfill (unit + snapshot-DB integration); require-login response contains no hostname strings; CLI-token route rejects `x-9r-cli-token: x` with 401; verifyDashboardPassword fallback refused remotely.
+- Tests: SSRF fixture matrix (all blocked — via ported/extended upstream ssrf-guard-hardening.test.js, verification not re-implementation); masked logger output; import-with-hash-overwrite attempt → hash unchanged; hash-first validate + backfill (unit + snapshot-DB integration); require-login response contains no hostname strings; CLI-token route rejects `x-9r-cli-token: x` with 401; verifyDashboardPassword fallback refused remotely.
 - S6: fresh DB → default false; DB with explicit `true` → stays true (unit test on mergeWithDefaults with both raw shapes).
 - CI: windows job green locally via act/manual run before push; fuzz harness deterministic (seeded) and green.
 - Full suite green; 0 pass→fail.
@@ -115,7 +115,7 @@ Close the auth-bypass on DB export/import (S1 + N12 + N11), harden the SSRF guar
 | S1 breaks legitimate CLI export/import flows | M×H | CLI `export`/`import` commands fail with 401 | Coordinate token format with CLI issuance code in same PR; e2e CLI test; adjust compare, not revert. |
 | S6 flips tunnel users who DID rely on default-true | M×H | "Dashboard stopped on tunnel" reports | Chelog + banner on tunnel page explaining re-enable; mergeWithDefaults preserves explicit values — only never-saved installs flip. Offer settings one-click re-enable. |
 | S5 fail-closed decrypt breaks existing saved sudo passwords | M×M | MITM sudo re-prompt loops | Expected one-time re-entry (old ciphertext undecryptable by design); migrate-on-success: re-encrypt with new key after successful prompt. |
-| S2 manual-redirect wrapper breaks legit providers behind redirects | L×M | Search callers fail on 301/302 chains | Allow up to 3 public hops (Architecture); log blocked URLs; per-host allowlist escape hatch if reported. |
+| S2: v0.5.65 merge drops or unwires upstream's fetchPublic/assertPublicUrlResolved | L×M | Post-merge grep/verify finds missing or unwired guard; search SSRF tests absent | Step 3(i) verification catches it; re-apply upstream hunks from b870b5d4; ported fixture matrix gates it. |
 | Windows CI flaky (ports/timing) | H×L | CI red noise | continue-on-error rollout (step 12); quarantine with `|| true` + issue, don't block releases. |
 
 ## Security Considerations
