@@ -5,6 +5,16 @@ import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
 import { GITHUB_CONFIG } from "@/shared/constants/config";
 
+// Bundled copy of the remote donate.json (public/donate.json). Used when the
+// remote source is unreachable (offline, GitHub blocked) so the modal still works.
+const DONATE_FALLBACK_URL = "/donate.json";
+
+const fetchDonate = (url) =>
+  fetch(url, { cache: "no-store" }).then((res) => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  });
+
 export default function DonateModal({ isOpen, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -15,11 +25,8 @@ export default function DonateModal({ isOpen, onClose }) {
     if (!isOpen || data) return;
     setLoading(true);
     setError("");
-    fetch(GITHUB_CONFIG.donateUrl, { cache: "no-store" })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
+    fetchDonate(GITHUB_CONFIG.donateUrl)
+      .catch(() => fetchDonate(DONATE_FALLBACK_URL))
       .then((json) => setData(json))
       .catch((err) => setError(err.message || "Failed to load"))
       .finally(() => setLoading(false));

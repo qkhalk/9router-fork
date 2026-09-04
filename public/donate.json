@@ -1,0 +1,33 @@
+{
+  "title": "Support 9Router (mod)",
+  "message": "If this mod is useful to you, a small donation is much appreciated 💛",
+  "channels": [
+    {
+      "id": "bank",
+      "label": "ACB — Bank transfer",
+      "description": "VietQR · Napas 247 — scan with any Vietnamese banking app",
+      "icon": "account_balance",
+      "color": "#0072bc",
+      "url": "",
+      "qr": "https://api.vietqr.io/image/970416-43269867-xtJ7AHD.jpg?accountName=TRAN%20QUOC%20AN"
+    },
+    {
+      "id": "kofi",
+      "label": "Ko-fi",
+      "description": "Buy me a coffee",
+      "icon": "local_cafe",
+      "color": "#ff5e5b",
+      "url": "https://ko-fi.com/vibecoder11200",
+      "qr": ""
+    },
+    {
+      "id": "paypal",
+      "label": "PayPal",
+      "description": "International support via PayPal.me",
+      "icon": "payments",
+      "color": "#0070ba",
+      "url": "https://paypal.me/vibecoder11200",
+      "qr": ""
+    }
+  ]
+}

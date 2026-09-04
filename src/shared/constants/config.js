@@ -8,9 +8,12 @@ export const APP_CONFIG = {
 };
 
 // GitHub configuration
+// donateUrl points at this fork's raw donate.json so channel info (bank QR, links)
+// can be updated by pushing to master — no release needed. DonateModal falls back
+// to the bundled /donate.json (same file, from public/) when the remote is unreachable.
 export const GITHUB_CONFIG = {
   changelogUrl: "https://raw.githubusercontent.com/vibecoder11200/9router/refs/heads/master/CHANGELOG.md",
-  donateUrl: "https://9router.com/api/donate",
+  donateUrl: "https://raw.githubusercontent.com/vibecoder11200/9router/refs/heads/master/public/donate.json",
 };
 
 // Updater configuration.
