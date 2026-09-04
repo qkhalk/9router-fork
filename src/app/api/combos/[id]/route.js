@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getComboById, updateCombo, deleteCombo, getComboByName } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
+import { findComboCycle } from "@/sse/services/model.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -43,6 +44,15 @@ export async function PUT(request, { params }) {
     
     // Capture previous name to invalidate rotation state on rename
     const prev = await getComboById(id);
+
+    // C6: validate the POST-UPDATE shape for alias cycles before writing.
+    const nextName = body.name || prev?.name;
+    const nextModels = Array.isArray(body.models) ? body.models : prev?.models || [];
+    const cycleAt = await findComboCycle(nextName, nextModels);
+    if (cycleAt) {
+      return NextResponse.json({ error: `Combo definition is cyclic through "${cycleAt}"` }, { status: 400 });
+    }
+
     const combo = await updateCombo(id, body);
     
     if (!combo) {

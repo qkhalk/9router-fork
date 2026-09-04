@@ -44,13 +44,22 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
  * Handle streaming response — pipe provider SSE through transform stream to client.
  */
 export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, streamController, onStreamComplete, streamDetailId, pxpipe, reqTag, log }) {
-  if (onRequestSuccess) {
-    Promise.resolve()
-      .then(onRequestSuccess)
-      .catch(err => {
-        console.error("[ChatCore] onRequestSuccess failed:", err?.message || err);
-      });
-  }
+  // N7: success is the FIRST BYTE FORWARDED to the client — not the arrival
+  // of 200 headers. An upstream that dies right after accept used to "heal"
+  // modelLock (and, in phase 06, the breaker) on a stream the client never
+  // received. The tap below fires the callback on its first forwarded chunk.
+  let firstByteSignaled = false;
+  const signalFirstByte = () => {
+    if (firstByteSignaled) return;
+    firstByteSignaled = true;
+    if (onRequestSuccess) {
+      Promise.resolve()
+        .then(onRequestSuccess)
+        .catch(err => {
+          console.error("[ChatCore] onRequestSuccess failed:", err?.message || err);
+        });
+    }
+  };
 
   // When upstream returns HTML/text instead of SSE (e.g. Cloudflare 5xx error
   // page), piping it through the SSE transform stream causes Next.js
@@ -101,9 +110,16 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     console.error("[RequestDetail] Failed to save streaming request:", err.message);
   });
 
+  const firstByteTap = new TransformStream({
+    transform(chunk, controller) {
+      signalFirstByte();
+      controller.enqueue(chunk);
+    },
+  });
+
   return {
     success: true,
-    response: new Response(transformedBody, { headers: SSE_HEADERS })
+    response: new Response(transformedBody.pipeThrough(firstByteTap), { headers: SSE_HEADERS })
   };
 }
 

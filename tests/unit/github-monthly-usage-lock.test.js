@@ -58,12 +58,15 @@ describe("GitHub monthly usage exhaustion", () => {
     }
   });
 
-  it("keeps unrelated GitHub 402 errors model-scoped", async () => {
+  it("does not lock the account for unrelated GitHub 402 errors (C4 deterministic client error)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-04T19:30:00.000Z"));
 
     try {
-      await markAccountUnavailable(
+      // "Payment required" without the monthly-limit phrase: a bare 402 is a
+      // deterministic client error — no model lock, no account-wide lock, no
+      // fallback (C4). The monthly-limit case above keeps its special path.
+      const result = await markAccountUnavailable(
         "github-a",
         402,
         "Payment required",
@@ -71,14 +74,8 @@ describe("GitHub monthly usage exhaustion", () => {
         "claude-fable-5",
       );
 
-      expect(dbMocks.updateProviderConnection).toHaveBeenCalledWith(
-        "github-a",
-        expect.objectContaining({
-          "modelLock_claude-fable-5": "2026-08-04T19:32:00.000Z",
-        }),
-      );
-      expect(dbMocks.updateProviderConnection.mock.calls[0][1])
-        .not.toHaveProperty("modelLock___all");
+      expect(result.shouldFallback).toBe(false);
+      expect(dbMocks.updateProviderConnection).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

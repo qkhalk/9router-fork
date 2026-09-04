@@ -79,18 +79,18 @@ Fix the freshly-merged v0.5.59 regressions and long-lived edge bugs in the reque
 ## Todo list
 
 - [x] Upstream C1 cherry-pick decision recorded (step 1) — DECIDED 2026-09-04: commandcode.js untouched upstream v0.5.59→v0.5.65 → local rewrite
-- [ ] C1 replay-queue peek (step 2)
-- [ ] N8 1 MiB buffer cap + passthrough degrade (step 3)
-- [ ] N9 header whitelist + C8 error replay (step 4)
-- [ ] C2 per-attempt structuredClone (step 5)
-- [ ] C3 PXPIPE tokenSaverEnabled gate (step 6)
-- [ ] C4 NO_FALLBACK_STATUSES (step 7)
-- [ ] C6 combo cycle validation + visited backstop (step 8)
-- [ ] C5 search lock clear + scoped failure marks (step 9)
-- [ ] C7+C9 passthrough finalize + no dup [DONE] (step 10)
-- [ ] C10 search body-read timeout (step 11)
-- [ ] N7 first-byte success signal (step 12)
-- [ ] Tests added; suite 0 pass→fail; detect_changes() clean; committed
+- [x] C1 replay-queue peek (step 2)
+- [x] N8 1 MiB buffer cap + passthrough degrade (step 3)
+- [x] N9 header whitelist + C8 error replay (step 4)
+- [x] C2 per-attempt structuredClone (step 5)
+- [x] C3 PXPIPE tokenSaverEnabled gate (step 6)
+- [x] C4 NO_FALLBACK_STATUSES (step 7)
+- [x] C6 combo cycle validation + visited backstop (step 8)
+- [x] C5 search lock clear + scoped failure marks (step 9)
+- [x] C7+C9 passthrough finalize + no dup [DONE] (step 10)
+- [x] C10 search body-read timeout (step 11)
+- [x] N7 first-byte success signal (step 12)
+- [x] Tests added; suite 0 pass→fail; detect_changes() clean; committed
 
 ## Success Criteria
 
@@ -118,3 +118,18 @@ Fix the freshly-merged v0.5.59 regressions and long-lived edge bugs in the reque
 
 - N7's first-byte success hook is the exact signal phase-06 breaker consumes (`recordSuccess`) — keep the callback signature stable and note it in phase-06.
 - Fuzz harness from Success Criteria (a) gets promoted to shared infra in phase 04 (quality infra item 1).
+
+## Implementation notes (2026-09-05)
+
+All 12 findings landed in one commit. Deviations and discoveries worth keeping:
+
+1. **C1/C8 replay-prefix delivery bug (found by test):** `createReplayedStream` originally enqueued the replay prefix and read the continuation in the SAME `pull()` — when the continuation read rejected, `controller.error()` cleared the queue and the already-enqueued prefix was lost. Fixed by returning after the prefix enqueue so it lands as its own pull cycle. Also: a ReadableStream fixture that calls `controller.error()` in `start()` discards its own queued chunks — C8 tests must error from `pull()` after chunks are consumed (that is also the real-world shape).
+2. **C4 precedence rework:** the first implementation consulted `NO_FALLBACK_STATUSES` only in the default branch, but pre-existing STATUS rules (401/402/404 with 2-min cooldowns) matched first, defeating R7 for exactly the flagged statuses. Final precedence: TEXT rules (account-specific evidence, e.g. 402+"quota exceeded") → NO_FALLBACK_STATUSES (bare deterministic status) → STATUS rules → transient default. A bare 402 no longer locks; a 402 carrying "quota exceeded" still falls back.
+3. **C6 findComboCycle bug (found by test):** the DFS must check `name === startName` BEFORE the DB lookup — the combo under creation doesn't exist yet, so `getComboByName(startName)` returns null and a→b→(new a) cycles were missed. The chat-side visited-set backstop (`comboVisited` param on `handleSingleModelChat`) covers legacy cyclic rows: revisit → warn + 400, no recursion.
+4. **C10 timer-clearing:** the abort timer now survives the body read; `clearTimeout` moved to after the try/catch (success + `!resp.ok` paths) and into the non-abort catch branch (502). Unparseable-body path also verified timer-free.
+5. **C2 scope:** the only `stripUnsupportedModalities` call site is chatCore.js (chat.js:165-180 in the audit refers to the combo dispatch, which delegates here) — one clone site covers both manifestations. Clone runs only when `!passthrough`.
+6. **Test-env traps re-confirmed:** `npx vitest` MUST run from `tests/` (root has a different vitest v5 + no `@/` alias config, producing misleading "Cannot find package '@/lib/...'" suite errors); virtual mocks needed for `undici`, `uuid`, `next/server`.
+7. **detect_changes:** 16 symbols / 13 files / HIGH risk — affected flows all HandleChatCore/HandleResponsesCore (the predicted "chat, search" set). Reported per AGENTS.md; proceeded under the plan's pre-decided risk responses (escape hatch `9R_CC_PEEK_LEGACY=1` shipped for C1).
+8. **Regression gate:** full-suite failing-set diff vs clean-tree baseline (both runs noisy under parallel load — 123/132/124 failed files run-to-run). 8 worktree-only failures → 7 were parallel-load flake (pass in isolation), 1 real: `github-monthly-usage-lock.test.js` asserted the OLD pre-C4 behavior (bare non-monthly 402 locks the model 2min). Updated to the C4 contract (no lock, `shouldFallback:false`); the monthly-limit text path still locks account-wide (test unchanged, passes).
+
+New tests (49): commandcode-peek-replay (7, incl. 1000-iteration random-split fuzz), account-fallback-no-fallback (11), stream-passthrough-done (3), combo-cycle-guard (9), search-unlock-scoped-lock (7), chatsearch-body-timeout (5), streaming-first-byte-signal (3), chatcore-body-clone (4).

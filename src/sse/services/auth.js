@@ -276,7 +276,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @param {string|null} model - The specific model that triggered the error
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
-export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
+export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null, opts = {}) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
@@ -306,12 +306,18 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
   const lockUpdate = buildModelLockUpdate(githubResetAtMs ? null : model, cooldownMs);
 
+  // Scoped failures (e.g. /v1/search locking modelLock_websearch:*) still
+  // lock that key but must not stamp account-wide test status (C5).
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
-    testStatus: "unavailable",
-    lastError: reason,
-    errorCode: status,
-    lastErrorAt: new Date().toISOString(),
+    ...(opts.skipStatusStamp
+      ? {}
+      : {
+          testStatus: "unavailable",
+          lastError: reason,
+          errorCode: status,
+          lastErrorAt: new Date().toISOString(),
+        }),
     backoffLevel: newBackoffLevel ?? backoffLevel
   });
 

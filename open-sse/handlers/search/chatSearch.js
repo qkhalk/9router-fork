@@ -498,19 +498,27 @@ export async function handleChatSearch({
       error: `Network error: ${err?.message || "unknown"}`
     };
   }
-  clearTimeout(timer);
   const upstreamLatency = Date.now() - upstreamStart;
 
   let data;
   try {
+    // C10: keep the abort timer armed through the BODY read — a stalled
+    // upstream that sent headers then went silent must not hold the request
+    // open forever (clearTimeout only after the body is consumed).
     data = await resp.json();
-  } catch {
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      log?.warn?.(`[chatSearch] body-read timeout provider=${provider}`);
+      return { success: false, status: 504, error: "Upstream timeout (body)" };
+    }
+    clearTimeout(timer);
     return {
       success: false,
       status: 502,
       error: `Invalid upstream response (status ${resp.status})`
     };
   }
+  clearTimeout(timer);
 
   if (!resp.ok) {
     const errMsg =

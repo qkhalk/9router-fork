@@ -123,15 +123,74 @@ export function parseCommandCodeError(event) {
   return { statusCode, message, type };
 }
 
+// Event types that mark the transition from preamble to streamed content.
+// Seeing one ends the peek — everything buffered so far replays in order.
+const PEEK_SENTINEL_TYPES = new Set([
+  "text-delta",
+  "reasoning-delta",
+  "tool-input-start",
+  "tool-call",
+  "finish",
+  "finish-step",
+]);
+
+// N8: hard cap on pre-sentinel buffering. A response that never produces a
+// recognizable sentinel (renamed/unknown event schema) must not be buffered in
+// RAM in full — past the cap the peek degrades to streaming passthrough.
+const PEEK_BUFFER_MAX_BYTES =
+  Number(process.env.NINEROUTER_CC_PEEK_MAX_BYTES) > 0
+    ? Number(process.env.NINEROUTER_CC_PEEK_MAX_BYTES)
+    : 1024 * 1024;
+
+// N9: only these upstream headers survive onto the re-encoded SSE response.
+// content-length/content-encoding/transfer-encoding describe the ORIGINAL
+// NDJSON bytes and would mis-frame the new SSE stream.
+const WRAP_HEADER_WHITELIST = [
+  "x-request-id",
+  "request-id",
+  "x-ratelimit-limit-requests",
+  "x-ratelimit-remaining-requests",
+  "x-ratelimit-reset-requests",
+  "retry-after",
+];
+
+function whitelistedHeaders(originalResponse, extra = {}) {
+  const out = { ...extra };
+  if (originalResponse?.headers) {
+    for (const name of WRAP_HEADER_WHITELIST) {
+      const v = originalResponse.headers.get(name);
+      if (v != null) out[name] = v;
+    }
+  }
+  return out;
+}
+
 export async function inspectAndWrapCommandCodeResponse(originalResponse, model) {
+  // Escape hatch (C1 rollout risk): bypass the peek entirely and stream
+  // straight through the NDJSON→SSE wrapper (no error pre-scan, no buffering).
+  if (process.env["9R_CC_PEEK_LEGACY"] === "1" || process.env.NINEROUTER_CC_PEEK_LEGACY === "1") {
+    return wrapNdjsonAsOpenAISse(originalResponse.body, model, originalResponse);
+  }
+
   const reader = originalResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   const bufferedLines = [];
+  let bufferedBytes = 0;
   let detectedError = null;
+  let overflowed = false;
+  // C1: complete lines that arrived in the SAME chunk after the sentinel.
+  // Providers routinely flush sentinel + first deltas in one TCP read; these
+  // lines must replay in order ahead of the live stream — never be dropped.
+  let afterSentinelLines = [];
+
+  const recordLine = (line) => {
+    bufferedLines.push(line);
+    bufferedBytes += line.length + 1;
+  };
 
   try {
-    while (true) {
+    scan: while (true) {
       const { value, done } = await reader.read();
       if (done) {
         const trimmed = buffer.trim();
@@ -142,10 +201,10 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
             if (parsed?.type === "error") {
               detectedError = parsed;
             } else {
-              bufferedLines.push(trimmed);
+              recordLine(trimmed);
             }
           } catch {
-            bufferedLines.push(trimmed);
+            recordLine(trimmed);
           }
         }
         break;
@@ -155,51 +214,67 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
 
-      let stopLoop = false;
-      for (const line of lines) {
-        const trimmed = line.trim();
+      for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
         if (!trimmed) continue;
         const jsonStr = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
         if (!jsonStr || jsonStr === "[DONE]") {
-          bufferedLines.push(trimmed);
-          stopLoop = true;
-          break;
+          recordLine(trimmed);
+          afterSentinelLines = lines.slice(i + 1).map((l) => l.trim()).filter(Boolean);
+          break scan;
         }
 
         let event;
         try {
           event = JSON.parse(jsonStr);
         } catch {
-          bufferedLines.push(trimmed);
+          recordLine(trimmed);
           continue;
         }
 
         if (event?.type === "error") {
           detectedError = event;
-          stopLoop = true;
-          break;
+          break scan;
         }
 
-        bufferedLines.push(trimmed);
+        recordLine(trimmed);
 
-        if (
-          event?.type === "text-delta" ||
-          event?.type === "reasoning-delta" ||
-          event?.type === "tool-input-start" ||
-          event?.type === "tool-call" ||
-          event?.type === "finish" ||
-          event?.type === "finish-step"
-        ) {
-          stopLoop = true;
-          break;
+        if (PEEK_SENTINEL_TYPES.has(event?.type)) {
+          afterSentinelLines = lines.slice(i + 1).map((l) => l.trim()).filter(Boolean);
+          break scan;
         }
       }
 
-      if (stopLoop) break;
+      if (bufferedBytes > PEEK_BUFFER_MAX_BYTES) {
+        // N8: no sentinel within the cap — stop scanning and degrade to
+        // passthrough. Everything buffered replays; the remainder streams
+        // through the wrapper without further peek-side accumulation.
+        overflowed = true;
+        break;
+      }
     }
   } catch {
+    // C8: the original body is half-consumed at this point. Hand back a
+    // stream that REPLAYS every buffered line first, then continues reading
+    // the original body — instead of the old behavior of returning the
+    // original (prefix-lost) response.
     try { reader.releaseLock(); } catch { /* ignore */ }
-    return originalResponse;
+    let continuation = null;
+    try { continuation = originalResponse.body.getReader(); } catch { /* body unusable */ }
+    const replayBody = createReplayedStream(bufferedLines, buffer, continuation, true);
+    return new Response(replayBody, {
+      status: originalResponse.status,
+      statusText: originalResponse.statusText,
+      headers: whitelistedHeaders(originalResponse, {
+        "Content-Type": originalResponse.headers?.get("content-type") || "application/x-ndjson",
+      }),
+    });
+  }
+
+  if (overflowed) {
+    console.warn(
+      `[CommandCode] peek buffered >${PEEK_BUFFER_MAX_BYTES}B without a sentinel; degrading to streaming passthrough (no error pre-scan)`
+    );
   }
 
   if (detectedError) {
@@ -216,19 +291,23 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
       {
         status: statusCode,
         statusText: statusCode === 503 ? "Service Unavailable" : (statusCode === 429 ? "Too Many Requests" : "Bad Gateway"),
-        headers: {
+        headers: whitelistedHeaders(originalResponse, {
           "Content-Type": "application/json",
           "Access-Control-Allow-Origin": "*",
-        },
+        }),
       }
     );
   }
 
-  const combinedStream = createReplayedStream(bufferedLines, buffer, reader);
+  const combinedStream = createReplayedStream(
+    [...bufferedLines, ...afterSentinelLines],
+    buffer,
+    reader
+  );
   return wrapNdjsonAsOpenAISse(combinedStream, model, originalResponse);
 }
 
-function createReplayedStream(bufferedLines, remainingBuffer, reader) {
+function createReplayedStream(bufferedLines, remainingBuffer, reader, closeWhenReaderMissing = false) {
   const encoder = new TextEncoder();
   let replayed = false;
 
@@ -246,7 +325,18 @@ function createReplayedStream(bufferedLines, remainingBuffer, reader) {
         }
         if (prefix) {
           controller.enqueue(encoder.encode(prefix));
+          // Return here: the prefix must be delivered as its own pull. Reading
+          // the continuation in the same pull would discard the enqueued
+          // prefix when the original body errors (controller.error clears the
+          // queue) — exactly the C8 case this replay exists for.
+          return;
         }
+      }
+
+      if (!reader) {
+        if (closeWhenReaderMissing) controller.close();
+        else controller.error(new Error("CommandCode replay: reader unavailable"));
+        return;
       }
 
       try {
@@ -306,16 +396,17 @@ function wrapNdjsonAsOpenAISse(streamBody, model, originalResponse = null) {
   });
 
   const newBody = streamBody.pipeThrough(transform);
+  // N9: the SSE body is a re-encoding — carry over only safe, framing-neutral
+  // upstream headers. The old spread copied stale content-length/
+  // content-encoding from the NDJSON response onto the SSE stream.
   return new Response(newBody, {
     status: originalResponse?.status || 200,
     statusText: originalResponse?.statusText || "OK",
-    headers: {
+    headers: whitelistedHeaders(originalResponse, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       "Connection": "keep-alive",
-      ...(originalResponse?.headers ? Object.fromEntries(originalResponse.headers.entries()) : {}),
-      "content-type": "text/event-stream",
-    },
+    }),
   });
 }
 
