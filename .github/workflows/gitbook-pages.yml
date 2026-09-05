@@ -1,4 +1,4 @@
-name: Deploy GitBook to 9router.github.io
+name: Deploy GitBook to GitHub Pages
 
 on:
   push:
@@ -15,6 +15,8 @@ concurrency:
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: gitbook
@@ -32,17 +34,20 @@ jobs:
         run: npm run build
         env:
           NODE_ENV: production
-          NEXT_PUBLIC_BASE_PATH: ""
+          NEXT_PUBLIC_BASE_PATH: "/9router"
 
       - name: Add .nojekyll
         run: touch out/.nojekyll
 
-      - name: Deploy to 9router.github.io
+      # Self-contained deployment: this fork has no deploy key for the
+      # upstream 9router.github.io repo (READ-only). Publish to THIS
+      # repo's gh-pages branch with the built-in token instead — site
+      # serves at https://vibecoder11200.github.io/9router/.
+      - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
-          deploy_key: ${{ secrets.GH_PAGES_DEPLOY_KEY }}
-          external_repository: 9router/9router.github.io
-          publish_branch: main
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
           publish_dir: gitbook/out
           force_orphan: true
           user_name: github-actions[bot]
