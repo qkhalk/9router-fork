@@ -345,6 +345,29 @@ export async function saveRequestUsage(entry) {
   }
 }
 
+/**
+ * Fresh spend for one RAW api key since a window start (phase 08 budgets —
+ * read at enforcement time, never cached: LiteLLM #27735). `usd` sums the
+ * cost column (0 for unpriced models — token budgets are exact, USD is an
+ * estimate); `tokens` counts prompt+completion as the billed approximation
+ * (cached tokens are upstream-served and deliberately excluded). Uses the
+ * idx_uh_apikey_ts index; timestamps are ISO strings, so lexicographic
+ * comparison is chronological.
+ */
+export async function getSpendForKey(apiKey, windowStart) {
+  if (!apiKey) return { usd: 0, tokens: 0 };
+  const db = await getAdapter();
+  const since = windowStart instanceof Date ? windowStart.toISOString() : String(windowStart);
+  const row = db.get(
+    `SELECT COALESCE(SUM(cost), 0) AS usd,
+            COALESCE(SUM(COALESCE(promptTokens, 0) + COALESCE(completionTokens, 0)), 0) AS tokens
+     FROM usageHistory
+     WHERE apiKey = ? AND timestamp >= ?`,
+    [apiKey, since]
+  );
+  return { usd: Number(row?.usd) || 0, tokens: Number(row?.tokens) || 0 };
+}
+
 export async function getUsageHistory(filter = {}) {
   const db = await getAdapter();
   const conds = [];
@@ -505,7 +528,7 @@ export async function getUsageStats(period = "all") {
         const statsKey = provider ? `${rawModel} (${provider})` : rawModel;
         const providerDisplayName = providerNodeNameMap[provider] || provider;
         if (!stats.byModel[statsKey]) {
-          stats.byModel[statsKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel, provider: providerDisplayName, lastUsed: dateKey };
+          stats.byModel[statsKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel, provider: providerDisplayName, rawProvider: provider || "", lastUsed: dateKey };
         }
         stats.byModel[statsKey].requests += m.requests || 0;
         stats.byModel[statsKey].promptTokens += m.promptTokens || 0;
@@ -631,7 +654,7 @@ export async function getUsageStats(period = "all") {
 
       const modelKey = r.provider ? `${r.model} (${r.provider})` : r.model;
       if (!stats.byModel[modelKey]) {
-        stats.byModel[modelKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, lastUsed: r.timestamp };
+        stats.byModel[modelKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, rawProvider: r.provider || "", lastUsed: r.timestamp };
       }
       stats.byModel[modelKey].requests++;
       stats.byModel[modelKey].promptTokens += promptTokens;

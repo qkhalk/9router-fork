@@ -21,7 +21,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive } = body;
+    const { isActive, name, budgetType, budgetLimit, budgetWindow, softThresholdPct, hardBlock } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -30,6 +30,24 @@ export async function PUT(request, { params }) {
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (name !== undefined) updateData.name = name;
+
+    // Per-key budgets (phase 08): fields ride the existing PUT; per-field
+    // clamps live in updateApiKey, the cross-field rule is checked here.
+    const hasBudgetField = [budgetType, budgetLimit, budgetWindow, softThresholdPct, hardBlock]
+      .some((v) => v !== undefined);
+    if (hasBudgetField) {
+      const nextType = budgetType !== undefined ? budgetType : existing.budgetType;
+      const nextLimit = budgetLimit !== undefined ? Number(budgetLimit) : existing.budgetLimit;
+      if (nextType && nextType !== "off" && !(Number.isFinite(nextLimit) && nextLimit > 0)) {
+        return NextResponse.json({ error: `Budget limit must be > 0 when budget type is "${nextType}"` }, { status: 400 });
+      }
+      if (budgetType !== undefined) updateData.budgetType = budgetType;
+      if (budgetLimit !== undefined) updateData.budgetLimit = budgetLimit;
+      if (budgetWindow !== undefined) updateData.budgetWindow = budgetWindow;
+      if (softThresholdPct !== undefined) updateData.softThresholdPct = softThresholdPct;
+      if (hardBlock !== undefined) updateData.hardBlock = hardBlock;
+    }
 
     const updated = await updateApiKey(id, updateData);
 

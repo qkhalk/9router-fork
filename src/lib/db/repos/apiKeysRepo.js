@@ -35,6 +35,15 @@ function rowToKey(row) {
     machineId: row.machineId,
     isActive: row.isActive === 1 || row.isActive === true,
     createdAt: row.createdAt,
+    // Per-key budgets (phase 08); older rows without the columns resolve to
+    // the off-defaults via ??.
+    budgetType: row.budgetType ?? "off",
+    budgetLimit: Number(row.budgetLimit) || 0,
+    budgetWindow: row.budgetWindow === "monthly" ? "monthly" : "daily",
+    softThresholdPct: Number.isFinite(Number(row.softThresholdPct)) && Number(row.softThresholdPct) > 0
+      ? Math.min(100, Math.floor(Number(row.softThresholdPct)))
+      : 80,
+    hardBlock: row.hardBlock === 1 || row.hardBlock === true,
   };
 }
 
@@ -71,6 +80,31 @@ export async function createApiKey(name, machineId) {
   return { ...apiKey, key: result.key };
 }
 
+// Budget column writes are validated here so every caller (API route, import)
+// gets the same clamps (phase 08): type off/usd/tokens, limit > 0 when
+// budgeted, window daily/monthly, pct 1-100, hardBlock boolean.
+function normalizeBudgetFields(data) {
+  const out = {};
+  if (Object.prototype.hasOwnProperty.call(data, "budgetType")) {
+    out.budgetType = ["usd", "tokens"].includes(data.budgetType) ? data.budgetType : "off";
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "budgetLimit")) {
+    const n = Number(data.budgetLimit);
+    out.budgetLimit = Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "budgetWindow")) {
+    out.budgetWindow = data.budgetWindow === "monthly" ? "monthly" : "daily";
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "softThresholdPct")) {
+    const n = Number(data.softThresholdPct);
+    out.softThresholdPct = Number.isFinite(n) && n > 0 ? Math.min(100, Math.floor(n)) : 80;
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "hardBlock")) {
+    out.hardBlock = data.hardBlock === true || data.hardBlock === 1 ? 1 : 0;
+  }
+  return out;
+}
+
 export async function updateApiKey(id, data) {
   const db = await getAdapter();
   let result = null;
@@ -81,11 +115,27 @@ export async function updateApiKey(id, data) {
     // `key` is a display value now — callers rename/toggle; they never rotate
     // the secret through this path, and an incoming `key` is ignored rather
     // than written (it would desync from keyHash).
+    const budget = normalizeBudgetFields(data);
+    const next = {
+      budgetType: budget.budgetType ?? (row.budgetType ?? "off"),
+      budgetLimit: (budget.budgetLimit ?? Number(row.budgetLimit ?? 0)) || 0,
+      budgetWindow: budget.budgetWindow ?? (row.budgetWindow ?? "daily"),
+      softThresholdPct: budget.softThresholdPct ?? (row.softThresholdPct ?? 80),
+      hardBlock: budget.hardBlock ?? (row.hardBlock ?? 0),
+    };
     db.run(
-      `UPDATE apiKeys SET name = ?, machineId = ?, isActive = ? WHERE id = ?`,
-      [merged.name, merged.machineId, merged.isActive ? 1 : 0, id]
+      `UPDATE apiKeys SET name = ?, machineId = ?, isActive = ?,
+        budgetType = ?, budgetLimit = ?, budgetWindow = ?, softThresholdPct = ?, hardBlock = ?
+        WHERE id = ?`,
+      [
+        merged.name, merged.machineId, merged.isActive ? 1 : 0,
+        next.budgetType, next.budgetLimit, next.budgetWindow,
+        next.softThresholdPct, next.hardBlock,
+        id,
+      ]
     );
-    result = merged;
+    const fresh = db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]);
+    result = rowToKey(fresh ?? row);
   });
   return result;
 }
@@ -96,19 +146,25 @@ export async function deleteApiKey(id) {
   return (res?.changes ?? 0) > 0;
 }
 
-export async function validateApiKey(key) {
-  if (!key) return false;
+/**
+ * Fetch the full apiKeys row for a raw key — hash-first, then the legacy
+ * plaintext fallback with the same lazy backfill as validateApiKey. Returns
+ * null for unknown keys. Budget enforcement (phase 08) reads the budget*
+ * columns from this row so the auth path stays one SELECT.
+ */
+export async function getApiKeyRow(key) {
+  if (!key) return null;
   const db = await getAdapter();
   const isActive = (row) => row.isActive === 1 || row.isActive === true;
 
   // 1. Hash-first: the normal path for migrated/created keys.
-  const row = db.get(`SELECT isActive FROM apiKeys WHERE keyHash = ?`, [hashApiKey(key)]);
-  if (row) return isActive(row);
+  const row = db.get(`SELECT * FROM apiKeys WHERE keyHash = ?`, [hashApiKey(key)]);
+  if (row) return row;
 
   // 2. Legacy plaintext fallback + lazy backfill (one transaction): the key
   //    keeps working whether or not the backfill write succeeds.
-  const legacy = db.get(`SELECT id, isActive, key FROM apiKeys WHERE key = ?`, [key]);
-  if (!legacy) return false;
+  const legacy = db.get(`SELECT * FROM apiKeys WHERE key = ?`, [key]);
+  if (!legacy) return null;
   if (isActive(legacy)) {
     try {
       db.transaction(() => {
@@ -122,5 +178,11 @@ export async function validateApiKey(key) {
       console.warn("[apiKeys] lazy hash backfill failed (key remains usable):", err?.message);
     }
   }
-  return isActive(legacy);
+  return legacy;
+}
+
+export async function validateApiKey(key) {
+  const row = await getApiKeyRow(key);
+  if (!row) return false;
+  return row.isActive === 1 || row.isActive === true;
 }

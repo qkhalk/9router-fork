@@ -17,6 +17,7 @@ import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
+import BudgetModal from "./components/BudgetModal";
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,6 +25,8 @@ export default function APIPageClient({ machineId }) {
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
+  const [budgetKey, setBudgetKey] = useState(null);
+  const [keyStatus, setKeyStatus] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -720,6 +723,36 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  // Called by BudgetModal after a successful PUT: close modal, refresh list, show feedback.
+  const handleBudgetSaved = async () => {
+    const name = budgetKey?.name;
+    setBudgetKey(null);
+    await fetchData();
+    setKeyStatus({ type: "success", message: name ? `Budget updated for "${name}"` : "Budget updated" });
+  };
+
+  // Compact budget summary for the key row, e.g. "$5/day" or "1M tok/mo".
+  const formatBudgetSummary = (key) => {
+    const windowLabel = key.budgetWindow === "monthly" ? "mo" : "day";
+    const limit = Number(key.budgetLimit);
+    if (key.budgetType === "usd") {
+      return `$${Number.isFinite(limit) ? limit.toLocaleString() : key.budgetLimit}/${windowLabel}`;
+    }
+    let label = String(key.budgetLimit);
+    if (Number.isFinite(limit)) {
+      if (limit >= 1000000) {
+        const m = limit / 1000000;
+        label = `${Number.isInteger(m) ? m : m.toFixed(1)}M`;
+      } else if (limit >= 1000) {
+        const k = limit / 1000;
+        label = `${Number.isInteger(k) ? k : k.toFixed(1)}K`;
+      } else {
+        label = String(limit);
+      }
+    }
+    return `${label} tok/${windowLabel}`;
+  };
+
   const maskKey = (fullKey) => {
     if (!fullKey || fullKey.length <= 10) return fullKey || "";
     return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
@@ -1064,6 +1097,12 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
 
+        {keyStatus && (
+          <div className="mb-4">
+            <StatusAlert status={keyStatus} />
+          </div>
+        )}
+
         {keys.length === 0 ? (
           <div className="text-center py-12">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
@@ -1109,6 +1148,17 @@ export default function APIPageClient({ machineId }) {
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
                   </p>
+                  {(key.budgetType === "usd" || key.budgetType === "tokens") && (
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className="inline-flex items-center gap-1 text-xs text-text-muted">
+                        <span className="material-symbols-outlined text-[14px]">savings</span>
+                        {formatBudgetSummary(key)}
+                      </span>
+                      {key.hardBlock && (
+                        <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-500 text-[10px] font-semibold leading-none">hard</span>
+                      )}
+                    </div>
+                  )}
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
@@ -1133,6 +1183,13 @@ export default function APIPageClient({ machineId }) {
                     }}
                     title={key.isActive ? "Pause key" : "Resume key"}
                   />
+                  <button
+                    onClick={() => { setKeyStatus(null); setBudgetKey(key); }}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                    title="Budget"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">savings</span>
+                  </button>
                   <button
                     onClick={() => handleDeleteKey(key.id)}
                     className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
@@ -1179,6 +1236,14 @@ export default function APIPageClient({ machineId }) {
           </div>
         </div>
       </Modal>
+
+      {/* Budget Modal */}
+      <BudgetModal
+        isOpen={!!budgetKey}
+        keyData={budgetKey}
+        onClose={() => setBudgetKey(null)}
+        onSaved={handleBudgetSaved}
+      />
 
       {/* Created Key Modal */}
       <Modal

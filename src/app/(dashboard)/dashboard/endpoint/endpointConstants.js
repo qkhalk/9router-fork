@@ -7,6 +7,18 @@ export const TUNNEL_BENEFITS = [
   { icon: "lock", title: "Encrypted", desc: "End-to-end TLS via Cloudflare" },
 ];
 
+// Per-key budgets (PUT /api/keys/{id})
+export const BUDGET_TYPE_OPTIONS = [
+  { value: "off", label: "Off" },
+  { value: "usd", label: "USD" },
+  { value: "tokens", label: "Tokens" },
+];
+
+export const BUDGET_WINDOW_OPTIONS = [
+  { value: "daily", label: "Daily" },
+  { value: "monthly", label: "Monthly" },
+];
+
 export const TUNNEL_PING_INTERVAL_MS = 2000;
 export const TUNNEL_PING_MAX_MS = 300000;
 export const STATUS_POLL_FAST_MS = 5000;
