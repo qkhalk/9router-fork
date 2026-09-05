@@ -113,6 +113,11 @@ jobs:
         env:
           DATA_DIR: ${{ runner.temp }}\9router-ci-data
         run: npx vitest run unit/process-guard.test.js unit/xray-reaper-patterns.test.js
+      - name: Build production server (next start needs .next)
+        run: npx next build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
       - name: Boot server and verify clean shutdown leaves no xray orphan
         shell: powershell
         env:
@@ -120,7 +125,7 @@ jobs:
           PORT: 21399
         run: |
           $env:NEXT_TELEMETRY_DISABLED = "1"
-          $server = Start-Process -FilePath "node" -ArgumentList "server.js" -PassThru -NoNewWindow `
+          $server = Start-Process -FilePath "node" -ArgumentList "custom-server.js","--port","21399" -PassThru -NoNewWindow `
             -RedirectStandardOutput "server-out.log" -RedirectStandardError "server-err.log"
           try {
             # Wait for the health endpoint (max 120s)
