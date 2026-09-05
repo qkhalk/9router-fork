@@ -254,7 +254,7 @@ export const DOCS_CONFIG = {
   title: "9Router Documentation",
   description: "Smart AI model router - Maximize subscriptions, minimize costs",
   logo: "9Router",
-  appUrl: "https://9router.com",
+  appUrl: "https://vibecoder11200.github.io/9router/",
   githubUrl: "https://github.com/vibecoder11200/9router",
   navigation: getNavigation(DEFAULT_LANG)
 };
