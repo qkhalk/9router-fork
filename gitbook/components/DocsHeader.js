@@ -26,7 +26,7 @@ export default function DocsHeader({ lang = DEFAULT_LANG }) {
 
           {/* Logo */}
           <Link href={`/${lang}`} className="flex items-center gap-2 font-bold text-2xl text-black hover:opacity-80 transition-opacity">
-            <span className="text-[#E68A6E]">9Router Docs</span>
+            <span className="text-[#E68A6E]">{DOCS_CONFIG.logo} Docs</span>
           </Link>
 
           {/* Right side */}
@@ -57,7 +57,7 @@ export default function DocsHeader({ lang = DEFAULT_LANG }) {
           
           <div className="mobile-menu-drawer lg:hidden">
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <span className="font-bold text-lg text-[#E68A6E]">9Router Docs</span>
+              <span className="font-bold text-lg text-[#E68A6E]">{DOCS_CONFIG.logo} Docs</span>
               <button
                 onClick={() => setMobileMenuOpen(false)}
                 className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
