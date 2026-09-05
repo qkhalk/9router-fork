@@ -67,7 +67,7 @@ PUBLIC.md
 Thanks.md
 PUBLIC.en.md
 PR/*
-package-lock.json
+/package-lock.json  # root only — tests/package-lock.json is tracked for CI npm ci
 
 
 #Ignore vscode AI rules
