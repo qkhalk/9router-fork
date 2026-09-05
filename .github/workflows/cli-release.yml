@@ -45,6 +45,16 @@ jobs:
             exit 1
           fi
           echo "Verified: tag ${{ github.ref_name }} -> ${{ github.sha }} is a fork release (local features present)."
+          # Root and CLI package versions must match: the tarball packs from
+          # cli/, so a stale cli version ships a wrongly-versioned CLI that
+          # re-offers its own update forever (v0.6.36-38 shipped as "0.6.35").
+          ROOT_V=$(node -p "require('./package.json').version")
+          CLI_V=$(node -p "require('./cli/package.json').version")
+          if [ "$ROOT_V" != "$CLI_V" ]; then
+            echo "::error::Version mismatch: package.json=$ROOT_V but cli/package.json=$CLI_V — bump both together (tag ${{ github.ref_name }})."
+            exit 1
+          fi
+          echo "Versions in sync: $ROOT_V"
 
   build-and-release:
     needs: verify-release-tag
