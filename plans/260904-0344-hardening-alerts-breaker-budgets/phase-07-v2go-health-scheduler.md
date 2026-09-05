@@ -61,12 +61,12 @@ src/lib/xray/healthScheduler.js
 
 ## Todo list
 
-- [ ] healthScheduler.js + unit tests (step 1)
-- [ ] Boot wiring w/ impact() (step 2)
-- [ ] PATCH re-arm (step 3)
-- [ ] xray-rotation-failed alert wiring ONLY (step 4; xray-node-down owned by phase-05 in manager.js)
-- [ ] Fake-xray integration test (step 5)
-- [ ] Suite 0 pass→fail; detect_changes() clean; committed
+- [x] healthScheduler.js + unit tests (step 1)
+- [x] Boot wiring w/ impact() (step 2)
+- [x] PATCH re-arm (step 3)
+- [x] xray-rotation-failed alert wiring ONLY (step 4; xray-node-down owned by phase-05 in manager.js)
+- [x] Fake-xray integration test (step 5)
+- [x] Suite 0 pass→fail; detect_changes() clean; committed
 
 ## Success Criteria
 

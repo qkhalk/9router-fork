@@ -1,3 +1,14 @@
+# v0.6.38 (2026-09-05)
+
+Hardening release C: the **v2go health scheduler**, **per-API-key budgets**,
+and **cache analytics** from `plans/260904-0344-hardening-alerts-breaker-budgets/`
+(phases 07–09). Completes the 3-release hardening program (A: v0.6.36, B: v0.6.37).
+
+## Features
+- **v2go/xray health scheduler (phase 07)**: the `xrayHealthCheckIntervalMin` setting (default 10) now actually does something — a boot-armed scheduler probes the active node each interval and auto-rotates when it's down (0 = manual-only; clamped to ≥5 min). Rotation failures raise the `xray-rotation-failed` alert; probe failures keep the phase-05 `xray-node-down` alert. Scheduler state is introspectable; non-v2go installs skip for ~free.
+- **Per-API-key budgets (phase 08)**: each key can set a USD or token budget over a daily or monthly (server-local) window. Soft threshold (default 80%) fires an edge-triggered `budget-threshold` alert once per window; optional hard block returns 429 with `Retry-After` (window end) and `X-9Router-Budget: limit-exceeded`. Spend is read fresh from usageHistory at enforcement (indexed; unbudgeted keys add zero queries). Editor lives on the Endpoint & Key page. **Notes:** budgets apply only when "Require API key" is enabled; USD budgets count only models with pricing configured (token budgets are exact); windows are server-local time.
+- **Cache analytics (phase 09)**: the Usage page gains a Cache panel — cached tokens, estimated hit-rate, and "estimated saved vs uncached prompt cost" per provider/model, riding the existing stats payload (no new API). Unpriced models show n/a (never a misleading $0); rows without token data are excluded from ratios.
+
 # v0.6.37 (2026-09-05)
 
 Hardening release B: the **alert system** and the **per-account circuit

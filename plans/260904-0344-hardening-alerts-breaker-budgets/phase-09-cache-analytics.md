@@ -54,12 +54,12 @@ Dashboard Usage panel: per provider + per model cache hit-rate %, cached tokens,
 
 ## Todo list
 
-- [ ] Usage page + route consumption verified (step 1)
-- [ ] getCacheStats + unit tests (step 2)
-- [ ] saved-$ estimation with n/a-on-gap (step 3)
-- [ ] Route payload extension (additive) w/ impact() (step 4)
-- [ ] CachePanel UI + i18n + empty states (step 5)
-- [ ] Suite 0 pass→fail; detect_changes() clean; committed
+- [x] Usage page + route consumption verified (step 1)
+- [x] getCacheStats + unit tests (step 2)
+- [x] saved-$ estimation with n/a-on-gap (step 3)
+- [x] Route payload extension (additive) w/ impact() (step 4)
+- [x] CachePanel UI + i18n + empty states (step 5)
+- [x] Suite 0 pass→fail; detect_changes() clean; committed
 
 ## Success Criteria
 

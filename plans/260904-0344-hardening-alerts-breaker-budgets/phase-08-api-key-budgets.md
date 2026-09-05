@@ -71,15 +71,15 @@ chat.js auth block (after isValidApiKey):
 
 ## Todo list
 
-- [ ] Step-0 scout RESOLVED (apiKey verified stamped on all usage paths — chain in Key Insight 1); quick re-verify at phase start (step 1)
-- [ ] Schema columns + idx_uh_apikey_ts + snapshot-DB migration test (step 2)
-- [ ] getApiKeyRow refactor w/ impact() (step 2)
-- [ ] getSpendForKey + tests (step 2)
-- [ ] keyBudgets.js window/alerted logic + tests (step 3)
-- [ ] chat.js enforcement + tests (step 4)
-- [ ] API-keys page editor + i18n (step 5)
-- [ ] budget-threshold alert wiring (step 6)
-- [ ] Suite 0 pass→fail; detect_changes() clean; committed
+- [x] Step-0 scout RESOLVED (apiKey verified stamped on all usage paths — chain in Key Insight 1); quick re-verify at phase start (step 1)
+- [x] Schema columns + idx_uh_apikey_ts + snapshot-DB migration test (step 2)
+- [x] getApiKeyRow refactor w/ impact() (step 2)
+- [x] getSpendForKey + tests (step 2)
+- [x] keyBudgets.js window/alerted logic + tests (step 3)
+- [x] chat.js enforcement + tests (step 4)
+- [x] API-keys page editor + i18n (step 5)
+- [x] budget-threshold alert wiring (step 6)
+- [x] Suite 0 pass→fail; detect_changes() clean; committed
 
 ## Success Criteria
 
