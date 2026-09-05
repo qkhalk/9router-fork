@@ -91,7 +91,7 @@ export async function POST(request) {
           );
         }
         return NextResponse.json(
-          { success: false, error: "Default password cannot be used for remote access. Enter the one-time setup code shown in the server console (e.g. docker logs) to set your password.", mustChangePassword, setupRequired: true },
+          { success: false, error: "Default password cannot be used for remote access. Enter the one-time setup code — printed in the server console and saved in the server's data directory (setup-code file) — to set your password.", mustChangePassword, setupRequired: true },
           { status: 403, headers: NO_STORE_HEADERS }
         );
       }

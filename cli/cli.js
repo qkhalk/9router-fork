@@ -801,16 +801,33 @@ function startServer(updatePromise) {
           // Windows/Linux: spawn detached bgProcess (systray works fine in child)
           console.log(`\n⏳ Starting background process... (tray icon will appear in ~3s)`);
 
+          // The daemon has no console — without a log file its stdout/stderr
+          // (startup banner, one-time setup code, crash traces) is discarded.
+          const logDir = process.env.DATA_DIR || getAppDataDir();
+          const serverLogPath = path.join(logDir, "server.log");
+          let serverLogFd = -1;
+          try {
+            fs.mkdirSync(logDir, { recursive: true });
+            try {
+              if (fs.statSync(serverLogPath).size > 5 * 1024 * 1024) {
+                fs.renameSync(serverLogPath, `${serverLogPath}.old`);
+              }
+            } catch (e) { }
+            serverLogFd = fs.openSync(serverLogPath, "a");
+          } catch (e) { }
+
           const bgProcess = spawn(process.execPath, ["--dns-result-order=ipv4first", __filename, "--tray", "--skip-update", "-p", port.toString()], {
             detached: true,
-            stdio: "ignore",
+            stdio: ["ignore", serverLogFd !== -1 ? serverLogFd : "ignore", serverLogFd !== -1 ? serverLogFd : "ignore"],
             windowsHide: true,
             env: { ...process.env }
           });
           bgProcess.unref();
+          if (serverLogFd !== -1) fs.closeSync(serverLogFd); // child inherited its own dup
 
           console.log(`🔔 9Router is now running in background (PID: ${bgProcess.pid})`);
           console.log(`   Server: http://${displayHost}:${port}`);
+          if (serverLogFd !== -1) console.log(`   Logs: ${serverLogPath}`);
           console.log(`\n💡 You can close this terminal. Right-click tray icon to quit.\n`);
 
           // cleanup() kills server so bgProcess can claim the port fresh

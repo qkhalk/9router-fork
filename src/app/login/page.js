@@ -200,7 +200,7 @@ export default function LoginPage() {
                   autoFocus
                 />
                 <p className="text-xs text-text-muted">
-                  Printed in the server console when you tried to log in — run <code className="bg-sidebar px-1 rounded">docker logs</code> (Docker), <code className="bg-sidebar px-1 rounded">journalctl -u 9router</code> (systemd), or check the terminal running 9Router.
+                  The code is saved on the server — run <code className="bg-sidebar px-1 rounded">cat ~/.9router/setup-code</code> over SSH (Windows: <code className="bg-sidebar px-1 rounded">%APPDATA%\9router\setup-code</code>; Docker: <code className="bg-sidebar px-1 rounded">docker exec &lt;container&gt; cat /app/data/setup-code</code>), or check <code className="bg-sidebar px-1 rounded">docker logs</code> / <code className="bg-sidebar px-1 rounded">journalctl -u 9router</code> where applicable.
                 </p>
               </div>
               <div className="flex flex-col gap-2">
