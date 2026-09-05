@@ -124,4 +124,4 @@ Roo設定で頻繁に使うモデルのショートカットを作成:
 
 - [Cursorを設定](cursor.md) IDE統合用
 - [Continueをセットアップ](continue.md) VSCode用
-- [CLI使用法を確認](../cli/basic-usage.md)
+- [CLI使用法を確認](../getting-started/quick-start.md)

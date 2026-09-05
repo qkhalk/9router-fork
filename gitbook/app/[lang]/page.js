@@ -20,7 +20,7 @@ export default async function LangHomePage({ params }) {
 
   return (
     <DocsLayout headings={headings} lang={lang}>
-      <DocsContent content={content} />
+      <DocsContent content={content} baseDir={`/${lang}`} />
     </DocsLayout>
   );
 }

@@ -124,4 +124,4 @@ Setup profile khác nhau cho use case khác nhau:
 
 - [Cấu hình Cursor](cursor.md) cho tích hợp IDE
 - [Setup Continue](continue.md) cho VSCode
-- [Khám phá CLI usage](../cli/basic-usage.md)
+- [Khám phá CLI usage](../getting-started/quick-start.md)

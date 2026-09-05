@@ -245,5 +245,5 @@ Continueがモデルに送信するコンテキストを設定:
 
 - [Cursorを設定](cursor.md) IDE統合を強化
 - [Rooをセットアップ](roo.md) AIアシスタント用
-- [CLI使用法を確認](../cli/basic-usage.md)
-- [モデル選択について学ぶ](../models/overview.md)
+- [CLI使用法を確認](../getting-started/quick-start.md)
+- [モデル選択について学ぶ](../providers/subscription.md)

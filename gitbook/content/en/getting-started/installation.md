@@ -465,8 +465,8 @@ nano ~/.bashrc  # or ~/.zshrc
 
 ## Next Steps
 
-- [Getting Started Guide](../getting-started.md) - Connect providers and start coding
-- [Features](../features/) - Explore quota tracking, combos, deployment
+- [Getting Started Guide](quick-start.md) - Connect providers and start coding
+- [Features](../features/smart-routing.md) - Explore quota tracking, combos, deployment
 - [Troubleshooting](../troubleshooting.md) - Fix common issues
 
 ---

@@ -124,4 +124,4 @@ Set up different profiles for different use cases:
 
 - [Configure Cursor](cursor.md) for IDE integration
 - [Set up Continue](continue.md) for VSCode
-- [Explore CLI usage](../cli/basic-usage.md)
+- [Explore CLI usage](../getting-started/quick-start.md)

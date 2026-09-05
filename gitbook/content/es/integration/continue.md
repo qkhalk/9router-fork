@@ -245,5 +245,5 @@ Configura qué contexto envía Continue al modelo:
 
 - [Configurar Cursor](cursor.md) para integración mejorada con IDE
 - [Configurar Roo](roo.md) para asistente de IA
-- [Explorar uso de CLI](../cli/basic-usage.md)
-- [Aprende sobre la selección de modelos](../models/overview.md)
+- [Explorar uso de CLI](../getting-started/quick-start.md)
+- [Aprende sobre la selección de modelos](../providers/subscription.md)

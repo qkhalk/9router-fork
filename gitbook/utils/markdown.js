@@ -2,6 +2,26 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeSlug from "rehype-slug";
+
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
+// Rewrite relative content links (e.g. `installation.md`, `../faq.md#anchor`)
+// into site routes under basePath. External/anchor/non-markdown hrefs pass through.
+export function resolveDocHref(href, baseDir = "") {
+  if (!href || /^(https?:|mailto:|tel:|#)/i.test(href)) return href;
+  const hashIdx = href.indexOf("#");
+  const hash = hashIdx >= 0 ? href.slice(hashIdx) : "";
+  const path = hashIdx >= 0 ? href.slice(0, hashIdx) : href;
+  if (!/\.md$/i.test(path)) return href;
+  const clean = path.replace(/\.md$/i, "");
+  const segments = baseDir.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+  for (const part of clean.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") segments.pop();
+    else segments.push(part);
+  }
+  return `${BASE_PATH}/${segments.join("/")}${hash}`;
+}
 import { BookOpen, Rocket, Terminal, Monitor, FolderOpen, HelpCircle, MessageCircle, Mouse, Folder, Lock, Zap, Smartphone, Lightbulb, AlertTriangle, CheckCircle, ArrowRight, Layers, Plug, Cloud, Wallet, Gift, GitBranch, BarChart3, Code2, Sparkles, Server, PartyPopper, Siren, Link2, Target, Heart, Check, Home, Package, Wrench, OctagonX, Search, Globe, Container } from "lucide-react";
 
 const PAGE_ICONS = {
@@ -129,13 +149,26 @@ function renderHeadingWithEmoji(tag, children, props) {
   return <Tag id={id} {...props}>{children}</Tag>;
 }
 
-export function MarkdownRenderer({ content }) {
+export function MarkdownRenderer({ content, baseDir = "" }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeHighlight]}
       className="markdown-content"
       components={{
+        a: ({ node, children, href, ...props }) => {
+          const resolved = resolveDocHref(href, baseDir);
+          const isExternal = /^https?:/i.test(resolved || "");
+          return (
+            <a
+              href={resolved}
+              {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+              {...props}
+            >
+              {children}
+            </a>
+          );
+        },
         h1: ({ node, children, ...props }) => {
           const text = children?.toString() || "";
           const IconComponent = PAGE_ICONS[text];

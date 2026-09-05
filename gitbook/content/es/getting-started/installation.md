@@ -465,8 +465,8 @@ nano ~/.bashrc  # o ~/.zshrc
 
 ## Próximos pasos
 
-- [Guía para empezar](../getting-started.md) - Conecta proveedores y comienza a codificar
-- [Características](../features/) - Explora seguimiento de cuota, combos, despliegue
+- [Guía para empezar](quick-start.md) - Conecta proveedores y comienza a codificar
+- [Características](../features/smart-routing.md) - Explora seguimiento de cuota, combos, despliegue
 - [Solución de problemas](../troubleshooting.md) - Resuelve problemas comunes
 
 ---

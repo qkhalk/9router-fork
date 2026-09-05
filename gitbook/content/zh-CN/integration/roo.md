@@ -124,4 +124,4 @@ Hello! Can you confirm you're connected through 9Router?
 
 - [配置 Cursor](cursor.md) 进行 IDE 集成
 - [设置 Continue](continue.md) 用于 VSCode
-- [探索 CLI 用法](../cli/basic-usage.md)
+- [探索 CLI 用法](../getting-started/quick-start.md)

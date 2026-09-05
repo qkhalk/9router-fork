@@ -245,5 +245,5 @@
 
 - [配置 Cursor](cursor.md) 以增强 IDE 集成
 - [设置 Roo](roo.md) AI 助手
-- [探索 CLI 用法](../cli/basic-usage.md)
-- [了解模型选择](../models/overview.md)
+- [探索 CLI 用法](../getting-started/quick-start.md)
+- [了解模型选择](../providers/subscription.md)

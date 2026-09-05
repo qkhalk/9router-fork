@@ -12,7 +12,7 @@ Pon en marcha 9Router en 5 minutos y comienza a enrutar solicitudes de IA de for
 npm install -g 9router
 ```
 
-**Requisitos:** Node.js 20+ ([Detalles de instalación](getting-started/installation.md))
+**Requisitos:** Node.js 20+ ([Detalles de instalación](installation.md))
 
 ### 2. Iniciar
 
@@ -233,10 +233,10 @@ Rutina diaria:
 
 ## Próximos pasos
 
-- [Detalles de instalación](getting-started/installation.md) - Requisitos, troubleshooting
-- [Características](features/) - Explora seguimiento de cuota, combos, despliegue
-- [FAQ](faq.md) - Preguntas y respuestas comunes
-- [Troubleshooting](troubleshooting.md) - Soluciona problemas comunes
+- [Detalles de instalación](installation.md) - Requisitos, troubleshooting
+- [Características](../features/smart-routing.md) - Explora seguimiento de cuota, combos, despliegue
+- [FAQ](../faq.md) - Preguntas y respuestas comunes
+- [Troubleshooting](../troubleshooting.md) - Soluciona problemas comunes
 
 ---
 
