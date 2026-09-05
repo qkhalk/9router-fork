@@ -10,21 +10,26 @@ on:
         required: false
         default: ''
 
-env:
-  N5_HOST: ${{ secrets.N5_HOST }}
-  N5_USER: ${{ secrets.N5_USER }}
-  N5_SSH_KEY: ${{ secrets.N5_SSH_KEY }}
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
-    # Only run when production secrets are configured. The `secrets` context is
-    # not available in a job-level `if`, so bind it into env first and check that.
-    if: env.N5_HOST != '' && env.N5_USER != '' && env.N5_SSH_KEY != ''
 
     steps:
+      - name: Skip when N5 deploy secrets are not configured
+        env:
+          N5_HOST: ${{ secrets.N5_HOST }}
+          N5_USER: ${{ secrets.N5_USER }}
+          N5_SSH_KEY: ${{ secrets.N5_SSH_KEY }}
+        run: |
+          if [ -z "$N5_HOST" ] || [ -z "$N5_USER" ] || [ -z "$N5_SSH_KEY" ]; then
+            echo "N5_SKIP=true" >> "$GITHUB_ENV"
+            echo "N5 deploy secrets are not configured - skipping deployment."
+          else
+            echo "N5_SKIP=false" >> "$GITHUB_ENV"
+          fi
       - name: Determine image tag
+        if: env.N5_SKIP != 'true'
         id: vars
         run: |
           TAG="${{ github.event.client_payload.image_tag || inputs.image_tag }}"
@@ -36,6 +41,7 @@ jobs:
           echo "tag=$TAG"
 
       - name: Setup SSH key
+        if: env.N5_SKIP != 'true'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.N5_SSH_KEY }}" > ~/.ssh/n5_key
@@ -45,16 +51,19 @@ jobs:
           echo "SSH key configured"
 
       - name: Pull new image
+        if: env.N5_SKIP != 'true'
         run: |
           ssh -i ~/.ssh/n5_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${{ secrets.N5_USER }}@${{ secrets.N5_HOST }} \
             "docker pull vibecoder11200/9router:${{ steps.vars.outputs.tag }}"
 
       - name: Stop & Remove old container
+        if: env.N5_SKIP != 'true'
         run: |
           ssh -i ~/.ssh/n5_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${{ secrets.N5_USER }}@${{ secrets.N5_HOST }} \
             "docker stop 9router && docker rm 9router"
 
       - name: Start new container
+        if: env.N5_SKIP != 'true'
         run: |
           ssh -i ~/.ssh/n5_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${{ secrets.N5_USER }}@${{ secrets.N5_HOST }} \
             "docker run -d \
@@ -66,18 +75,21 @@ jobs:
               vibecoder11200/9router:${{ steps.vars.outputs.tag }}"
 
       - name: Verify deployment
+        if: env.N5_SKIP != 'true'
         run: |
           sleep 5
           ssh -i ~/.ssh/n5_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${{ secrets.N5_USER }}@${{ secrets.N5_HOST }} \
             "docker ps --filter name=9router --format 'Container {{.Names}} is {{.Status}} with image {{.Image}}'"
 
       - name: Cleanup dangling images
+        if: env.N5_SKIP != 'true'
         if: always()
         run: |
           ssh -i ~/.ssh/n5_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${{ secrets.N5_USER }}@${{ secrets.N5_HOST }} \
             "docker image prune -f"
 
       - name: Deployment Summary
+        if: env.N5_SKIP != 'true'
         run: |
           echo "✅ Deploy completed successfully!"
           echo "📦 Image: vibecoder11200/9router:${{ steps.vars.outputs.tag }}"

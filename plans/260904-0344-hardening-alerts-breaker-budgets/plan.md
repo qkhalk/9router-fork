@@ -1,7 +1,7 @@
 ---
 title: "9router Hardening, Alerts, Circuit Breaker & Budgets"
 description: "3-release program: fix all audit findings (P/X/C/S + N), then add alert system, per-account circuit breaker, v2go health scheduler, per-API-key budgets, cache analytics"
-status: pending
+status: completed
 priority: P1
 effort: 128h
 branch: master
@@ -87,7 +87,7 @@ Upstream prerequisite (user decision 2026-09-04): merge upstream v0.5.65 BEFORE 
 
 ### Action Items
 - [x] Phase-03 start: check upstream for C1 CommandCode peek fix (cherry-pick vs rewrite) — RESOLVED 2026-09-04: verified v0.5.65 does NOT touch commandcode.js → local rewrite
-- [ ] Phase-04 start: confirm HMAC secret mechanism shares getOrCreateInstallSecret with CLI-token/sudo-key work (single mechanism, no duplication)
+- [x] Phase-04 start: confirm HMAC secret mechanism shares getOrCreateInstallSecret with CLI-token/sudo-key work (single mechanism, no duplication) — RESOLVED 2026-09-04: phase-04 shipped one getOrCreateInstallSecret (src/lib/auth/installSecret.js) consumed by CLI-token, sudo AES key, and apiKeys HMAC
 
 ### Plan Red-Team (2026-09-04) — 9 amendments applied
 2 verifier agents (cross-phase consistency + integration soundness vs real code). Verdict: PLAN-CONSISTENT; 57/57 findings slotted, no duplications. Critical catches: phase-06 breaker skip MUST `excludeConnectionIds.add(connectionId)` (bare continue = infinite re-pick in chat.js:269 loop) + local minRetryAfterMs → unavailableResponse(ISO); phase-01 — auth.js has NO internal candidate loop (:46-68 = noauth branch), exhausted marker flows up to chat.js which excludes+continues; missed strictProxy caller `quotaAutoPing.js:198` (live origin-IP leak, now in scope); xray-node-down emit single-owner (phase-05, dropped from 07); streamingHandler path corrected to open-sse/handlers/chatCore/; phase-08 scout pre-resolved + caveats (budgets inert unless requireApiKey on; USD under-counts unpriced models — UI warning); release-A phases run sequentially 01→04; S7 marked DECIDED (HMAC per-install).
