@@ -1,3 +1,53 @@
+# v0.6.40 (2026-09-05)
+
+Security/UX release: fixes the **fresh-install remote login dead-end** and
+hardens the new self-service flow against brute-force and stale-secret
+takeover.
+
+## Fixes
+- **Remote first-run login is no longer a dead-end**: since the CVE-2026-56679
+  hardening, logging in remotely with the default password `123456` returned
+  403 "must be changed before remote access" — and the promised "set a new
+  password" form never appeared (the login page only read `mustChangePassword`
+  from 2xx responses, and the settings PATCH it called requires the
+  deliberately-withheld JWT). Docker/VPS users could not complete first-run
+  setup at all. The login page now honors the 403 body and shows the setup
+  flow. **Upgrade recommended for anyone blocked at the first remote login of
+  a fresh install.**
+
+## Features
+- **One-time setup code (remote self-service)**: on a fresh install, a remote
+  default-password login prints a single-use setup code to the server console
+  (`docker logs`, `journalctl -u 9router`, or the terminal running 9Router).
+  Enter it on the login page together with the default password and your new
+  password. The code lives only on the host (`DATA_DIR/setup-code`, mode
+  0600, timing-safe compare, consumed on use), so host ownership is still
+  required — the no-credential-before-rotation invariant from the CVE fix is
+  preserved (no session/JWT is issued until the default password is rotated).
+  Local logins from the host itself and `INITIAL_PASSWORD` installs behave
+  exactly as before.
+- **`POST /api/auth/setup-password`**: fresh-install-only (404 otherwise,
+  never leaks install state), rate-limited via the shared login limiter,
+  requires the default password + setup code, rejects an empty or default
+  new password without consuming the code, and never starts a session (the
+  client logs in with the new password afterwards).
+
+## Security hardening (all found in code review, all fixed)
+- A blocked default-password login no longer resets the login-lockout bucket —
+  previously an attacker could alternate setup-code guesses with default
+  password logins and never trigger lockout.
+- The setup-code console banner prints at most once per minute, so internet
+  scanners hammering an exposed fresh install cannot flood `docker logs` /
+  journald (and the secret is not re-echoed per request).
+- Pending setup codes are invalidated whenever the password is set through
+  another path (dashboard settings, CLI reset-to-default), so a code leaked
+  into pasted logs or issue comments cannot complete a takeover after a
+  later reset to the default.
+
+## Docs
+- FAQ (EN/VI): new "Why can't I log in remotely with the default password?"
+  entry describing the setup-code flow and where to find the code.
+
 # v0.6.39 (2026-09-05)
 
 Patch release fixing a **runtime bug shipped in v0.6.38** + CI hardening.
