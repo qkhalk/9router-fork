@@ -110,6 +110,17 @@ export async function PATCH(request) {
       }
     }
 
+    // xrayHealthCheckIntervalMin (phase 07): same manual-only convention — 0 =
+    // scheduler off, positives clamp to >= 5 min.
+    if (Object.prototype.hasOwnProperty.call(body, "xrayHealthCheckIntervalMin")) {
+      const raw = Number(body.xrayHealthCheckIntervalMin);
+      if (!Number.isFinite(raw) || raw <= 0) {
+        body.xrayHealthCheckIntervalMin = 0;
+      } else {
+        body.xrayHealthCheckIntervalMin = Math.max(5, Math.floor(raw));
+      }
+    }
+
     // Alerts (phase 05): trim channel fields, validate URL shapes, clamp
     // numeric knobs. Credential fields follow the oidcClientSecret
     // convention: absent/empty means "keep the stored value" (the GET
@@ -209,6 +220,19 @@ export async function PATCH(request) {
       import("@/lib/totuAutoFetch")
         .then(({ configureTotuAutoFetch }) => configureTotuAutoFetch(settings))
         .catch((error) => console.warn("[TotuAutoFetch] settings update failed:", error.message));
+    }
+
+    // Re-arm the v2go/xray health-check scheduler (phase 07) when its interval
+    // or the xray toggles change. configureXrayHealthCheck stops the timer for
+    // interval 0 (manual-only).
+    if (
+      Object.prototype.hasOwnProperty.call(body, "xrayHealthCheckIntervalMin") ||
+      Object.prototype.hasOwnProperty.call(body, "xrayEnabled") ||
+      Object.prototype.hasOwnProperty.call(body, "xrayAutoRotate")
+    ) {
+      import("@/lib/xray/healthScheduler.js")
+        .then(({ configureXrayHealthCheck }) => configureXrayHealthCheck(settings))
+        .catch((error) => console.warn("[XrayHealth] settings update failed:", error.message));
     }
 
     if (

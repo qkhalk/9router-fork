@@ -1385,6 +1385,10 @@ export async function runHealthCheck() {
   // Probe the active server.
   const latencyMs = await testProxyLatency(socksPort);
   state.lastHealthAt = new Date().toISOString();
+  // Rotation outcome (visible to the phase-07 health scheduler, which maps a
+  // total rotation failure to the xray-rotation-failed alert).
+  let rotatedTo = null;
+  let rotationError;
   if (latencyMs > 0 && activeConfigId) {
     state.lastHealth = { latencyMs, exitIp: state.lastHealth?.exitIp || "" };
     await updateXrayTestResult(activeConfigId, { latencyMs, ok: true });
@@ -1407,7 +1411,6 @@ export async function runHealthCheck() {
       const MAX_ROTATE_ATTEMPTS = 5;
       const all = await getXrayConfigs({ isActive: true, healthyOnly: false });
       const candidates = all.filter((c) => c.id !== activeConfigId).slice(0, MAX_ROTATE_ATTEMPTS);
-      let rotatedTo = null;
       for (const next of candidates) {
         try {
           console.log(`[Xray] active server unhealthy, auto-rotating to ${next.name}`);
@@ -1423,10 +1426,19 @@ export async function runHealthCheck() {
         const msg = `auto-rotation failed for all ${candidates.length} candidate(s); keeping current active node`;
         console.error(`[Xray] ${msg}`);
         setStatus("error", { lastError: msg });
+        // Only a FAILED ATTEMPTED rotation is a rotation failure — a
+        // single-node install (no candidates) must not alert on every tick.
+        if (candidates.length > 0) rotationError = msg;
       }
     }
   }
-  return { latencyMs, activeConfigId };
+  return {
+    latencyMs,
+    activeConfigId,
+    rotatedTo,
+    rotationFailed: rotationError !== undefined,
+    rotationError,
+  };
 }
 
 export { installXray, getXrayRuntimeVersion, getXrayLogTail, getXraySyncState };
