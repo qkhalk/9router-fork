@@ -37,6 +37,7 @@ const PUBLIC_API_PATHS = [
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/status",
+  "/api/auth/setup-password", // self-gated: fresh install + default password + one-time setup code + rate limit
   "/api/auth/oidc",
   "/api/auth/saml",
   "/api/version",

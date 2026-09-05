@@ -9,6 +9,7 @@
     "test:watch": "vitest --reporter=verbose"
   },
   "devDependencies": {
+    "bcryptjs": "^3.0.2",
     "vitest": "^4.0.0"
   },
   "engines": {

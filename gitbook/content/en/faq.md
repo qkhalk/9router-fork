@@ -243,6 +243,19 @@ See [deployment guide](getting-started/installation.md#deployment) for details.
 
 ---
 
+## Why can't I log in remotely with the default password?
+
+On a fresh install the default password `123456` is public knowledge, so remote login is blocked until you set your own password. When you try, 9Router prints a **one-time setup code** to the server console and the login page asks for it:
+
+```text
+[9Router] First remote login on a fresh install: use the one-time setup code A1B2-C3D4
+[9Router] on the login page (with the default password) to set your admin password.
+```
+
+Find the code with `docker logs <container>` (Docker), `journalctl -u 9router` (systemd), or the terminal running 9Router. Enter it on the login page together with the default password and your new password — the code is single-use and consumed immediately.
+
+Alternatives: log in from `localhost` on the host itself (works without a code), or set `INITIAL_PASSWORD` before first launch to skip the flow entirely.
+
 ## Is my data secure?
 
 **Yes, 9Router prioritizes security and privacy:**
