@@ -717,7 +717,89 @@ export async function getUsageStats(period = "all") {
     safeByApiKey[safeKey] = v;
   }
   stats.byApiKey = safeByApiKey;
+
+  // Cache analytics (phase 09): derived from the already-aggregated byModel
+  // groups — additive `cache` block on the stats payload the usage page
+  // already fetches (no new API surface).
+  stats.cache = await getCacheAnalytics(stats);
+
   return stats;
+}
+
+/**
+ * Cache analytics (phase 09) from an aggregated getUsageStats object.
+ * Per (provider, model): cachedTokens, promptTokens, hitRatePct =
+ * cached/prompt (plan-defined; null when the denominator is 0 — never a
+ * fabricated 0%), and savedUsd = cachedTokens × prompt-token price — an
+ * ESTIMATE of what those tokens would have cost fresh (pricing gap → null,
+ * rendered "n/a", never 0; cached reads cost `pricing.cached` in reality but
+ * the estimate intentionally compares against the uncached prompt price).
+ * Rows without any token signal are omitted; rows with tokens but zero
+ * cache stay (0% hit rate is real information).
+ */
+export async function getCacheAnalytics(stats) {
+  const rows = [];
+  let totalCached = 0;
+  let totalPrompt = 0;
+  let pricedRows = 0;
+  let unpricedRows = 0;
+  let totalSavedUsd = 0;
+
+  let getPricingForModel = null;
+  try {
+    ({ getPricingForModel } = await import("./pricingRepo.js"));
+  } catch { /* pricing unavailable → all rows n/a */ }
+
+  for (const [key, m] of Object.entries(stats?.byModel || {})) {
+    const cachedTokens = m.cachedTokens || 0;
+    const promptTokens = m.promptTokens || 0;
+    // Rows with no token signal at all count as "unknown" — excluded from
+    // both the table and the ratio denominators (never as 0% misses).
+    if (cachedTokens === 0 && promptTokens === 0) continue;
+    totalCached += cachedTokens;
+    totalPrompt += promptTokens;
+
+    let savedUsd = null;
+    if (cachedTokens > 0 && getPricingForModel) {
+      try {
+        const pricing = await getPricingForModel(m.rawProvider || null, m.rawModel);
+        const inputPerM = Number(pricing?.input);
+        if (Number.isFinite(inputPerM) && inputPerM > 0) {
+          savedUsd = (cachedTokens / 1e6) * inputPerM;
+          totalSavedUsd += savedUsd;
+          pricedRows += 1;
+        } else {
+          unpricedRows += 1;
+        }
+      } catch {
+        unpricedRows += 1;
+      }
+    }
+
+    rows.push({
+      model: m.rawModel || key,
+      provider: m.provider || m.rawProvider || "",
+      requests: m.requests || 0,
+      cachedTokens,
+      promptTokens,
+      hitRatePct: promptTokens > 0 ? Math.round((cachedTokens / promptTokens) * 1000) / 10 : null,
+      savedUsd,
+    });
+  }
+
+  rows.sort((a, b) => b.cachedTokens - a.cachedTokens);
+
+  return {
+    rows,
+    summary: {
+      totalCachedTokens: totalCached,
+      totalPromptTokens: totalPrompt,
+      blendedHitRatePct: totalPrompt > 0 ? Math.round((totalCached / totalPrompt) * 1000) / 10 : null,
+      savedUsd: pricedRows > 0 ? Number(totalSavedUsd.toFixed(4)) : null,
+      pricedRows,
+      unpricedRows,
+    },
+  };
 }
 
 export async function getChartData(period = "7d") {
