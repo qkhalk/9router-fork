@@ -164,6 +164,14 @@ async function runHeavyStartup() {
     .then(({ configureTotuAutoFetch }) => configureTotuAutoFetch(settings))
     .catch((e) => console.log("[TotuAutoFetch] scheduler start failed:", e.message));
 
+  // v2go/xray health-check scheduler (phase 07): wires the existing
+  // xrayHealthCheckIntervalMin setting. The tick self-guards via runHealthCheck's
+  // {skipped} return when no managed xray runs, so non-v2go installs pay
+  // ~nothing. Idempotent; 0 = manual-only.
+  import("@/lib/xray/healthScheduler.js")
+    .then(({ configureXrayHealthCheck }) => configureXrayHealthCheck(settings))
+    .catch((e) => console.log("[XrayHealth] scheduler start failed:", e.message));
+
   // Proactive OAuth token refresh (e.g. grok-cli ~6h TTL). Module is idempotent
   // and also started from custom-server.js when that entry is used.
   import("@/sse/services/backgroundTokenRefresh.js")
