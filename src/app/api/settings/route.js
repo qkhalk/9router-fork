@@ -4,6 +4,7 @@ import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { applyDs2apiUrl } from "@/lib/ds2api/resolve";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import bcrypt from "bcryptjs";
+import { clearSetupCode } from "@/lib/auth/setupCode";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -77,6 +78,9 @@ export async function PATCH(request) {
 
       const salt = await bcrypt.genSalt(10);
       body.password = await bcrypt.hash(body.newPassword, salt);
+      // A password now exists — any pending first-run setup code is moot and
+      // must not survive a later reset-to-default.
+      clearSetupCode();
       delete body.newPassword;
       delete body.currentPassword;
     }

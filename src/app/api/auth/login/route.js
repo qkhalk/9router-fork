@@ -8,9 +8,17 @@ import { isSamlConfigured } from "@/lib/auth/saml.js";
 import { checkLock, recordFail, recordSuccess, getClientIp } from "@/lib/auth/loginLimiter";
 import { isKnownTunnelHost } from "@/lib/auth/tunnelAccess";
 import { isLocalRequest } from "@/dashboardGuard";
+import { ensureSetupCode } from "@/lib/auth/setupCode";
+import { DATA_DIR } from "@/lib/dataDir";
+import path from "node:path";
 
 const RESET_HINT = "Forgot password? Reset to default via 9Router CLI → Settings → Reset Password to Default.";
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
+// Scanners hammer exposed fresh installs with "123456" around the clock; the
+// 3-line banner must not flood docker logs / journald. One print per minute is
+// plenty for the operator retrying the login page.
+const SETUP_CODE_LOG_INTERVAL_MS = 60_000;
+let lastSetupCodeLogAt = 0;
 
 export async function POST(request) {
   try {
@@ -54,8 +62,6 @@ export async function POST(request) {
     }
 
     if (isValid) {
-      recordSuccess(ip);
-
       // Default password still in use on a remote client → force a password
       // change before the dashboard is exposed remotely (keeps local UX intact).
       const mustChangePassword =
@@ -68,18 +74,31 @@ export async function POST(request) {
         // authentication entirely (CVE-2026-56679 class). Require the password
         // to be changed first.
         //
-        // NOTE: this intentionally leaves no remote self-service password-change
-        // path — the change-password flow (PATCH /api/settings) requires a JWT,
-        // which we deliberately withhold. A remote fresh-install user must either
-        // change the password from the local machine or set INITIAL_PASSWORD
-        // before first launch. This is a deliberate security trade-off, not an
-        // oversight: issuing any credential before the default password is
-        // rotated re-opens the exact attack chain this branch closes.
+        // Remote self-service goes through POST /api/auth/setup-password, which
+        // needs a one-time setup code that only exists on the host (printed to
+        // the server console below). Issuing any credential before the default
+        // password is rotated would re-open the exact attack chain this branch
+        // closes; the setup code is not a credential until host access proves
+        // ownership.
+        const setupCode = await ensureSetupCode();
+        const nowMs = Date.now();
+        if (nowMs - lastSetupCodeLogAt > SETUP_CODE_LOG_INTERVAL_MS) {
+          lastSetupCodeLogAt = nowMs;
+          console.log(
+            `[9Router] First remote login on a fresh install: use the one-time setup code ${setupCode}\n` +
+            `[9Router] on the login page (with the default password) to set your admin password.\n` +
+            `[9Router] The code is also stored at ${path.join(DATA_DIR, "setup-code")} and expires once used.`
+          );
+        }
         return NextResponse.json(
-          { success: false, error: "Default password must be changed before remote access. Change it from the local machine (or set INITIAL_PASSWORD).", mustChangePassword },
+          { success: false, error: "Default password cannot be used for remote access. Enter the one-time setup code shown in the server console (e.g. docker logs) to set your password.", mustChangePassword, setupRequired: true },
           { status: 403, headers: NO_STORE_HEADERS }
         );
       }
+
+      // Only a login that actually yields a session clears the lockout bucket;
+      // a blocked default-password 403 must not reset setup-code guess counts.
+      recordSuccess(ip);
 
       const cookieStore = await cookies();
       await setDashboardAuthCookie(cookieStore, request);

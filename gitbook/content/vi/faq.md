@@ -243,6 +243,19 @@ Xem [hướng dẫn deployment](getting-started/installation.md#deployment) đ�
 
 ---
 
+## Tại sao không đăng nhập từ xa được bằng mật khẩu mặc định?
+
+Với cài đặt mới, mật khẩu mặc định `123456` là công khai nên đăng nhập từ xa bị chặn cho đến khi bạn đặt mật khẩu riêng. Khi bạn thử, 9Router sẽ in một **mã thiết lập dùng một lần** ra console của server và trang đăng nhập sẽ yêu cầu mã này:
+
+```text
+[9Router] First remote login on a fresh install: use the one-time setup code A1B2-C3D4
+[9Router] on the login page (with the default password) to set your admin password.
+```
+
+Xem mã bằng `docker logs <container>` (Docker), `journalctl -u 9router` (systemd), hoặc terminal đang chạy 9Router. Nhập mã đó trên trang đăng nhập cùng mật khẩu mặc định và mật khẩu mới của bạn — mã chỉ dùng được một lần.
+
+Cách khác: đăng nhập từ `localhost` trên chính máy chủ (không cần mã), hoặc đặt `INITIAL_PASSWORD` trước khi khởi động lần đầu để bỏ qua bước này.
+
 ## Dữ liệu của tôi có an toàn không?
 
 **Có, 9Router ưu tiên bảo mật và quyền riêng tư:**

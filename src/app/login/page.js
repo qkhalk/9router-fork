@@ -18,6 +18,7 @@ export default function LoginPage() {
   const [samlLoginLabel, setSamlLoginLabel] = useState("Sign in with SAML SSO");
   const [mustChange, setMustChange] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  const [setupCode, setSetupCode] = useState("");
 
   // Countdown for rate-limit
   useEffect(() => {
@@ -85,6 +86,12 @@ export default function LoginPage() {
         window.location.assign("/dashboard");
       } else {
         const data = await res.json();
+        // The server answers 403 (no session issued) for the remote
+        // default-password case; the body still carries mustChangePassword.
+        if (data.mustChangePassword) {
+          setMustChange(true);
+          return;
+        }
         setError(data.error || "Invalid password");
         if (data.resetHint) setResetHint(data.resetHint);
         if (data.retryAfter) setRetryAfter(Number(data.retryAfter));
@@ -96,19 +103,30 @@ export default function LoginPage() {
     }
   };
 
-  // Force a new password before entering the dashboard (default + remote).
+  // First-run remote setup: claim the default password with the one-time
+  // setup code from the server console, then sign in with the new password.
   const handleSetNewPassword = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
+      const res = await fetch("/api/auth/setup-password", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword: password, newPassword }),
+        body: JSON.stringify({ password, setupCode, newPassword }),
       });
       if (res.ok) {
-        window.location.assign("/dashboard");
+        const loginRes = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: newPassword }),
+        });
+        if (loginRes.ok) {
+          window.location.assign("/dashboard");
+          return;
+        }
+        const loginData = await loginRes.json();
+        setError(loginData.error || "Password set. Please log in with the new password.");
       } else {
         const data = await res.json();
         setError(data.error || "Failed to set password");
@@ -172,6 +190,20 @@ export default function LoginPage() {
                 Set a new password before accessing the dashboard remotely.
               </p>
               <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium">One-time setup code</label>
+                <Input
+                  type="text"
+                  placeholder="e.g. A1B2-C3D4"
+                  value={setupCode}
+                  onChange={(e) => setSetupCode(e.target.value)}
+                  required
+                  autoFocus
+                />
+                <p className="text-xs text-text-muted">
+                  Printed in the server console when you tried to log in — run <code className="bg-sidebar px-1 rounded">docker logs</code> (Docker), <code className="bg-sidebar px-1 rounded">journalctl -u 9router</code> (systemd), or check the terminal running 9Router.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2">
                 <label className="text-sm font-medium">New password</label>
                 <Input
                   type="password"
@@ -179,11 +211,10 @@ export default function LoginPage() {
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   required
-                  autoFocus
                 />
                 {error && <p className="text-xs text-red-500">{error}</p>}
               </div>
-              <Button type="submit" variant="primary" className="w-full" loading={loading} disabled={!newPassword}>
+              <Button type="submit" variant="primary" className="w-full" loading={loading} disabled={!newPassword || !setupCode}>
                 Set password
               </Button>
             </form>
