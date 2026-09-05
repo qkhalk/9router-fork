@@ -1,3 +1,16 @@
+# v0.6.39 (2026-09-05)
+
+Patch release fixing a **runtime bug shipped in v0.6.38** + CI hardening.
+
+## Fixes
+- **Chat auth crash when Require API Key is on (v0.6.38 only)**: `getApiKeyRow` was exported from the DB layer but never re-exported by the `localDb` facade that `auth.js` imports from. The webpack production build downgraded the missing named export to a warning and shipped `undefined` — any request with `requireApiKey` enabled failed with `getApiKeyRow is not a function`. Installs with Require API Key **off** were unaffected. **Upgrade strongly recommended for v0.6.38 Docker/CLI users with API-key enforcement enabled.**
+
+## CI
+- Strict Turbopack export check added to the build job — missing named exports now fail CI loudly instead of shipping as webpack warnings (this is what caught the bug).
+- Windows process-lifecycle job now actually works end-to-end (npm arborist crash fixed via tracked tests lockfile + `npm ci`; boots the real `custom-server.js` entry after a production build instead of a nonexistent `server.js`).
+- GitBook docs deploy is self-contained: publishes to this repo's `gh-pages` branch with the built-in token (the upstream docs repo was READ-only for this fork) — fixed a missing `useEffect` import that had broken every docs build since v0.6.35-era v0.4.77.
+- CLI release workflow passes `--latest` explicitly, so parallel tag pushes can no longer mis-assign the GitHub "Latest" badge.
+
 # v0.6.38 (2026-09-05)
 
 Hardening release C: the **v2go health scheduler**, **per-API-key budgets**,
