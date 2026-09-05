@@ -67,7 +67,9 @@ PUBLIC.md
 Thanks.md
 PUBLIC.en.md
 PR/*
-/package-lock.json  # root only — tests/package-lock.json is tracked for CI npm ci
+# Root package-lock.json stays untracked (repo convention);
+# tests/package-lock.json IS tracked for CI npm ci.
+/package-lock.json
 
 
 #Ignore vscode AI rules
