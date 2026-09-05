@@ -5,8 +5,9 @@ import {
   markAccountUnavailable,
   clearAccountError,
   extractApiKey,
-  isValidApiKey,
+  getApiKeyRow,
 } from "../services/auth.js";
+import { checkKeyBudget } from "../services/keyBudgets.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes, isStrikeBlocked } from "../services/antigravityQuota.js";
 import { checkBreaker, recordFailure, recordSuccess } from "../services/circuitBreaker.js";
 import { formatRetryAfter } from "open-sse/services/accountFallback.js";
@@ -95,11 +96,17 @@ export async function handleChat(request, clientRawRequest = null) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     }
-    const valid = await isValidApiKey(apiKey);
+    const keyRow = await getApiKeyRow(apiKey);
+    const valid = !!keyRow && (keyRow.isActive === 1 || keyRow.isActive === true);
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
+    // Per-key budgets (phase 08): unbudgeted keys short-circuit before any
+    // spend query; budgeted keys read fresh spend here (no cache). Inert
+    // unless requireApiKey is on — this branch IS the enforcement point.
+    const budgetResponse = await checkKeyBudget(apiKey, keyRow);
+    if (budgetResponse) return budgetResponse;
   }
 
   if (!modelStr) {

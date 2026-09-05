@@ -1,4 +1,4 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
+import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools, getApiKeyRow as getApiKeyRowFromRepo } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId, isStrictProxyFailure } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -407,4 +407,14 @@ export function extractApiKey(request) {
 export async function isValidApiKey(apiKey) {
   if (!apiKey) return false;
   return await validateApiKey(apiKey);
+}
+
+/**
+ * Full api-key row for a raw key (null when unknown) — budget enforcement
+ * (phase 08) reads the budget* columns from it so the auth path stays one
+ * SELECT; validateApiKey is the isActive thin wrapper over the same lookup.
+ */
+export async function getApiKeyRow(apiKey) {
+  if (!apiKey) return null;
+  return await getApiKeyRowFromRepo(apiKey);
 }
