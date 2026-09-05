@@ -256,6 +256,8 @@ Xem mã bằng `docker logs <container>` (Docker), `journalctl -u 9router` (syst
 
 Cách khác: đăng nhập từ `localhost` trên chính máy chủ (không cần mã), hoặc đặt `INITIAL_PASSWORD` trước khi khởi động lần đầu để bỏ qua bước này.
 
+**Đang kẹt ở v0.6.39 trở xuống?** Thư mục dữ liệu của bạn (Docker volume / `~/.9router`) không bị ảnh hưởng khi nâng cấp — nếu bạn chưa kịp đặt mật khẩu, sau khi nâng cấp bạn sẽ đúng trạng thái mà flow này xử lý. Nâng cấp lên v0.6.40 (chạy lại lệnh cài đặt, `docker pull` image mới nhưng giữ nguyên volume, hoặc dùng badge "New version available" trong app), rồi đăng nhập từ xa bằng `123456` và làm theo mã trong console. Lưu ý với Docker trên v0.6.39: kể cả `localhost` từ máy chủ cũng bị coi là "remote" (container chỉ thấy IP bridge của Docker), nên không có đường nào vào được — nâng cấp chính là cách sửa.
+
 ## Dữ liệu của tôi có an toàn không?
 
 **Có, 9Router ưu tiên bảo mật và quyền riêng tư:**

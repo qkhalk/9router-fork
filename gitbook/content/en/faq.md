@@ -256,6 +256,8 @@ Find the code with `docker logs <container>` (Docker), `journalctl -u 9router` (
 
 Alternatives: log in from `localhost` on the host itself (works without a code), or set `INITIAL_PASSWORD` before first launch to skip the flow entirely.
 
+**Already stuck on v0.6.39 or earlier?** Your data directory (Docker volume / `~/.9router`) is untouched by upgrades — if you never got to set a password, upgrading puts you in exactly the state this flow handles. Upgrade to v0.6.40 (re-run the install one-liner, `docker pull` the new image keeping the same volume, or use the in-app "New version available" badge), then log in remotely with `123456` and follow the console code. Note for Docker on v0.6.39: even `localhost` from the host counted as "remote" (the container sees the Docker bridge IP), so there was no way in — upgrading is the fix.
+
 ## Is my data secure?
 
 **Yes, 9Router prioritizes security and privacy:**
