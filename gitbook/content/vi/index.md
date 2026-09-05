@@ -45,7 +45,13 @@ Tier 3 (FREE): iFlow → Qwen → Kiro
 - Tiêu thụ token thời gian thực cho mỗi provider
 - Đếm ngược reset (5 giờ, hàng ngày, hàng tuần, hàng tháng)
 - Ước tính chi phí cho tier trả phí
-- Báo cáo chi tiêu hàng tháng
+- Phân tích cache — token được cache, tỷ lệ hit, và tiền tiết kiệm ước tính theo model
+
+### 🚨 Cảnh báo & Lưới an toàn
+
+- Cảnh báo Telegram / Discord / webhook cho các sự kiện quan trọng (quota sắp hết, tất cả tài khoản bị khóa, node down, …)
+- Circuit breaker từng tài khoản — tài khoản lỗi tự bị bỏ qua, request của bạn không bao giờ đình trệ
+- Budget từng API key với chặn cứng tùy chọn (429 khi chạm giới hạn)
 
 ### 🎯 Hỗ trợ CLI Toàn diện
 
@@ -155,6 +161,8 @@ Model: cc/claude-opus-4-5-20251101
 - [Bắt đầu](getting-started/quick-start.md) - Cài đặt và cấu hình trong 5 phút
 - [Hướng dẫn cài đặt](getting-started/installation.md) - Hướng dẫn setup chi tiết
 - [Tính năng](features/smart-routing.md) - Khám phá mọi khả năng
+- [Cảnh báo](features/alerts.md) - Thông báo Telegram/Discord/webhook
+- [API Key & Budget](features/api-keys.md) - Kiểm soát truy cập và trần chi tiêu
 - [FAQ](faq.md) - Các câu hỏi thường gặp
 
 ---

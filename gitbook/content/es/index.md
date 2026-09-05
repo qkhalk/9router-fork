@@ -45,7 +45,13 @@ Nivel 3 (GRATIS): iFlow → Qwen → Kiro
 - Consumo de tokens en tiempo real por proveedor
 - Cuenta regresiva de reinicio (5 horas, diario, semanal, mensual)
 - Estimación de costos para niveles de pago
-- Reportes de gasto mensual
+- Analíticas de caché — tokens cacheados, tasa de hit y ahorro estimado por modelo
+
+### 🚨 Alertas y redes de seguridad
+
+- Alertas Telegram / Discord / webhook para los eventos que importan (cuota cerca del límite, todas las cuentas bloqueadas, nodo caído, …)
+- Circuit breaker por cuenta — las cuentas fallidas se omiten automáticamente, tus peticiones nunca se detienen
+- Presupuestos por API key con bloqueo duro opcional (429 al límite)
 
 ### 🎯 Soporte universal de CLI
 
@@ -155,6 +161,8 @@ Model: cc/claude-opus-4-5-20251101
 - [Empezar](getting-started/quick-start.md) - Instala y configura en 5 minutos
 - [Guía de instalación](getting-started/installation.md) - Instrucciones detalladas
 - [Características](features/smart-routing.md) - Explora todas las capacidades
+- [Alertas](features/alerts.md) - Notificaciones Telegram/Discord/webhook
+- [API Keys & Presupuestos](features/api-keys.md) - Control de acceso y techos de gasto
 - [FAQ](faq.md) - Preguntas comunes
 
 ---

@@ -94,7 +94,7 @@ User request → cc/claude-opus-4-5
 1. **Quota availability** - Check if provider has remaining quota
 2. **Cost tier** - Prefer subscription → cheap → free
 3. **Reset timing** - Consider when quota resets
-4. **Provider health** - Skip providers with errors
+4. **Provider health** - Skip providers with errors; failing accounts are additionally guarded by the [circuit breaker](./circuit-breaker.md), which skips them for a cooldown and probes them passively before returning them to rotation
 
 ### Priority Order Example
 
@@ -157,10 +157,12 @@ Tier 3: iFlow → Kiro → Qwen
 **4. Quota Reset Notifications**
 
 ```
-Dashboard → Settings → Notifications
-→ Email when quota resets
-→ Alert when 80% quota used
+Dashboard → Alerts
+→ Telegram / Discord / Webhook channel
+→ Enable "quota-near-limit" events
 ```
+
+See [Alerts](./alerts.md) for channel setup and the full event catalog.
 
 ---
 
@@ -353,24 +355,29 @@ Dashboard → Quota Overview:
 ### Real-Time Notifications
 
 ```
-Dashboard → Notifications:
-  ⚠️ Claude Code quota 80% used (1h remaining)
-  ✅ GLM-4.7 quota reset (10M tokens available)
-  💰 Daily budget 50% used ($2.50 / $5)
+Dashboard → Alerts (Telegram / Discord / Webhook):
+
+  ⚠️ quota-near-limit: Claude Code 80% used (resets in 1h 30m)
+  🔴 all-accounts-locked: every glm account is rate-limited
+  🔴 breaker-open: cx/gpt-5.2-codex failing — skipped for 60s
 ```
+
+Configure channels and per-event toggles on the [Alerts](./alerts.md) page.
 
 ### Usage Analytics
 
 ```
-Dashboard → Analytics:
+Dashboard → Usage:
   Today: 50M tokens
     - 30M via Claude Code (subscription)
-    - 15M via GLM-4.7 ($9)
+    - 15M via GLM-4.7 ($9) — incl. 6M cached tokens (estimated ~$3.60 saved)
     - 5M via iFlow (free)
   
   Cost: $9 (vs $1000 on ChatGPT API)
   Savings: 99%
 ```
+
+The Usage page also breaks out **cached tokens and estimated cache savings** per provider/model — see [Quota Tracking](./quota-tracking.md).
 
 ---
 

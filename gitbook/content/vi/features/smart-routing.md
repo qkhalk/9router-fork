@@ -157,10 +157,12 @@ Tier 3: iFlow → Kiro → Qwen
 **4. Thông báo Reset Quota**
 
 ```
-Dashboard → Settings → Notifications
-→ Email when quota resets
-→ Alert when 80% quota used
+Dashboard → Alerts
+→ Kênh Telegram / Discord / Webhook
+→ Bật sự kiện "quota-near-limit"
 ```
+
+Xem [Cảnh báo](./alerts.md) để cấu hình kênh và danh sách sự kiện đầy đủ.
 
 ---
 

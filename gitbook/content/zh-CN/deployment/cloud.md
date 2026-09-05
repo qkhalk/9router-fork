@@ -17,7 +17,7 @@
 
 ```bash
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 ```
 
 ### 步骤 2:安装依赖
@@ -152,7 +152,7 @@ docker build -t 9router .
 # 运行容器
 docker run -d \
   --name 9router \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -p 20128:20128 \
   -e JWT_SECRET="your-secure-secret-change-this" \
   -e INITIAL_PASSWORD="your-secure-password" \
@@ -172,7 +172,7 @@ services:
     build: .
     container_name: 9router
     ports:
-      - "3000:3000"
+      - "20128:20128"
       - "20128:20128"
     environment:
       - NODE_ENV=production

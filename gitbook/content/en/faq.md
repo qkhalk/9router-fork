@@ -173,7 +173,7 @@ Cursor Settings → Models → Advanced:
 ```bash
 # Deploy to VPS
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 npm start
 
@@ -207,7 +207,7 @@ npm install -g 9router
 ### VPS/Cloud
 ```bash
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 
 export JWT_SECRET="your-secure-secret"
@@ -221,7 +221,7 @@ npm start
 ```bash
 docker build -t 9router .
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -e JWT_SECRET="your-secret" \
   -v 9router-data:/app/data \
   9router
@@ -229,7 +229,7 @@ docker run -d \
 
 ### Cloudflare Workers
 ```bash
-cd 9router/app
+cd 9router
 npm run deploy:cloudflare
 ```
 
@@ -262,15 +262,23 @@ See [deployment guide](getting-started/installation.md#deployment) for details.
 - Audit security yourself
 - Community-reviewed
 
+**Hardening highlights (v0.6.36+):**
+- API keys are **hashed at rest** (HMAC-SHA256 under a per-install secret) — never stored in plaintext; listings only show `sk-{keyId}-••••{last4}`
+- Per-install random secrets for key hashing and MITM sudo encryption — no machine-derived fallback keys
+- SSRF guard on all outbound fetch paths (manual redirects, per-hop DNS revalidation)
+- Request logs mask credentials even in verbose mode
+- Tunnel dashboard access is opt-in; the default password only works from the host itself
+- Database export/import requires the real per-install CLI token
+
 **Best practices:**
-- Change `JWT_SECRET` in production
-- Use strong `INITIAL_PASSWORD`
+- Set a strong `JWT_SECRET` in production
+- Use strong `INITIAL_PASSWORD` and change it on first login
 - Enable HTTPS for cloud deployments
 - Rotate API keys regularly
 
 **What 9Router stores:**
 - Provider OAuth tokens (encrypted)
-- API keys (encrypted)
+- API keys (hashed — HMAC-SHA256, per-install secret)
 - Usage statistics (local only)
 - Combo configurations
 
@@ -290,10 +298,10 @@ See [deployment guide](getting-started/installation.md#deployment) for details.
 npm update -g 9router
 ```
 
-### Local Install
+### From Source
 ```bash
-cd 9router/app
-git pull origin main
+cd 9router
+git pull origin master
 npm install
 npm run build
 npm start
@@ -301,13 +309,13 @@ npm start
 
 ### Docker
 ```bash
-docker pull 9router:latest
+docker pull vibecoder11200/9router:latest
 docker stop 9router
 docker rm 9router
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -v 9router-data:/app/data \
-  9router:latest
+  vibecoder11200/9router:latest
 ```
 
 **Check version:**

@@ -17,7 +17,7 @@ Deploy 9Router on VPS or Docker for remote access and production use.
 
 ```bash
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 ```
 
 ### Step 2: Install Dependencies
@@ -152,7 +152,7 @@ docker build -t 9router .
 # Run container
 docker run -d \
   --name 9router \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -p 20128:20128 \
   -e JWT_SECRET="your-secure-secret-change-this" \
   -e INITIAL_PASSWORD="your-secure-password" \
@@ -172,7 +172,7 @@ services:
     build: .
     container_name: 9router
     ports:
-      - "3000:3000"
+      - "20128:20128"
       - "20128:20128"
     environment:
       - NODE_ENV=production

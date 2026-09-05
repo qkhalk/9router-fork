@@ -94,7 +94,7 @@ Request → 9Router → Tier 1を確認 (サブスクリプション)
 1. **クォータ可用性** - プロバイダーに残量があるか確認
 2. **コスト階層** - サブスクリプション → 低価格 → 無料を優先
 3. **リセットタイミング** - クォータリセット時を考慮
-4. **プロバイダー健全性** - エラーのあるプロバイダーをスキップ
+4. **プロバイダー健全性** - エラーのあるプロバイダーをスキップ。さらに失敗中のアカウントは[サーキットブレーカー](./circuit-breaker.md)で保護され、クールダウン中はスキップ、復帰前に受動的にプローブされます
 
 ### 優先順位の例
 
@@ -157,10 +157,12 @@ Tier 3: iFlow → Kiro → Qwen
 **4. クォータリセット通知**
 
 ```
-Dashboard → Settings → Notifications
-→ クォータリセット時にメール
-→ 80%クォータ使用時にアラート
+Dashboard → Alerts
+→ Telegram / Discord / Webhook チャネル
+→ "quota-near-limit" イベントを有効化
 ```
+
+チャネル設定とイベント一覧は[アラート](./alerts.md)を参照。
 
 ---
 
@@ -353,11 +355,14 @@ Dashboard → Quota Overview:
 ### リアルタイム通知
 
 ```
-Dashboard → Notifications:
-  ⚠️ Claude Codeクォータ80%使用 (1時間残)
-  ✅ GLM-4.7クォータリセット (10Mトークン利用可)
-  💰 日次予算50%使用 ($2.50 / $5)
+Dashboard → Alerts (Telegram / Discord / Webhook):
+
+  ⚠️ quota-near-limit: Claude Code 80%使用（1時間後にリセット）
+  🔴 all-accounts-locked: glm の全アカウントがレート制限中
+  🔴 breaker-open: cx/gpt-5.2-codex が失敗 — 60秒間スキップ
 ```
+
+チャネルとイベント別トグルは[アラート](./alerts.md)ページで設定します。
 
 ### 使用統計
 
@@ -365,12 +370,14 @@ Dashboard → Notifications:
 Dashboard → Analytics:
   今日: 5000万トークン
     - 3000万 Claude Code経由 (サブスクリプション)
-    - 1500万 GLM-4.7経由 ($9)
+    - 1500万 GLM-4.7経由 ($9) — 内600万はキャッシュ済み（推定 ~$3.60 節約）
     - 500万 iFlow経由 (無料)
   
   コスト: $9 (vs ChatGPT APIの$1000)
   節約: 99%
 ```
+
+使用ページはプロバイダー/モデルごとの**キャッシュ済みトークンと推定節約額**も表示します — [クォータ追跡](./quota-tracking.md)を参照。
 
 ---
 

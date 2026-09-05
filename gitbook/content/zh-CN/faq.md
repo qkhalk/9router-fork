@@ -173,7 +173,7 @@ Cursor Settings → Models → Advanced:
 ```bash
 # 部署到 VPS
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 npm start
 
@@ -207,7 +207,7 @@ npm install -g 9router
 ### VPS/云
 ```bash
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 
 export JWT_SECRET="your-secure-secret"
@@ -221,7 +221,7 @@ npm start
 ```bash
 docker build -t 9router .
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -e JWT_SECRET="your-secret" \
   -v 9router-data:/app/data \
   9router
@@ -229,7 +229,7 @@ docker run -d \
 
 ### Cloudflare Workers
 ```bash
-cd 9router/app
+cd 9router
 npm run deploy:cloudflare
 ```
 
@@ -262,15 +262,23 @@ npm run deploy:cloudflare
 - 可自行审计安全性
 - 社区评审
 
+**加固要点 (v0.6.36+):**
+- API keys **静态哈希**(基于按安装 secret 的 HMAC-SHA256)。绝不存明文；列表只显示 `sk-{keyId}-••••{last4}`
+- key 哈希与 MITM sudo 加密使用按安装随机 secret。没有机器推导的兜底密钥
+- 所有出站 fetch 路径的 SSRF 防护(手动重定向、逐跳 DNS 复验)
+- 请求日志即使在 verbose 模式下也对凭据脱敏
+- 隧道访问仪表盘需显式开启；默认密码仅本机可用
+- 数据库导出/导入需要真实的按安装 CLI token
+
 **最佳实践:**
-- 生产环境修改 `JWT_SECRET`
-- 使用强 `INITIAL_PASSWORD`
+- 生产环境设置强 `JWT_SECRET`
+- 使用强 `INITIAL_PASSWORD` 并在首次登录后修改
 - 云端部署启用 HTTPS
 - 定期轮换 API keys
 
 **9Router 存储的内容:**
 - 提供商 OAuth tokens(加密)
-- API keys(加密)
+- API keys(哈希 —— HMAC-SHA256,按安装 secret)
 - 使用统计(仅本地)
 - 组合配置
 
@@ -290,10 +298,10 @@ npm run deploy:cloudflare
 npm update -g 9router
 ```
 
-### 本地安装
+### 从源码
 ```bash
-cd 9router/app
-git pull origin main
+cd 9router
+git pull origin master
 npm install
 npm run build
 npm start
@@ -301,13 +309,13 @@ npm start
 
 ### Docker
 ```bash
-docker pull 9router:latest
+docker pull vibecoder11200/9router:latest
 docker stop 9router
 docker rm 9router
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -v 9router-data:/app/data \
-  9router:latest
+  vibecoder11200/9router:latest
 ```
 
 **查看版本:**

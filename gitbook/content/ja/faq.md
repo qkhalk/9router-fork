@@ -173,7 +173,7 @@ Cursor Settings → Models → Advanced:
 ```bash
 # VPSへデプロイ
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 npm start
 
@@ -207,7 +207,7 @@ npm install -g 9router
 ### VPS/クラウド
 ```bash
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 
 export JWT_SECRET="your-secure-secret"
@@ -221,7 +221,7 @@ npm start
 ```bash
 docker build -t 9router .
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -e JWT_SECRET="your-secret" \
   -v 9router-data:/app/data \
   9router
@@ -229,7 +229,7 @@ docker run -d \
 
 ### Cloudflare Workers
 ```bash
-cd 9router/app
+cd 9router
 npm run deploy:cloudflare
 ```
 
@@ -262,15 +262,23 @@ npm run deploy:cloudflare
 - 自分でセキュリティを監査可能
 - コミュニティレビュー済み
 
+**ハードニングの要点 (v0.6.36+):**
+- APIキーは**保存時にハッシュ化**(インストールごとのシークレットによるHMAC-SHA256)。平文保存なし。一覧は `sk-{keyId}-••••{last4}` のみ表示
+- キーのハッシュ化とMITM sudo暗号化にインストールごとのランダムシークレットを使用。マシン由来のフォールバックキーなし
+- 外向きfetch経路すべてにSSRFガード(手動リダイレクト、ホップごとのDNS再検証)
+- リクエストログはverboseモードでも資格情報をマスク
+- トンネル経由のダッシュボードアクセスはオプトイン。デフォルトパスワードはホスト自身からのみ有効
+- DBのエクスポート/インポートにはインストール固有のCLIトークンが必要
+
 **ベストプラクティス:**
-- 本番環境で`JWT_SECRET`を変更
-- 強力な`INITIAL_PASSWORD`を使用
+- 本番環境で強力な`JWT_SECRET`を設定
+- 強力な`INITIAL_PASSWORD`を使用し、初回ログインで変更
 - クラウドデプロイでHTTPSを有効化
 - APIキーを定期的にローテーション
 
 **9Routerが保存するもの:**
 - プロバイダーOAuthトークン(暗号化)
-- APIキー(暗号化)
+- APIキー(ハッシュ化 — HMAC-SHA256、インストールごとのシークレット)
 - 使用統計(ローカルのみ)
 - コンボ設定
 
@@ -290,10 +298,10 @@ npm run deploy:cloudflare
 npm update -g 9router
 ```
 
-### ローカルインストール
+### ソースから
 ```bash
-cd 9router/app
-git pull origin main
+cd 9router
+git pull origin master
 npm install
 npm run build
 npm start
@@ -301,13 +309,13 @@ npm start
 
 ### Docker
 ```bash
-docker pull 9router:latest
+docker pull vibecoder11200/9router:latest
 docker stop 9router
 docker rm 9router
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -v 9router-data:/app/data \
-  9router:latest
+  vibecoder11200/9router:latest
 ```
 
 **バージョンを確認:**

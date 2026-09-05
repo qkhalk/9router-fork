@@ -45,7 +45,13 @@
 - 每个提供商的实时 token 消耗
 - 重置倒计时(5 小时、每日、每周、每月)
 - 付费层级的成本估算
-- 每月支出报告
+- 缓存分析 —— 按 model 的缓存 token、命中率与估算节省
+
+### 🚨 告警与安全网
+
+- 重要事件的 Telegram / Discord / Webhook 告警（配额接近上限、所有账号被锁、节点宕机等）
+- 按账号的熔断器 —— 故障账号自动跳过，你的请求永不停滞
+- 按 API key 的预算与可选硬阻断（限额处 429）
 
 ### 🎯 通用 CLI 支持
 
@@ -155,6 +161,8 @@ Model: cc/claude-opus-4-5-20251101
 - [入门指南](getting-started/quick-start.md) - 5 分钟内完成安装和配置
 - [安装指南](getting-started/installation.md) - 详细的设置说明
 - [功能特性](features/smart-routing.md) - 探索所有能力
+- [告警](features/alerts.md) - Telegram/Discord/Webhook 通知
+- [API Key 与预算](features/api-keys.md) - 访问控制与支出上限
 - [常见问题](faq.md) - 常见问题解答
 
 ---

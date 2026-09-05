@@ -394,82 +394,49 @@ budget-combo:
 
 ## Alerts & Notifications
 
-### Quota Alerts
+Real notifications run through the **Alerts** system (Dashboard → Alerts) with Telegram, Discord, and generic-webhook channels — no email. See the [Alerts guide](./alerts.md) for setup.
+
+### Events You'll Actually See
 
 ```
-Dashboard → Settings → Alerts
+⚠️ quota-near-limit
+   Claude Code: 82% used (resets in 2h)
 
-Quota warnings:
-  ✅ Alert at 80% quota used
-  ✅ Alert at 90% quota used
-  ✅ Alert when quota exhausted
-  ✅ Notify when quota resets
+🚨 budget-threshold
+   Key sk-abc123…•789: $4.10 / $5.00 daily budget (82%)
 
-Delivery:
-  ✅ Dashboard notification
-  ✅ Email (optional)
-  ✅ Webhook (optional)
+🔴 breaker-open
+   cx/gpt-5.2-codex: 5 failures in 60s — skipped for 60s
+
+🔴 all-accounts-locked
+   Every glm account is rate-limited; requests can't be served
 ```
 
-**Example notifications:**
-```
-⚠️ Claude Code quota 80% used
-   2.5h remaining (resets in 1h 30m)
-   
-⚠️ GLM-4.7 quota 90% used
-   1M tokens remaining (resets in 5h)
-   
-✅ Gemini CLI quota reset
-   1,000 requests available (daily limit)
-```
+Identical events are deduplicated for 10 minutes so flapping providers don't spam you. Each event type can be toggled individually.
 
-### Budget Alerts
+### Per-Key Budgets
 
-```
-Dashboard → Settings → Budget Alerts
+Budgets are set per API key (see [API Keys & Budgets](./api-keys.md)):
 
-Daily budget: $5
-  ✅ Alert at 80% ($4)
-  ✅ Alert at 100% ($5)
-  ✅ Auto-switch to free tier when exceeded
+- USD or token budget over a daily/monthly window
+- Soft threshold (default 80%) fires one `budget-threshold` alert per window
+- Optional hard block returns `429` with `Retry-After` at the limit
 
-Monthly budget: $150
-  ✅ Alert at 50% ($75)
-  ✅ Alert at 80% ($120)
-  ✅ Alert at 100% ($150)
-```
+## Circuit Breaker & Node Health
 
-**Example notifications:**
-```
-⚠️ Daily budget 80% used
-   $4.00 / $5.00 spent today
-   
-⚠️ Monthly budget 50% reached
-   $75 / $150 spent this month
-   Projected: $135 (within budget)
-   
-🚨 Daily budget exceeded
-   $5.20 / $5.00 spent today
-   Auto-switched to free tier
-```
+The Quota page also hosts two operational panels:
 
-### Cost Anomaly Detection
+### Circuit Breaker Panel
 
-```
-Dashboard → Settings → Anomaly Detection
+Shows open/half-open breakers per account with failure counts and cooldown countdowns, plus a manual reset button. Failing accounts are skipped automatically — see [Circuit Breaker](./circuit-breaker.md).
 
-✅ Detect unusual spending patterns
-✅ Alert on cost spikes (>2× daily average)
-✅ Warn on quota exhaustion patterns
+### Cache Analytics
 
-Example alert:
-⚠️ Cost spike detected
-   Today: $12.50 (2.5× daily average)
-   Reason: High GLM-4.7 usage (20M tokens)
-   Suggestion: Check if primary models quota-exhausted
-```
+The Usage table includes **Cached** and **Cached Cost** columns, and the stats payload carries a cache block per provider/model:
 
----
+- **Cached tokens** and estimated **hit-rate** (cached ÷ prompt tokens)
+- **Estimated savings** — what those cached tokens would have cost uncached, based on configured pricing (models without pricing show n/a, never a fake $0)
+
 
 ## Best Practices
 
@@ -674,10 +641,10 @@ Response:
 **Issue: Alerts not received**
 
 **Solution:**
-1. Dashboard → Settings → Alerts
-2. Verify email address is correct
-3. Check spam folder
-4. Test notification (Send Test button)
+1. Dashboard → Alerts — verify the channel is configured and enabled
+2. Click the channel's **Test** button
+3. Check the event type isn't toggled off
+4. For Telegram: the bot must be able to message your chat ID
 
 ---
 

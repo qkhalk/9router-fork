@@ -394,82 +394,49 @@ budget-combo:
 
 ## アラートと通知
 
-### クォータアラート
+実際の通知は**アラート**システム（Dashboard → Alerts）経由で、Telegram・Discord・汎用 Webhook チャネルで届きます。メールはありません。[アラートガイド](./alerts.md)を参照。
+
+## 実際に見られるイベント
 
 ```
-Dashboard → Settings → Alerts
+⚠️ quota-near-limit
+   Claude Code: 82% 使用済み（2時間後にリセット）
 
-Quota warnings:
-  ✅ Alert at 80% quota used
-  ✅ Alert at 90% quota used
-  ✅ Alert when quota exhausted
-  ✅ Notify when quota resets
+🚨 budget-threshold
+   キー sk-abc123…•789: 日次予算 $4.10 / $5.00（82%）
 
-Delivery:
-  ✅ Dashboard notification
-  ✅ Email (optional)
-  ✅ Webhook (optional)
+🔴 breaker-open
+   cx/gpt-5.2-codex: 60秒で5回失敗 — 60秒間スキップ
+
+🔴 all-accounts-locked
+   glm の全アカウントがレート制限中。リクエスト処理不可
 ```
 
-**通知例:**
-```
-⚠️ Claude Code quota 80% used
-   2.5h remaining (resets in 1h 30m)
-   
-⚠️ GLM-4.7 quota 90% used
-   1M tokens remaining (resets in 5h)
-   
-✅ Gemini CLI quota reset
-   1,000 requests available (daily limit)
-```
+同一イベントは 10 分間重複排除されます。イベント種別ごとに個別 ON/OFF 可能です。
 
-### 予算アラート
+### キーごとの予算
 
-```
-Dashboard → Settings → Budget Alerts
+予算は API キーごとに設定します（[API キーと予算](./api-keys.md)参照）:
 
-Daily budget: $5
-  ✅ Alert at 80% ($4)
-  ✅ Alert at 100% ($5)
-  ✅ Auto-switch to free tier when exceeded
+- 日次/月次ウィンドウで USD またはトークン予算
+- ソフトしきい値（デフォルト 80%）がウィンドウごとに 1 回 `budget-threshold` アラートを発火
+- 任意のハードブロックは上限で `429` + `Retry-After` を返す
 
-Monthly budget: $150
-  ✅ Alert at 50% ($75)
-  ✅ Alert at 80% ($120)
-  ✅ Alert at 100% ($150)
-```
+## サーキットブレーカーとノード健全性
 
-**通知例:**
-```
-⚠️ Daily budget 80% used
-   $4.00 / $5.00 spent today
-   
-⚠️ Monthly budget 50% reached
-   $75 / $150 spent this month
-   Projected: $135 (within budget)
-   
-🚨 Daily budget exceeded
-   $5.20 / $5.00 spent today
-   Auto-switched to free tier
-```
+Quota ページには 2 つの運用パネルもあります:
 
-### コスト異常検知
+### サーキットブレーカーパネル
 
-```
-Dashboard → Settings → Anomaly Detection
+アカウントごとのオープン/half-open ブレーカー、失敗数、クールダウンカウントダウン、手動リセットボタンを表示。失敗中のアカウントは自動スキップされます — [サーキットブレーカー](./circuit-breaker.md)参照。
 
-✅ Detect unusual spending patterns
-✅ Alert on cost spikes (>2× daily average)
-✅ Warn on quota exhaustion patterns
+### キャッシュ分析
 
-Example alert:
-⚠️ Cost spike detected
-   Today: $12.50 (2.5× daily average)
-   Reason: High GLM-4.7 usage (20M tokens)
-   Suggestion: Check if primary models quota-exhausted
-```
+使用テーブルに **Cached** と **Cached Cost** 列があり、統計ペイロードはプロバイダー/モデルごとのキャッシュブロックを運びます:
 
----
+- **キャッシュ済みトークン**と推定**ヒット率**（cached ÷ プロンプトトークン）
+- **推定節約額** — 設定済み価格に基づく、キャッシュなしの場合のコスト（価格未設定モデルは n/a 表示。偽の $0 は出しません）
+
 
 ## ベストプラクティス
 
@@ -674,10 +641,10 @@ Response:
 **問題: アラートが受信されない**
 
 **解決策:**
-1. Dashboard → Settings → Alerts
-2. メールアドレスが正しいか確認
-3. スパムフォルダを確認
-4. 通知をテスト (Send Testボタン)
+1. Dashboard → Alerts — チャネルが設定・有効化されているか確認
+2. チャネルの **Test** ボタンをクリック
+3. イベント種別が無効になっていないか確認
+4. Telegram の場合: ボットがあなたのチャット ID に送信できる必要があります
 
 ---
 

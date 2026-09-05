@@ -173,7 +173,7 @@ Cursor Settings → Models → Advanced:
 ```bash
 # Deploy to VPS
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 npm start
 
@@ -207,7 +207,7 @@ npm install -g 9router
 ### VPS/Cloud
 ```bash
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 
 export JWT_SECRET="your-secure-secret"
@@ -221,7 +221,7 @@ npm start
 ```bash
 docker build -t 9router .
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -e JWT_SECRET="your-secret" \
   -v 9router-data:/app/data \
   9router
@@ -229,7 +229,7 @@ docker run -d \
 
 ### Cloudflare Workers
 ```bash
-cd 9router/app
+cd 9router
 npm run deploy:cloudflare
 ```
 
@@ -262,15 +262,23 @@ Xem [hướng dẫn deployment](getting-started/installation.md#deployment) đ�
 - Tự audit bảo mật
 - Community review
 
+**Điểm nhấn hardening (v0.6.36+):**
+- API key được **băm khi lưu** (HMAC-SHA256 dưới secret riêng theo-install) — không bao giờ lưu plaintext; danh sách chỉ hiển thị `sk-{keyId}-••••{last4}`
+- Secret ngẫu nhiên riêng cho từng install dùng cho việc băm key và mã hóa sudo MITM — không còn khóa fallback suy từ máy
+- Chống SSRF trên mọi đường fetch ra ngoài (redirect thủ công, xác minh DNS từng hop)
+- Request log che credential kể cả chế độ verbose
+- Truy cập dashboard qua tunnel là opt-in; mật khẩu mặc định chỉ dùng được từ chính máy đó
+- Export/import database yêu cầu CLI token thật của install
+
 **Best practice:**
-- Đổi `JWT_SECRET` trong production
-- Dùng `INITIAL_PASSWORD` mạnh
+- Đặt `JWT_SECRET` mạnh trong production
+- Dùng `INITIAL_PASSWORD` mạnh và đổi ngay lần đăng nhập đầu
 - Bật HTTPS cho cloud deployment
 - Xoay API key định kỳ
 
 **9Router lưu gì:**
 - Tokens OAuth của provider (mã hóa)
-- API keys (mã hóa)
+- API keys (băm — HMAC-SHA256, secret theo-install)
 - Thống kê sử dụng (chỉ cục bộ)
 - Cấu hình combo
 
@@ -292,8 +300,8 @@ npm update -g 9router
 
 ### Local Install
 ```bash
-cd 9router/app
-git pull origin main
+cd 9router
+git pull origin master
 npm install
 npm run build
 npm start
@@ -301,13 +309,13 @@ npm start
 
 ### Docker
 ```bash
-docker pull 9router:latest
+docker pull vibecoder11200/9router:latest
 docker stop 9router
 docker rm 9router
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -v 9router-data:/app/data \
-  9router:latest
+  vibecoder11200/9router:latest
 ```
 
 **Kiểm tra version:**

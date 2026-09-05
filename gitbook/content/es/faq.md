@@ -173,7 +173,7 @@ Cursor Settings → Models → Advanced:
 ```bash
 # Despliega en VPS
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 npm start
 
@@ -207,7 +207,7 @@ npm install -g 9router
 ### VPS/Cloud
 ```bash
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install && npm run build
 
 export JWT_SECRET="your-secure-secret"
@@ -221,7 +221,7 @@ npm start
 ```bash
 docker build -t 9router .
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -e JWT_SECRET="your-secret" \
   -v 9router-data:/app/data \
   9router
@@ -229,7 +229,7 @@ docker run -d \
 
 ### Cloudflare Workers
 ```bash
-cd 9router/app
+cd 9router
 npm run deploy:cloudflare
 ```
 
@@ -262,15 +262,23 @@ Consulta la [guía de despliegue](getting-started/installation.md#deployment) pa
 - Audita la seguridad tú mismo
 - Revisado por la comunidad
 
+**Puntos fuertes de hardening (v0.6.36+):**
+- Las API keys se **almacenan hasheadas** (HMAC-SHA256 bajo un secreto por instalación) — nunca en texto plano; los listados solo muestran `sk-{keyId}-••••{last4}`
+- Secretos aleatorios por instalación para el hashing de keys y el cifrado sudo de MITM — sin claves fallback derivadas de la máquina
+- Guardia SSRF en todas las rutas de fetch salientes (redirects manuales, revalidación DNS por hop)
+- Los request logs enmascaran credenciales incluso en modo verbose
+- El acceso al dashboard por túnel es opt-in; la contraseña por defecto solo funciona desde la propia máquina
+- Exportar/importar la base de datos requiere el CLI token real de la instalación
+
 **Mejores prácticas:**
-- Cambia `JWT_SECRET` en producción
-- Usa un `INITIAL_PASSWORD` fuerte
+- Configura un `JWT_SECRET` fuerte en producción
+- Usa un `INITIAL_PASSWORD` fuerte y cámbialo en el primer login
 - Habilita HTTPS para despliegues en la nube
 - Rota las API keys regularmente
 
 **Lo que 9Router almacena:**
 - Tokens OAuth de proveedores (cifrados)
-- API keys (cifradas)
+- API keys (hasheadas — HMAC-SHA256, secreto por instalación)
 - Estadísticas de uso (solo locales)
 - Configuraciones de combos
 
@@ -292,8 +300,8 @@ npm update -g 9router
 
 ### Instalación local
 ```bash
-cd 9router/app
-git pull origin main
+cd 9router
+git pull origin master
 npm install
 npm run build
 npm start
@@ -301,13 +309,13 @@ npm start
 
 ### Docker
 ```bash
-docker pull 9router:latest
+docker pull vibecoder11200/9router:latest
 docker stop 9router
 docker rm 9router
 docker run -d \
-  -p 3000:3000 \
+  -p 20128:20128 \
   -v 9router-data:/app/data \
-  9router:latest
+  vibecoder11200/9router:latest
 ```
 
 **Verificar versión:**

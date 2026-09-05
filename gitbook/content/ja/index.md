@@ -45,7 +45,13 @@ Tier 3 (無料): iFlow → Qwen → Kiro
 - プロバイダーごとのリアルタイムトークン消費
 - リセットカウントダウン(5時間、毎日、毎週、毎月)
 - 有料プランのコスト見積もり
-- 月次支出レポート
+- キャッシュ分析 — モデルごとのキャッシュ済みトークン、ヒット率、推定節約額
+
+### 🚨 アラートと安全網
+
+- 重要イベントの Telegram / Discord / Webhook 通知（クォータ残りわずか、全アカウントロック、ノードダウンなど）
+- アカウントごとのサーキットブレーカー — 失敗アカウントを自動スキップ、リクエストは止まらない
+- API キーごとの予算と任意のハードブロック（上限で 429）
 
 ### 🎯 ユニバーサルCLIサポート
 
@@ -155,6 +161,8 @@ Model: cc/claude-opus-4-5-20251101
 - [スタートガイド](getting-started/quick-start.md) - 5分でインストールと設定
 - [インストールガイド](getting-started/installation.md) - 詳細なセットアップ手順
 - [機能](features/smart-routing.md) - すべての機能を確認
+- [アラート](features/alerts.md) - Telegram/Discord/Webhook 通知
+- [API キーと予算](features/api-keys.md) - アクセス制御と支出上限
 - [FAQ](faq.md) - よくある質問
 
 ---
