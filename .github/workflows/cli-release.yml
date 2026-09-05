@@ -101,5 +101,5 @@ jobs:
             echo "Creating release $TAG."
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
               9router.tgz "${{ steps.asset.outputs.versioned }}" \
-              --title "$TAG" --generate-notes --verify-tag
+              --title "$TAG" --generate-notes --verify-tag --latest
           fi
