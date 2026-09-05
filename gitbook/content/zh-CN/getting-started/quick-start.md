@@ -12,7 +12,7 @@
 npm install -g 9router
 ```
 
-**要求:** Node.js 20+([安装详情](getting-started/installation.md))
+**要求:** Node.js 20+([安装详情](installation.md))
 
 ### 2. 启动
 
@@ -233,10 +233,10 @@ CLI 中使用: premium-coding
 
 ## 下一步
 
-- [安装详情](getting-started/installation.md) - 要求与故障排除
-- [功能特性](features/) - 探索配额跟踪、组合、部署
-- [常见问题](faq.md) - 常见问题与解答
-- [故障排除](troubleshooting.md) - 解决常见问题
+- [安装详情](installation.md) - 要求与故障排除
+- [功能特性](../features/smart-routing.md) - 探索配额跟踪、组合、部署
+- [常见问题](../faq.md) - 常见问题与解答
+- [故障排除](../troubleshooting.md) - 解决常见问题
 
 ---
 

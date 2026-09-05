@@ -28,9 +28,12 @@ export default async function DocPage({ params }) {
 
   const headings = extractHeadings(content);
 
+  // Markdown links are relative to the content file's directory (slug minus last segment).
+  const baseDir = `/${[lang, ...(slug ?? []).slice(0, -1)].filter(Boolean).join("/")}`;
+
   return (
     <DocsLayout headings={headings} lang={lang}>
-      <DocsContent content={content} />
+      <DocsContent content={content} baseDir={baseDir} />
     </DocsLayout>
   );
 }

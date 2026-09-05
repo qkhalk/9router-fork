@@ -121,7 +121,7 @@ API Key: [from dashboard]
 Model: cc/claude-opus-4-5-20251101
 ```
 
-[→ Hướng dẫn Bắt đầu đầy đủ](getting-started.md)
+[→ Hướng dẫn Bắt đầu đầy đủ](getting-started/quick-start.md)
 
 ---
 
@@ -152,9 +152,9 @@ Model: cc/claude-opus-4-5-20251101
 
 ## Tiếp theo là gì?
 
-- [Bắt đầu](getting-started.md) - Cài đặt và cấu hình trong 5 phút
+- [Bắt đầu](getting-started/quick-start.md) - Cài đặt và cấu hình trong 5 phút
 - [Hướng dẫn cài đặt](getting-started/installation.md) - Hướng dẫn setup chi tiết
-- [Tính năng](features/) - Khám phá mọi khả năng
+- [Tính năng](features/smart-routing.md) - Khám phá mọi khả năng
 - [FAQ](faq.md) - Các câu hỏi thường gặp
 
 ---

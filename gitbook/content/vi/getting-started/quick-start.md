@@ -12,7 +12,7 @@ Khởi chạy 9Router trong 5 phút và bắt đầu định tuyến các reques
 npm install -g 9router
 ```
 
-**Yêu cầu:** Node.js 20+ ([Chi tiết cài đặt](getting-started/installation.md))
+**Yêu cầu:** Node.js 20+ ([Chi tiết cài đặt](installation.md))
 
 ### 2. Khởi chạy
 
@@ -233,10 +233,10 @@ Daily routine:
 
 ## Bước tiếp theo
 
-- [Chi tiết cài đặt](getting-started/installation.md) - Yêu cầu, troubleshooting
-- [Tính năng](features/) - Khám phá quota tracking, combos, deployment
-- [FAQ](faq.md) - Câu hỏi thường gặp
-- [Troubleshooting](troubleshooting.md) - Sửa các vấn đề phổ biến
+- [Chi tiết cài đặt](installation.md) - Yêu cầu, troubleshooting
+- [Tính năng](../features/smart-routing.md) - Khám phá quota tracking, combos, deployment
+- [FAQ](../faq.md) - Câu hỏi thường gặp
+- [Troubleshooting](../troubleshooting.md) - Sửa các vấn đề phổ biến
 
 ---
 

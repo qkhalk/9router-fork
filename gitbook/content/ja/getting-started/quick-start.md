@@ -12,7 +12,7 @@
 npm install -g 9router
 ```
 
-**要件:** Node.js 20+ ([インストール詳細](getting-started/installation.md))
+**要件:** Node.js 20+ ([インストール詳細](installation.md))
 
 ### 2. 起動
 
@@ -233,10 +233,10 @@ CLIで使用: premium-coding
 
 ## 次のステップ
 
-- [インストール詳細](getting-started/installation.md) - 要件、トラブルシューティング
-- [機能](features/) - クォータトラッキング、コンボ、デプロイを確認
-- [FAQ](faq.md) - よくある質問と回答
-- [トラブルシューティング](troubleshooting.md) - 一般的な問題の修正
+- [インストール詳細](installation.md) - 要件、トラブルシューティング
+- [機能](../features/smart-routing.md) - クォータトラッキング、コンボ、デプロイを確認
+- [FAQ](../faq.md) - よくある質問と回答
+- [トラブルシューティング](../troubleshooting.md) - 一般的な問題の修正
 
 ---
 

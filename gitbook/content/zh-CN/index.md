@@ -121,7 +121,7 @@ API Key: [从仪表盘获取]
 Model: cc/claude-opus-4-5-20251101
 ```
 
-[→ 完整入门指南](getting-started.md)
+[→ 完整入门指南](getting-started/quick-start.md)
 
 ---
 
@@ -152,9 +152,9 @@ Model: cc/claude-opus-4-5-20251101
 
 ## 接下来做什么?
 
-- [入门指南](getting-started.md) - 5 分钟内完成安装和配置
+- [入门指南](getting-started/quick-start.md) - 5 分钟内完成安装和配置
 - [安装指南](getting-started/installation.md) - 详细的设置说明
-- [功能特性](features/) - 探索所有能力
+- [功能特性](features/smart-routing.md) - 探索所有能力
 - [常见问题](faq.md) - 常见问题解答
 
 ---

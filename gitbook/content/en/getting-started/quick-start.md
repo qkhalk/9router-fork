@@ -12,7 +12,7 @@ Get 9Router running in 5 minutes and start routing AI requests intelligently.
 npm install -g 9router
 ```
 
-**Requirements:** Node.js 20+ ([Installation details](getting-started/installation.md))
+**Requirements:** Node.js 20+ ([Installation details](installation.md))
 
 ### 2. Start
 
@@ -233,10 +233,10 @@ Daily routine:
 
 ## Next Steps
 
-- [Installation Details](getting-started/installation.md) - Requirements, troubleshooting
-- [Features](features/) - Explore quota tracking, combos, deployment
-- [FAQ](faq.md) - Common questions and answers
-- [Troubleshooting](troubleshooting.md) - Fix common issues
+- [Installation Details](installation.md) - Requirements, troubleshooting
+- [Features](../features/smart-routing.md) - Explore quota tracking, combos, deployment
+- [FAQ](../faq.md) - Common questions and answers
+- [Troubleshooting](../troubleshooting.md) - Fix common issues
 
 ---
 
