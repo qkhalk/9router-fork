@@ -1,3 +1,20 @@
+# v0.6.41 (2026-09-05)
+
+Hotfix: makes the v0.6.40 one-time setup code **actually retrievable** when
+the server has no visible console.
+
+## Fixes
+- **CLI background/tray mode discarded the setup code**: the daemonized
+  server was spawned with `stdio: "ignore"`, so the console banner printed on
+  a remote first-run login (and every other server diagnostic) went nowhere —
+  and `docker logs` / `journalctl` don't apply to this install mode. The CLI
+  now tees the daemon's stdout/stderr to `<data-dir>/server.log` (simple 5 MB
+  rotate) and prints the log location when it starts the background process.
+- **The setup-code form now names the file**: `cat ~/.9router/setup-code`
+  (Windows: `%APPDATA%\9router\setup-code`; Docker:
+  `docker exec <container> cat /app/data/setup-code`) instead of the vague
+  "check the server console".
+
 # v0.6.40 (2026-09-05)
 
 Security/UX release: fixes the **fresh-install remote login dead-end** and
