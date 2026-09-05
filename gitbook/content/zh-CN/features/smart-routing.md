@@ -94,7 +94,7 @@
 1. **配额可用性** - 检查提供商是否仍有剩余配额
 2. **成本层级** - 优先订阅 → 低价 → 免费
 3. **重置时间** - 考虑配额何时重置
-4. **提供商健康度** - 跳过有错误的提供商
+4. **提供商健康度** - 跳过有错误的提供商；故障账号还受[熔断器](./circuit-breaker.md)保护，冷却期内跳过、回归轮换前被动探活
 
 ### 优先级示例
 
@@ -157,10 +157,12 @@
 **4. 配额重置通知**
 
 ```
-仪表盘 → 设置 → 通知
-→ 配额重置时邮件提醒
-→ 配额使用 80% 时告警
+Dashboard → Alerts
+→ Telegram / Discord / Webhook 渠道
+→ 启用 "quota-near-limit" 事件
 ```
+
+渠道设置与完整事件目录见[告警](./alerts.md)。
 
 ---
 
@@ -353,11 +355,14 @@ cc/claude-opus-4-5 → glm/glm-4.7 → minimax/MiniMax-M2.1 → if/kimi-k2-think
 ### 实时通知
 
 ```
-仪表盘 → 通知:
-  ⚠️ Claude Code 配额使用 80%(剩 1h)
-  ✅ GLM-4.7 配额已重置(10M tokens 可用)
-  💰 每日预算使用 50%($2.50 / $5)
+Dashboard → Alerts(Telegram / Discord / Webhook):
+
+  ⚠️ quota-near-limit: Claude Code 已用 80%(1 小时后重置)
+  🔴 all-accounts-locked: glm 所有账号被限流
+  🔴 breaker-open: cx/gpt-5.2-codex 故障 —— 跳过 60 秒
 ```
+
+渠道与按事件开关在[告警](./alerts.md)页面配置。
 
 ### 使用分析
 
@@ -365,12 +370,14 @@ cc/claude-opus-4-5 → glm/glm-4.7 → minimax/MiniMax-M2.1 → if/kimi-k2-think
 仪表盘 → 分析:
   今日: 50M tokens
     - 30M 通过 Claude Code(订阅)
-    - 15M 通过 GLM-4.7($9)
+    - 15M 通过 GLM-4.7($9)—— 其中 6M 为缓存(估算节省约 $3.60)
     - 5M 通过 iFlow(免费)
   
   成本: $9(对比 ChatGPT API $1000)
   节省: 99%
 ```
+
+使用页面还按 provider/model 细分**缓存 token 与估算节省** —— 见[配额追踪](./quota-tracking.md)。
 
 ---
 

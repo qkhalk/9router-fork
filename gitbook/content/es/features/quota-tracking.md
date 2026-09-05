@@ -394,82 +394,49 @@ budget-combo:
 
 ## Alertas y notificaciones
 
-### Alertas de cuota
+Las notificaciones reales pasan por el sistema de **Alertas** (Dashboard → Alerts) con canales Telegram, Discord y webhook genérico — sin email. Ver la guía de [Alertas](./alerts.md).
+
+### Eventos que verás realmente
 
 ```
-Dashboard → Settings → Alerts
+⚠️ quota-near-limit
+   Claude Code: 82% usado (se resetea en 2h)
 
-Advertencias de cuota:
-  ✅ Alerta al 80% de cuota usada
-  ✅ Alerta al 90% de cuota usada
-  ✅ Alerta cuando la cuota se agota
-  ✅ Notificar cuando la cuota se reinicia
+🚨 budget-threshold
+   Key sk-abc123…•789: $4.10 / $5.00 presupuesto diario (82%)
 
-Entrega:
-  ✅ Notificación del dashboard
-  ✅ Email (opcional)
-  ✅ Webhook (opcional)
+🔴 breaker-open
+   cx/gpt-5.2-codex: 5 fallos en 60s — omitida 60s
+
+🔴 all-accounts-locked
+   Todas las cuentas glm rate-limited; sin servicio
 ```
 
-**Ejemplo de notificaciones:**
-```
-⚠️ Cuota de Claude Code 80% usada
-   2.5h restantes (se reinicia en 1h 30m)
-   
-⚠️ Cuota de GLM-4.7 90% usada
-   1M tokens restantes (se reinicia en 5h)
-   
-✅ Cuota de Gemini CLI reiniciada
-   1,000 solicitudes disponibles (límite diario)
-```
+Los eventos idénticos se deduplican 10 minutos. Cada tipo de evento se activa/desactiva individualmente.
 
-### Alertas de presupuesto
+### Presupuestos por key
 
-```
-Dashboard → Settings → Budget Alerts
+Los presupuestos se fijan por API key (ver [API Keys & Presupuestos](./api-keys.md)):
 
-Presupuesto diario: $5
-  ✅ Alerta al 80% ($4)
-  ✅ Alerta al 100% ($5)
-  ✅ Cambio automático al nivel gratis cuando se excede
+- Presupuesto USD o tokens con ventana diaria/mensual
+- Umbral blando (80% por defecto) dispara una alerta `budget-threshold` por ventana
+- Bloqueo duro opcional devuelve `429` con `Retry-After` al llegar al límite
 
-Presupuesto mensual: $150
-  ✅ Alerta al 50% ($75)
-  ✅ Alerta al 80% ($120)
-  ✅ Alerta al 100% ($150)
-```
+## Circuit Breaker y salud de nodos
 
-**Ejemplo de notificaciones:**
-```
-⚠️ Presupuesto diario 80% usado
-   $4.00 / $5.00 gastados hoy
-   
-⚠️ Presupuesto mensual 50% alcanzado
-   $75 / $150 gastados este mes
-   Proyectado: $135 (dentro del presupuesto)
-   
-🚨 Presupuesto diario excedido
-   $5.20 / $5.00 gastados hoy
-   Cambio automático al nivel gratis
-```
+La página de Quota también aloja dos paneles operativos:
 
-### Detección de anomalías de costo
+### Panel Circuit Breaker
 
-```
-Dashboard → Settings → Anomaly Detection
+Muestra breakers abiertos/half-open por cuenta con conteos de fallos y cuentas atrás de cooldown, más un botón de reset manual. Las cuentas fallidas se omiten automáticamente — ver [Circuit Breaker](./circuit-breaker.md).
 
-✅ Detectar patrones de gasto inusuales
-✅ Alerta en picos de costo (>2× promedio diario)
-✅ Advertencia en patrones de agotamiento de cuota
+### Analíticas de caché
 
-Ejemplo de alerta:
-⚠️ Pico de costo detectado
-   Hoy: $12.50 (2.5× promedio diario)
-   Razón: Alto uso de GLM-4.7 (20M tokens)
-   Sugerencia: Verifica si los modelos principales tienen cuota agotada
-```
+La tabla de uso incluye columnas **Cached** y **Cached Cost**, y el payload de estadísticas trae un bloque de caché por provider/modelo:
 
----
+- **Tokens cacheados** y **tasa de hit** estimada (cached ÷ prompt tokens)
+- **Ahorro estimado** — lo que esos tokens habrían costado sin caché, según el pricing configurado (modelos sin precio muestran n/a, nunca un $0 falso)
+
 
 ## Mejores prácticas
 
@@ -674,10 +641,10 @@ Response:
 **Problema: No se reciben alertas**
 
 **Solución:**
-1. Dashboard → Settings → Alerts
-2. Verifica que la dirección de email sea correcta
-3. Revisa la carpeta de spam
-4. Prueba la notificación (botón Send Test)
+1. Dashboard → Alerts — verifica que el canal esté configurado y activo
+2. Pulsa el botón **Test** del canal
+3. Comprueba que el tipo de evento no esté desactivado
+4. Con Telegram: el bot debe poder escribir a tu chat ID
 
 ---
 

@@ -401,7 +401,7 @@ pm2 startup
 ### Docker
 
 ```bash
-docker pull 9router/9router:latest
+docker pull vibecoder11200/9router:latest
 
 docker run -d \
   -p 20128:20128 \
@@ -409,7 +409,7 @@ docker run -d \
   -e INITIAL_PASSWORD="your-password" \
   -v 9router-data:/root/.9router \
   --name 9router \
-  9router/9router:latest
+  vibecoder11200/9router:latest
 ```
 
 **Use case:** Containerized deployment, Kubernetes

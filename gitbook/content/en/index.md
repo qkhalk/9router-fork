@@ -45,7 +45,13 @@ Tier 3 (FREE): iFlow → Qwen → Kiro
 - Real-time token consumption per provider
 - Reset countdown (5-hour, daily, weekly, monthly)
 - Cost estimation for paid tiers
-- Monthly spending reports
+- Cache analytics — cached tokens, hit-rate, and estimated savings per model
+
+### 🚨 Alerts & Safety Nets
+
+- Telegram / Discord / webhook alerts for the events that matter (quota near limit, all accounts locked, node down, …)
+- Per-account circuit breaker — failing accounts are skipped automatically, your requests never stall
+- Per-API-key budgets with optional hard blocking (429 at the limit)
 
 ### 🎯 Universal CLI Support
 
@@ -155,6 +161,8 @@ Model: cc/claude-opus-4-5-20251101
 - [Getting Started](getting-started/quick-start.md) - Install and configure in 5 minutes
 - [Installation Guide](getting-started/installation.md) - Detailed setup instructions
 - [Features](features/smart-routing.md) - Explore all capabilities
+- [Alerts](features/alerts.md) - Telegram/Discord/webhook notifications
+- [API Keys & Budgets](features/api-keys.md) - Access control and spending caps
 - [FAQ](faq.md) - Common questions
 
 ---

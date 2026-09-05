@@ -75,7 +75,7 @@ Clona y compila desde GitHub:
 
 ```bash
 git clone https://github.com/vibecoder11200/9router.git
-cd 9router/app
+cd 9router
 npm install
 npm run build
 npm start
@@ -401,7 +401,7 @@ pm2 startup
 ### Docker
 
 ```bash
-docker pull 9router/9router:latest
+docker pull vibecoder11200/9router:latest
 
 docker run -d \
   -p 20128:20128 \
@@ -409,7 +409,7 @@ docker run -d \
   -e INITIAL_PASSWORD="your-password" \
   -v 9router-data:/root/.9router \
   --name 9router \
-  9router/9router:latest
+  vibecoder11200/9router:latest
 ```
 
 **Caso de uso:** Despliegue containerizado, Kubernetes

@@ -1,0 +1,83 @@
+# Cảnh báo
+
+9Router có thể đẩy cảnh báo vận hành tới **Telegram**, **Discord**, hoặc bất kỳ **webhook** nào khi có sự cố cần bạn chú ý — trước khi phiên code của bạn bị gián đoạn.
+
+Việc gửi cảnh báo là fire-and-forget: không bao giờ chặn hay làm chậm đường xử lý request, và toàn bộ hệ thống "ngủ" cho tới khi bạn cấu hình kênh.
+
+---
+
+## Thiết lập nhanh
+
+```
+Dashboard → Alerts (Cảnh báo)
+
+1. Thêm kênh (Telegram / Discord / Webhook)
+2. Chọn sự kiện bạn quan tâm (mặc định bật tất cả)
+3. Bấm "Test" để gửi cảnh báo thử
+4. Xong ✅
+```
+
+### Telegram
+
+1. Tạo bot với [@BotFather](https://t.me/BotFather) → copy bot token
+2. Nhắn bất kỳ tin nào cho bot, rồi lấy chat ID (ví dụ qua @userinfobot)
+3. Vào Dashboard → Alerts, dán **Bot Token** + **Chat ID**
+
+### Discord
+
+1. Server Settings → Integrations → Webhooks → **New Webhook**
+2. Copy URL webhook
+3. Dán vào Dashboard → Alerts
+
+Tin nhắn Discord đến dưới dạng embed có màu: xanh = info, cam = warn, đỏ = critical.
+
+### Webhook tổng quát
+
+Bất kỳ URL nào chấp nhận POST JSON:
+
+```json
+{
+  "eventType": "quota-near-limit",
+  "severity": "warn",
+  "title": "Hạn mức sắp hết",
+  "body": "Claude Code: đã dùng 82% (reset sau 2h)",
+  "timestamp": "2026-09-05T10:00:00.000Z"
+}
+```
+
+---
+
+## Các sự kiện cảnh báo
+
+| Sự kiện | Mức | Kích hoạt khi |
+|---|---|---|
+| `all-accounts-locked` | critical | Mọi tài khoản của một provider đều bị rate-limit — request không thể phục vụ |
+| `quota-near-limit` | warn | Hạn mức một provider vượt ngưỡng sắp hết |
+| `budget-threshold` | warn | Chi tiêu của một API key vượt ngưỡng mềm budget (mặc định 80%) |
+| `breaker-open` | warn | Circuit breaker của một tài khoản mở sau nhiều lỗi liên tiếp |
+| `breaker-recovered` | info | Breaker đã mở trước đó đóng lại sau probe thành công |
+| `proxy-pool-exhausted` | critical | Tất cả entry của một proxy pool đều không khả dụng |
+| `strictproxy-violation` | critical | Chế độ strict-proxy lẽ ra phải đi kết nối trực tiếp — request bị từ chối |
+| `xray-node-down` | critical | Node v2go/Xray đang hoạt động fail probe sức khỏe |
+| `xray-rotation-failed` | critical | Tự động xoay vòng sang node Xray tiếp theo thất bại |
+| `totu-fetch-failed` | warn | TOTU auto-fetch không làm mới được subscription |
+
+Mỗi loại sự kiện bật/tắt riêng, nên bạn có thể tắt sự kiện ồn ào và giữ lại những sự kiện nghiêm trọng.
+
+---
+
+## Cơ chế gửi
+
+- **Queue riêng cho từng kênh** — mỗi kênh có hàng đợi gửi kèm pacing, nên một loạt sự kiện cùng lúc không làm tràn chat hay chặn bất cứ thứ gì.
+- **Retry** — gửi thất bại được thử lại tối đa 3 lần với backoff; tôn trọng header `429 Retry-After` của upstream.
+- **Cửa sổ dedup** — sự kiện trùng lặp được khử trùng trong 10 phút mặc định (`alertsDedupMin`), nên node giật giật không spam bạn mỗi vài giây.
+- **Che thông tin xác thực** — token/URL webhook đã lưu được che trong UI; để trống trường nào thì giữ nguyên giá trị đã lưu.
+- **Không nằm trên hot path** — phát cảnh báo là bất đồng bộ; kể cả khi Telegram sập, request của bạn vẫn không bị ảnh hưởng.
+
+---
+
+## Liên quan
+
+- [API Key & Budget](./api-keys.md) - sự kiện `budget-threshold` đến từ budget từng key
+- [Circuit Breaker](./circuit-breaker.md) - nguồn sự kiện `breaker-open` / `breaker-recovered`
+- [Theo dõi hạn mức](./quota-tracking.md) - `quota-near-limit` và trang Quota

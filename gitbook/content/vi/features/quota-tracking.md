@@ -394,82 +394,49 @@ budget-combo:
 
 ## Cảnh báo & Thông báo
 
-### Cảnh báo Quota
+Thông báo thật chạy qua hệ thống **Cảnh báo** (Dashboard → Alerts) với các kênh Telegram, Discord và webhook tổng quát — không có email. Xem hướng dẫn [Cảnh báo](./alerts.md).
+
+### Sự kiện bạn sẽ thực sự thấy
 
 ```
-Dashboard → Settings → Alerts
+⚠️ quota-near-limit
+   Claude Code: đã dùng 82% (reset sau 2h)
 
-Quota warnings:
-  ✅ Alert at 80% quota used
-  ✅ Alert at 90% quota used
-  ✅ Alert when quota exhausted
-  ✅ Notify when quota resets
+🚨 budget-threshold
+   Key sk-abc123…•789: $4.10 / $5.00 budget ngày (82%)
 
-Delivery:
-  ✅ Dashboard notification
-  ✅ Email (optional)
-  ✅ Webhook (optional)
+🔴 breaker-open
+   cx/gpt-5.2-codex: 5 lỗi trong 60s — bỏ qua 60s
+
+🔴 all-accounts-locked
+   Mọi tài khoản glm đều bị rate-limit; request không thể phục vụ
 ```
 
-**Ví dụ thông báo:**
-```
-⚠️ Claude Code quota 80% used
-   2.5h remaining (resets in 1h 30m)
-   
-⚠️ GLM-4.7 quota 90% used
-   1M tokens remaining (resets in 5h)
-   
-✅ Gemini CLI quota reset
-   1,000 requests available (daily limit)
-```
+Sự kiện trùng lặp được khử trùng 10 phút nên provider giật giật không spam bạn. Mỗi loại sự kiện bật/tắt riêng.
 
-### Cảnh báo Ngân sách
+### Budget từng Key
 
-```
-Dashboard → Settings → Budget Alerts
+Budget đặt theo từng API key (xem [API Key & Budget](./api-keys.md)):
 
-Daily budget: $5
-  ✅ Alert at 80% ($4)
-  ✅ Alert at 100% ($5)
-  ✅ Auto-switch to free tier when exceeded
+- Budget USD hoặc token theo cửa sổ ngày/tháng
+- Ngưỡng mềm (mặc định 80%) bắn một cảnh báo `budget-threshold` mỗi cửa sổ
+- Chặn cứng tùy chọn trả `429` kèm `Retry-After` khi chạm giới hạn
 
-Monthly budget: $150
-  ✅ Alert at 50% ($75)
-  ✅ Alert at 80% ($120)
-  ✅ Alert at 100% ($150)
-```
+## Circuit Breaker & Sức khỏe Node
 
-**Ví dụ thông báo:**
-```
-⚠️ Daily budget 80% used
-   $4.00 / $5.00 spent today
-   
-⚠️ Monthly budget 50% reached
-   $75 / $150 spent this month
-   Projected: $135 (within budget)
-   
-🚨 Daily budget exceeded
-   $5.20 / $5.00 spent today
-   Auto-switched to free tier
-```
+Trang Quota còn có hai panel vận hành:
 
-### Phát hiện Bất thường Chi phí
+### Panel Circuit Breaker
 
-```
-Dashboard → Settings → Anomaly Detection
+Hiển thị breaker đang mở/half-open theo tài khoản cùng số lỗi và đếm ngược cooldown, kèm nút reset thủ công. Tài khoản lỗi tự động bị bỏ qua — xem [Circuit Breaker](./circuit-breaker.md).
 
-✅ Detect unusual spending patterns
-✅ Alert on cost spikes (>2× daily average)
-✅ Warn on quota exhaustion patterns
+### Phân tích Cache
 
-Example alert:
-⚠️ Cost spike detected
-   Today: $12.50 (2.5× daily average)
-   Reason: High GLM-4.7 usage (20M tokens)
-   Suggestion: Check if primary models quota-exhausted
-```
+Bảng Usage có cột **Cached** và **Cached Cost**, và payload thống kê mang khối cache theo từng provider/model:
 
----
+- **Token được cache** và **tỷ lệ hit** ước tính (cached ÷ prompt token)
+- **Tiết kiệm ước tính** — số tiền những token cache đó lẽ ra tốn nếu không cache, dựa trên pricing đã cấu hình (model không có pricing hiển thị n/a, không bao giờ là $0 giả)
+
 
 ## Best Practices
 
@@ -674,10 +641,10 @@ Response:
 **Issue: Không nhận được cảnh báo**
 
 **Giải pháp:**
-1. Dashboard → Settings → Alerts
-2. Xác minh địa chỉ email đúng
-3. Kiểm tra folder spam
-4. Test notification (nút Send Test)
+1. Dashboard → Alerts — xác nhận kênh đã cấu hình và bật
+2. Bấm nút **Test** của kênh
+3. Kiểm tra loại sự kiện có bị tắt không
+4. Với Telegram: bot phải nhắn được vào chat ID của bạn
 
 ---
 

@@ -353,11 +353,14 @@ Dashboard → Quota Overview:
 ### Notificaciones en tiempo real
 
 ```
-Dashboard → Notifications:
-  ⚠️ Cuota de Claude Code 80% usada (1h restante)
-  ✅ Cuota de GLM-4.7 reiniciada (10M tokens disponibles)
-  💰 Presupuesto diario 50% usado ($2.50 / $5)
+Dashboard → Alerts (Telegram / Discord / Webhook):
+
+  ⚠️ quota-near-limit: Claude Code 80% usado (reset en 1h)
+  🔴 all-accounts-locked: todas las cuentas glm rate-limited
+  🔴 breaker-open: cx/gpt-5.2-codex fallando — omitida 60s
 ```
+
+Configura canales y toggles por evento en la página de [Alertas](./alerts.md).
 
 ### Analítica de uso
 
@@ -365,12 +368,14 @@ Dashboard → Notifications:
 Dashboard → Analytics:
   Hoy: 50M tokens
     - 30M vía Claude Code (suscripción)
-    - 15M vía GLM-4.7 ($9)
+    - 15M vía GLM-4.7 ($9) — incl. 6M tokens cacheados (~$3.60 ahorrados)
     - 5M vía iFlow (gratis)
   
   Costo: $9 (vs $1000 en ChatGPT API)
   Ahorros: 99%
 ```
+
+La página de uso también desglosa **tokens cacheados y ahorro estimado** por provider/modelo — ver [Seguimiento de cuota](./quota-tracking.md).
 
 ---
 

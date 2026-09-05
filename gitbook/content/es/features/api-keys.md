@@ -1,0 +1,72 @@
+# API Keys & Presupuestos
+
+Las API keys controlan el acceso a tu endpoint de 9Router cuando **Require API key** está activo. Las keys se guardan hasheadas, y cada key puede llevar su propio presupuesto con bloqueo duro opcional.
+
+---
+
+## Seguridad de las API Keys
+
+- **Hasheadas en reposo** — las keys se almacenan como dígestos HMAC-SHA256 bajo un secreto por instalación (un archivo `0600` en tu máquina), nunca en texto plano. Las keys legacy en texto plano siguen funcionando y migran perezosamente en el primer uso.
+- **Enmascaradas en todas partes** — los listados y la UI solo muestran `sk-{keyId}-••••{last4}`. Los backups exportan hashes, nunca keys crudas.
+- **Secretos por instalación** — el secreto de hashing y la clave sudo de MITM son aleatorios por instalación; sin claves derivadas de la máquina ni fallbacks hardcodeados.
+
+> 📦 **¿Actualizas desde una versión antigua?** Haz backup de la DB antes de actualizar a una versión con hashing de keys (`v0.6.36+`) y reintroduce la contraseña sudo de MITM una vez tras actualizar — el ciphertext antiguo es intencionalmente indescifrable con la nueva clave.
+
+---
+
+## Presupuestos por Key
+
+Cada key puede fijar un presupuesto para que un agente descontrolado o un compañero no queme toda tu cuota.
+
+```
+Dashboard → Endpoint & Key → ✏️ Editar key → Budget
+
+Tipo:          USD  |  Tokens  |  Off
+Límite:        p. ej. 5 (USD) o 50.000.000 (tokens)
+Ventana:       Diaria  |  Mensual   (hora local del servidor)
+Umbral blando: 80%   → dispara la alerta budget-threshold una vez por ventana
+Bloqueo duro:  ON/OFF → 429 con Retry-After al alcanzar el límite
+```
+
+### Comportamiento
+
+| Momento | Qué ocurre |
+|---|---|
+| Gasto < 80% del límite | Nada — tráfico normal |
+| Gasto ≥ umbral blando (80%) | Una alerta `budget-threshold` por ventana (edge-triggered, sin spam) |
+| Gasto ≥ límite **con bloqueo duro ON** | Petición rechazada con `429`, header `Retry-After` hacia el fin de la ventana y `X-9Router-Budget: limit-exceeded` |
+| Nueva ventana | El presupuesto se resetea y la alerta se rearma |
+
+El gasto se lee **fresco desde el historial de uso en el momento de aplicar** (query indexada). Las keys sin presupuesto añaden cero queries al hot path.
+
+### ¿USD o Tokens?
+
+- **Los presupuestos en tokens son exactos** — cuentan prompt + completion tokens.
+- **Los presupuestos en USD son estimaciones** — suman costes registrados que requieren pricing configurado; los modelos sin precio aportan $0, así que pueden contar de menos. El editor avisa cuando el gasto dominado por modelos sin precio.
+
+### Requisitos y advertencias
+
+- Los presupuestos solo aplican con **Require API key** activo.
+- Las ventanas se calculan en **hora local del servidor**: diaria = medianoche local, mensual = día 1.
+- La alerta llega por el sistema de [Alertas](./alerts.md) — configura un canal para recibirla.
+
+---
+
+## Crear y gestionar Keys
+
+```
+Dashboard → Endpoint & Key
+
++ Crear key  →  sk-... se muestra UNA vez (cópiala ya)
+✏️ Editar    →  renombrar, presupuesto, activar/desactivar
+🗑 Eliminar  →  revocación inmediata
+```
+
+Usa una key por herramienta o por persona (p. ej. `cursor-laptop`, `cline-desktop`) para que el uso y los presupuestos sean atribuibles.
+
+---
+
+## Relacionado
+
+- [Alertas](./alerts.md) - el evento `budget-threshold`
+- [Seguimiento de cuota](./quota-tracking.md) - analíticas de uso por key
