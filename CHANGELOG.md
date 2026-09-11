@@ -1,3 +1,89 @@
+# v0.6.48 (2026-09-12)
+
+Upstream-sync release: merges upstream **v0.5.75** into the fork
+(v0.5.65 → v0.5.75, 48 commits). Every fork subsystem is preserved —
+v2go/Xray managed pool + rotation, proxy pools/groups, DS2API, web-cookie
+providers (gemini-web, genspark), TOTU auto-fetch + scheduler, orcarouter,
+encrypted backup, Telegram forum-topic alerts, per-account circuit breaker
+(N7 first-byte lock-heal / C7-C9 sentinel finalize all intact on top of
+upstream's new `credentials` threading), masked-apiKey ping, opencode-go
+usage rewrite (limitReached + CreditsError detection kept; upstream's
+simpler variant superseded).
+
+## Upstream highlights now in the fork
+- **Video**: OpenRouter and Vertex AI (Veo) video generation on
+  `/v1/videos/*` via a provider adapter layer; polls resolve their provider
+  from `x-connection-id` or `?provider=`.
+- **Antigravity**: weekly quota tracking (Gemini weekly / Claude & GPT
+  weekly) with free-tier handling from `retrieveUserQuotaSummary`; OAuth
+  refresh protected from Google anti-abuse rate limits (#3813).
+- **Codex**: GPT Image 2.5, Flare and Sunburst image models with
+  multi-image support; GPT 6.0 Astra; Unicode-property tool-schema
+  patterns stripped; `Version` header restored and CLI version
+  single-sourced.
+- **Qoder**: usage reported to all clients; large attachments no longer
+  inlined (images upload through `/api/v2/image/upload`, oversized file
+  blocks become stubs, context tier auto-escalates).
+- **OpenCode Go**: new models — glm-5.3, kimi-k3, deepseek-flash (V4.1,
+  listed first), longcat-2.0, hy4-preview, hy3 on chat/completions;
+  qwen3.8-max/flash on `/messages`; grok-4.6, gpt-5.6-luna on Responses.
+- **Cline / ClinePass**: live model catalog; ClinePass API keys no longer
+  `workos:`-prefixed (fixes 401s, #2333); token refresh; the
+  `{"success":true,"data":…}` envelope is unwrapped on non-stream chat
+  completions (#3644) and in dashboard model pings.
+- **Kiro**: no top-level `systemPrompt` (`400 REQUEST_BODY_INVALID`);
+  requests routed through current runtime surfaces (#3776).
+- **Claude**: re-anchored `cache_control` capped at the 4-marker budget so
+  a spent budget no longer 400s into a full combo failover; bare
+  single-object content turns wrapped before the mid-conversation-system
+  fold; adaptive auto effort normalized (#3792).
+- **Tools**: Claude tool type defaulting scoped to gateways declaring
+  `requireClaudeToolType` (#3905) — fixes Anthropic-compatible endpoints
+  that only accept the legacy typeless tool shape.
+- **Providers**: stale connection health state (`modelLock_*`,
+  `backoffLevel`, `rateLimitedUntil`, `errorCode`) cleared on
+  re-validation (#3810, #3830); duplicate `qwen` provider removed
+  (shadowed `alims-intl`); Airforce free models refreshed with an
+  `airforce-free` suggested-models filter.
+- **Security**: video/Vertex job ids and model ids that would escape the
+  URL path rejected (SSRF); cowork-mcp-tools probe guarded against SSRF
+  (#3783).
+- **Usage**: Claude Fable quota tracker with weekly window normalization;
+  Fable weekly limit parsed from `limits[]` (#3847); Responses-shape
+  `cached_tokens` accounting kept stable (Qoder Responses plumbing
+  reverted from shared code).
+- **Auth**: dashboard session cookie gets a 24h `maxAge`.
+- **CLI tools**: model selector grouped by provider with full-text search
+  and manual custom model ID entry; packed `.tgz` lands in the workspace
+  root.
+- **Gemini**: `thoughtSignature` persisted and replayed scoped by session
+  namespace.
+- **Models**: CodeBuddy-CN `deepseek-v4.1-flash`; standalone Qwen provider
+  (fork already carries alims-intl unchanged); GPT-5.6 Sol/Terra/Luna
+  image aliases.
+
+## Merge notes
+- Conflicts resolved preserving fork behavior: `streamingHandler.js`
+  (fork N7 signalFirstByte + upstream `credentials` param),
+  `ping.js` (fork masked-apiKey headers + upstream Cline envelope
+  unwrap), `suggested-models/filters.js` (fork openai/pricing filters +
+  upstream `airforce-free`), `registry/index.js` (fork p124–p128 custom
+  providers kept), `registry/opencode-go.js` (upstream superset taken),
+  `usage/opencode-go.js` + its test (fork rewrite kept — its exports are
+  load-bearing for provider validation).
+- README.md: upstream made no changes this window; the fork README is
+  untouched.
+- Tests: **3164 total** across the full suite; the failing set is
+  byte-identical to the pre-merge baseline **plus one file**:
+  upstream's new `unit/cline-auth.test.js` is authored in `node:test`
+  style (like the pre-existing kimchi files), which vitest cannot
+  collect — its 4 assertions run and pass at import time under
+  node:test. Two fork tests were adapted to upstream's deliberate new
+  behavior with no assertions weakened: `kiro-external-idp` (q.*
+  surface first, #3776) and the golden OpenAI→Kiro snapshot (no
+  top-level `agentMode`/`agentTaskType`). 0 pass→fail regression vs
+  baseline.
+
 # v0.6.47 (2026-09-06)
 
 Every dashboard page now speaks the same visual language: shared page
@@ -471,6 +557,53 @@ models are visible in the dashboard before they burn a request.
 ## Docs
 - Reconciled fork docs with the v0.6.33 release + upstream v0.5.59
   merge.
+# v0.5.75 (2026-09-10)
+
+## Features
+- **Video**: add OpenRouter and Vertex AI (Veo) video generation on `/v1/videos/*` via a provider adapter layer; poll requests resolve their provider from `x-connection-id` or `?provider=`
+- **Antigravity**: add weekly quota tracking (Gemini weekly / Claude & GPT weekly) and free-tier handling from `retrieveUserQuotaSummary` (#3892)
+- **Codex**: add GPT Image 2.5, Flare and Sunburst image models with multi-image support; add the same ids to the OpenAI catalog
+- **Qoder**: surface usage to all clients and stop inlining large attachments — images upload through `/api/v2/image/upload` like qodercli, oversized file blocks become stubs, context tier auto-escalates
+- **OpenCode Go**: add newly published models (glm-5.3, kimi-k3, deepseek-flash, longcat-2.0, hy4-preview, hy3 on chat/completions; qwen3.8-max, qwen3.8-flash on `/messages`; grok-4.6, gpt-5.6-luna on Responses) and list `deepseek-v4.1-flash` first in the catalog
+- **CLI tools**: group the model selector by provider with full-text search and manual custom model ID entry
+- **CodeBuddy-CN**: replace `deepseek-v4-flash` with `deepseek-v4.1-flash`
+
+## Fixes
+- **Tools**: scope Claude tool type defaulting to gateways declaring `requireClaudeToolType` — the global default broke Anthropic-compatible endpoints that only accept the legacy typeless tool shape (#3905)
+- **Claude**: cap re-anchored `cache_control` at the 4-marker budget so a spent budget no longer 400s and triggers a full combo failover; wrap bare single-object content turns before the mid-conversation-system fold
+- **Cline / Airforce**: unwrap the `{"success":true,"data":…}` envelope on non-stream chat completions (#3644); add the live Cline/ClinePass model catalog and refresh Airforce free models
+- **Cline**: stop `workos:`-prefixing ClinePass API keys (401 on every request, #2333) and add clinepass token refresh
+- **Kiro**: never send a top-level `systemPrompt` (`400 REQUEST_BODY_INVALID`); route requests through current runtime surfaces (#3776)
+- **Codex**: strip Unicode-property tool schema patterns the validator rejects (#3922); restore the `Version` header and single-source the CLI version
+- **DeepSeek**: keep Anthropic-only tool types when forwarding to `/anthropic/v1/messages`
+- **Qoder**: drop the Responses usage plumbing from shared translator/handler code, which changed token accounting for every provider, not just Qoder
+- **Antigravity**: normalize contents and handle intermediate tool responses; protect the OAuth token-refresh path from Google anti-abuse rate limits (#3813)
+- **Providers**: clear stale connection health state (`modelLock_*`, `backoffLevel`, `rateLimitedUntil`, `errorCode`) when a connection is re-validated (#3810, #3830); remove the duplicate `qwen` provider that shadowed `alims-intl`
+- **Video / Vertex**: reject job ids and model ids that would escape the request URL path (SSRF)
+- **Usage**: parse the Fable weekly limit from `limits[]` instead of fabricating a row (#3847)
+- **Auth**: set a 24h `maxAge` on the dashboard session cookie
+
+# v0.5.69 (2026-09-05)
+
+## Features
+- **Codex**: add GPT 6.0 Astra (`gpt-6-astra`) with vision, thinking and search capabilities
+- **Usage**: add Claude Fable quota tracker support with weekly window normalization (`weekly fable (7d)`)
+- **Dashboard**: group Antigravity Gemini and Claude quotas in Quota Tracker, prune stale hidden keys
+- **OpenCode Go**: add `muse-spark-1.3-contributor` model and support parallel tool calls on Responses path (#3819)
+- **Providers & Models**: align CodeBuddy-CN catalog/capabilities with server config; add GPT-5.6 Sol, Terra, Luna image aliases on Codex (#3806); refresh Qoder catalog with capability mapping and image pass-through
+- **CLI tools**: replace Copilot MITM with VS Code extension setup guide
+- **Gemini**: persist and replay `thoughtSignature` scoped by session namespace
+
+## Fixes
+- **Claude**: normalize adaptive auto effort (`output_config.effort`) (#3792)
+- **Antigravity**: prevent Google anti-abuse rate limits during multi-account refresh (#3813)
+- **Anthropic-compatible**: forward Claude beta flags to nodes fronting Anthropic (#3797)
+- **Dashboard**: dynamic mode label for local/remote detection (#3801)
+- **Codex**: format reset credit API errors cleanly (#3778)
+- **Security**: guard cowork MCP tools probe against SSRF (#3783)
+- **OpenCode Go**: track OpenCode Go quota (#3791) and send stable session headers (#3800)
+- **Logger**: suppress noisy background token refresh logs
+- **CLI**: export packed `.tgz` directly into workspace root instead of parent directory
 
 # v0.5.65 (2026-09-03)
 

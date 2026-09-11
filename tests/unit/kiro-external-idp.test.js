@@ -105,7 +105,12 @@ describe("Kiro external_idp (CLIProxyAPI) import and refresh", () => {
     expect(headers.TokenType).toBe("EXTERNAL_IDP");
     expect(headers.tokentype).toBeUndefined();
 
+    // Upstream v0.5.75 (#3776): q.* is always the first surface for every auth
+    // method — the kiro.dev path gateway 400s (terminal) on modern payloads.
     expect(executor.buildUrl("claude-sonnet-4.5", true, 0, credentials)).toBe(
+      "https://q.us-east-1.amazonaws.com/generateAssistantResponse"
+    );
+    expect(executor.buildUrl("claude-sonnet-4.5", true, 1, credentials)).toBe(
       "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
     );
   });
