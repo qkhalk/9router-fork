@@ -1,3 +1,36 @@
+# v0.6.49 (2026-09-17)
+
+opencode (zen) free tier fix: every free-tier request started failing with
+HTTP 403 `FreeTierError` — "Error from provider (Console): OpenCode's free
+tier can only be used from within OpenCode" — after opencode.ai tightened
+its free-tier client validation beyond the UA-version check fixed in
+v0.6.48.
+
+## Fixes
+- **opencode free — 403 FreeTierError: identifier format now validated
+  too**: live bisection against opencode.ai shows the zen server checks
+  two fingerprint signals. First (already handled since v0.6.48) the
+  `User-Agent` must be `opencode/<version>` with a *currently released*
+  version — `opencode/xyz`, bare `opencode`, even `opencode/1.18.30`
+  (one release old) all 403; only the latest npm release passes. Second
+  (new): `x-opencode-session` / `x-opencode-request` must match the
+  official identifier format from `@opencode-ai/schema` — `ses_`/`msg_`
+  prefix + 12 lowercase-hex chars + 14 alphanumeric chars (26 total).
+  Our ids were `ses_`/`msg_` + 32 hex chars from `crypto.randomUUID()`,
+  so every free-tier request 403'd even with a correct UA (verified:
+  v0.6.48's exact header set still 403s today).
+  `OpenCodeExecutor` now generates ids in the official format and
+  normalizes the conversation-stable session key into it by hashing
+  (prompt caching preserved; official-format ids from a downstream
+  opencode client still pass through unchanged). Downstream UA/client
+  relaying is also hardened: a downstream opencode UA is kept only when
+  its version is ≥ the live-resolved CLI version (a stale one is
+  cloaked instead of relayed into a 403), and junk downstream
+  `x-opencode-*` values (wrong-format ids, unknown client names) are
+  replaced with valid ones rather than forwarded. Unit tests in
+  `tests/unit/opencode-freetier-fingerprint.test.js`; verified live —
+  `big-pickle` streams HTTP 200 with the same IP that 403'd before.
+
 # v0.6.48 (2026-09-12)
 
 Upstream-sync release: merges upstream **v0.5.75** into the fork

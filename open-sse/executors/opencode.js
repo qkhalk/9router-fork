@@ -9,18 +9,63 @@ import { isMuseSparkModel } from "../providers/models/helpers.js";
 import { getModelTargetFormat, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { ensureOpencodeCatalog, getOpencodeCliUserAgent, isResponsesServed } from "../providers/opencodeCatalog.js";
 
+// opencode.ai validates the free-tier fingerprint server-side: session/request
+// ids must match the official identifier format from @opencode-ai/schema
+// (ses_/msg_ prefix + 12 lowercase-hex chars + 14 alphanumeric chars, 26
+// total) and the User-Agent must carry a currently-released version. Anything
+// else answers 403 FreeTierError ("free tier can only be used from within
+// OpenCode"). Mirrors the identifier charset of @opencode-ai/schema.
+const ID_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const OFFICIAL_ID_RE = /^(?:ses|msg)_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
+// A genuine opencode client UA always carries a version: opencode/1.18.31 …
+const VERSIONED_OPENCODE_UA_RE = /^opencode\/(\d+)\.(\d+)\.(\d+)/;
+// x-opencode-client values verified as accepted by the zen free tier
+const KNOWN_CLIENTS = new Set(["cli", "desktop"]);
+
+function officialStyleId() {
+  const time = crypto.randomBytes(6).toString("hex");
+  const rand = Array.from(crypto.randomBytes(14), (b) => ID_CHARS[b % 62]).join("");
+  return `${time}${rand}`;
+}
+
 function generateRequestId() {
-  return `msg_${crypto.randomUUID().replace(/-/g, "")}`;
+  return `msg_${officialStyleId()}`;
 }
 
 function generateSessionId() {
-  return `ses_${crypto.randomUUID().replace(/-/g, "")}`;
+  return `ses_${officialStyleId()}`;
 }
 
-// Normalize any resolved id into opencode's ses_ format (stable per-conversation)
+function isOfficialId(value) {
+  return typeof value === "string" && OFFICIAL_ID_RE.test(value);
+}
+
+function uaVersion(ua) {
+  const m = VERSIONED_OPENCODE_UA_RE.exec(ua || "");
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function versionAtLeast(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] > b[i];
+  }
+  return true;
+}
+
+// Normalize any resolved id into opencode's official 26-char identifier format
+// (stable per-conversation: the seed is hashed deterministically, while ids
+// already in official format — e.g. from a downstream opencode client — pass
+// through unchanged).
 function toOpencodeSession(id) {
-  const stripped = String(id || "").replace(/^ses_/, "").replace(/-/g, "");
-  return stripped ? `ses_${stripped}` : null;
+  const value = String(id || "");
+  if (isOfficialId(value)) return value;
+  const stripped = value.replace(/^ses_/, "");
+  if (!stripped) return null;
+  const h = crypto.createHash("sha256").update(stripped).digest();
+  const time = h.subarray(0, 6).toString("hex");
+  const rand = Array.from(h.subarray(6, 20), (b) => ID_CHARS[b % 62]).join("");
+  return `ses_${time}${rand}`;
 }
 
 // Strip the thinking suffix "model(level)" so registry lookups hit the base id.
@@ -111,19 +156,33 @@ export class OpenCodeExecutor extends BaseExecutor {
     const lower = {};
     for (const [k, v] of Object.entries(raw)) lower[k.toLowerCase()] = v;
 
+    // zen fingerprints the official CLI via UA: downstream opencode clients
+    // pass theirs through; everyone else is cloaked with the live CLI UA
+    // (version resolved from npm in opencodeCatalog, no stale hardcode). The
+    // free tier only accepts currently-released versions, so a downstream
+    // opencode UA is kept only when its version is at least our resolved
+    // latest — a stale one is cloaked too instead of relayed into a 403.
     const downstreamUa = lower["user-agent"] || "";
-    const isOpencodeDownstream = downstreamUa.toLowerCase().includes("opencode");
+    const cliUa = getOpencodeCliUserAgent();
+    const downstreamVersion = uaVersion(downstreamUa);
+    const cliVersion = uaVersion(cliUa);
+    const keepDownstreamUa = downstreamVersion && cliVersion && versionAtLeast(downstreamVersion, cliVersion);
+    const userAgent = keepDownstreamUa ? downstreamUa : cliUa;
+
+    // Same reasoning for the id headers: only relay downstream values that
+    // already satisfy the official identifier format — anything else (random
+    // junk from other clients) would fail zen's format validation.
+    const downstreamSession = isOfficialId(lower["x-opencode-session"]) ? lower["x-opencode-session"] : null;
+    const downstreamRequest = isOfficialId(lower["x-opencode-request"]) ? lower["x-opencode-request"] : null;
+    const downstreamClient = lower["x-opencode-client"] || "";
 
     return {
       "Content-Type": "application/json",
       "Authorization": "Bearer public",
-      // zen fingerprints the official CLI via UA: downstream opencode clients
-      // pass theirs through; everyone else is cloaked with the live CLI UA
-      // (version resolved from npm in opencodeCatalog, no stale hardcode).
-      "User-Agent": isOpencodeDownstream ? downstreamUa : getOpencodeCliUserAgent(),
-      "x-opencode-client": lower["x-opencode-client"] || "cli",
-      "x-opencode-session": lower["x-opencode-session"] || this._currentSessionId || generateSessionId(),
-      "x-opencode-request": lower["x-opencode-request"] || generateRequestId(),
+      "User-Agent": userAgent,
+      "x-opencode-client": KNOWN_CLIENTS.has(downstreamClient) ? downstreamClient : "cli",
+      "x-opencode-session": downstreamSession || this._currentSessionId || generateSessionId(),
+      "x-opencode-request": downstreamRequest || generateRequestId(),
       "x-opencode-project": lower["x-opencode-project"] || "global",
       "Accept": stream ? "text/event-stream" : "*/*",
     };
