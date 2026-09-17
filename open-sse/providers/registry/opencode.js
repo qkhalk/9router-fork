@@ -14,6 +14,12 @@ export default {
   noAuth: true,
   transport: {
     baseUrl: "https://opencode.ai",
+    // zen's free tier is stream-only: a request body with stream:false is
+    // rejected with the same 403 FreeTierError as a bad fingerprint (the
+    // official client always streams). Force upstream streaming; chatCore's
+    // handleForcedSSEToJson aggregates the SSE into a JSON response for
+    // non-streaming downstream clients.
+    forceStream: true,
     headers: {
       "x-opencode-client": "desktop",
     },

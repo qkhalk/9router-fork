@@ -4,7 +4,7 @@ opencode (zen) free tier fix: every free-tier request started failing with
 HTTP 403 `FreeTierError` — "Error from provider (Console): OpenCode's free
 tier can only be used from within OpenCode" — after opencode.ai tightened
 its free-tier client validation beyond the UA-version check fixed in
-v0.6.48.
+v0.6.48. Two independent checks were added.
 
 ## Fixes
 - **opencode free — 403 FreeTierError: identifier format now validated
@@ -30,6 +30,15 @@ v0.6.48.
   replaced with valid ones rather than forwarded. Unit tests in
   `tests/unit/opencode-freetier-fingerprint.test.js`; verified live —
   `big-pickle` streams HTTP 200 with the same IP that 403'd before.
+- **opencode free — non-streaming requests also 403 (free tier is
+  stream-only)**: the same tightening also rejects any request body with
+  `stream:false`, regardless of headers — the official client always
+  streams, so non-streaming is itself a third-party tell. The opencode
+  registry now declares `forceStream: true` (same mechanism as codex /
+  grok-cli / zed et al.): chatCore always streams upstream and its
+  `handleForcedSSEToJson` path aggregates the SSE into a normal JSON
+  response for non-streaming downstream clients, so nothing changes for
+  clients — they still get plain `chat.completion` objects.
 
 # v0.6.48 (2026-09-12)
 

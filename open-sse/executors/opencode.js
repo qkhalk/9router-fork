@@ -130,6 +130,10 @@ export class OpenCodeExecutor extends BaseExecutor {
 
   transformRequest(model, body, stream, credentials) {
     this._currentSessionId = resolveOpencodeSession(body, credentials);
+    // zen's free tier is stream-only — a body carrying stream:false gets the
+    // same 403 FreeTierError as a bad fingerprint, even with valid headers.
+    // chatCore's nonStreamingHandler aggregates the SSE for non-stream clients.
+    body.stream = true;
     if (isResponsesModel(model)) {
       // Responses API names the output cap max_output_tokens and takes thinking
       // as reasoning:{effort,summary} — normalize the Chat fields at this boundary.

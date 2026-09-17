@@ -14,6 +14,8 @@ vi.mock("../../open-sse/providers/opencodeCatalog.js", () => ({
   isDeprecatedModel: () => false,
 }));
 
+const { PROVIDERS } = await import("../../open-sse/config/providers.js");
+
 const { OpenCodeExecutor } = await import("../../open-sse/executors/opencode.js");
 
 // ses_/msg_ + 12 lowercase-hex chars + 14 alphanumeric chars = 26 after prefix
@@ -46,6 +48,13 @@ describe("opencode free-tier fingerprint headers", () => {
     expect(headers["x-opencode-request"]).toMatch(OFFICIAL_ID);
     expect(headers["x-opencode-session"]).toMatch(/^ses_/);
     expect(headers["x-opencode-request"]).toMatch(/^msg_/);
+  });
+
+  it("forces stream:true on the upstream body — zen free tier is stream-only", () => {
+    const nonStream = body();
+    nonStream.stream = false;
+    const transformed = exec.transformRequest("big-pickle", nonStream, false, claudeCredentials);
+    expect(transformed.stream).toBe(true);
   });
 
   it("cloaks non-opencode downstream clients with the live CLI UA", () => {
@@ -100,5 +109,9 @@ describe("opencode free-tier fingerprint headers", () => {
     expect(headers["x-opencode-session"]).not.toBe(junk.rawHeaders["x-opencode-session"]);
     expect(headers["x-opencode-request"]).toMatch(OFFICIAL_ID);
     expect(["cli", "desktop"]).toContain(headers["x-opencode-client"]);
+  });
+
+  it("declares forceStream on the provider registry (zen free tier rejects stream:false)", () => {
+    expect(PROVIDERS.opencode.forceStream).toBe(true);
   });
 });
