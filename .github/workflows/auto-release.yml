@@ -1,0 +1,99 @@
+name: Auto Release
+
+# Releases are CHANGELOG-driven: when a merge to master brings a NEW topmost
+# `# vX.Y.Z` entry that is newer than package.json's version, this workflow
+# bumps package.json to match, tags vX.Y.Z, creates the GitHub Release with
+# the entry as notes, and dispatches the existing docker-publish / cli-release
+# workflows against the tag (a tag pushed with the default GITHUB_TOKEN does
+# NOT trigger their on: push: tags hooks — GitHub skips runs created by the
+# bot token — so we invoke them explicitly).
+#
+# When the top entry already matches package.json (no release-worthy change
+# merged), the run is a no-op. The bump commit itself re-triggers this
+# workflow, which then no-ops — no loop.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Fork PRs run CI only; never auto-release from anywhere but the canonical repo.
+    if: github.repository == 'vibecoder11200/9router'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Detect release version from CHANGELOG
+        id: ver
+        run: |
+          set -eu
+          TOP=$(grep -m1 -oE '^# v[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          PKG=$(node -p "require('./package.json').version")
+          echo "top=$TOP pkg=$PKG"
+          NEWER=$(python3 -c "a=tuple(map(int,'$TOP'.split('.')));b=tuple(map(int,'$PKG'.split('.')));print(1 if a>b else 0)")
+          if [ "$TOP" = "$PKG" ] || [ "$NEWER" != "1" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "CHANGELOG top v$TOP is not newer than package.json v$PKG — nothing to release."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "version=$TOP" >> "$GITHUB_OUTPUT"
+            echo "Releasing v$TOP."
+          fi
+
+      - name: Bump package.json and tag
+        if: steps.ver.outputs.skip != 'true'
+        run: |
+          set -eu
+          V=${{ steps.ver.outputs.version }}
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=process.argv[1];fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')" "$V"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore(release): v$V"
+          git push origin HEAD:master
+          git tag "v$V"
+          git push origin "v$V"
+
+      - name: Extract release notes from CHANGELOG
+        if: steps.ver.outputs.skip != 'true'
+        run: |
+          python3 - <<'EOF'
+          import re
+          src = open("CHANGELOG.md", encoding="utf-8").read()
+          m = re.search(r"^# (v[\d.]+[^\n]*)\n(.*?)^# v", src, re.M | re.S)
+          assert m, "could not extract top CHANGELOG section"
+          open("notes.md", "w", encoding="utf-8").write(m.group(1) + "\n\n" + m.group(2).strip() + "\n")
+          EOF
+
+      - name: Create GitHub Release
+        if: steps.ver.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V=${{ steps.ver.outputs.version }}
+          gh release create "v$V" --target master --title "v$V" --notes-file notes.md
+
+      - name: Dispatch docker + CLI release builds
+        if: steps.ver.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V=${{ steps.ver.outputs.version }}
+          gh workflow run docker-publish.yml --ref "v$V"
+          gh workflow run cli-release.yml --ref "v$V"
