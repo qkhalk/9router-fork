@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
+  <!-- Genspark spark mark: four-point star with concave edges, brand orange gradient -->
+  <defs>
+    <linearGradient id="gs-g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFA43D"/>
+      <stop offset="0.55" stop-color="#FF6B35"/>
+      <stop offset="1" stop-color="#F24E1E"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#gs-g)" d="M90 4 C97.5 51.5 122.5 78.5 176 90 C122.5 101.5 97.5 128.5 90 176 C82.5 128.5 57.5 101.5 4 90 C57.5 78.5 82.5 51.5 90 4 Z"/>
+  <circle cx="147" cy="35" r="10" fill="#FFC24D" opacity="0.95"/>
+  <circle cx="35" cy="141" r="6" fill="#FF8A50" opacity="0.85"/>
+</svg>

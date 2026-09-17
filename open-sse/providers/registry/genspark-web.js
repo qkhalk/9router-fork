@@ -1,24 +1,33 @@
 /**
- * Genspark Web (cookie-based) — exposes https://www.genspark.ai Copilot MOA backend
+ * Genspark Web (cookie-based) — exposes https://www.genspark.ai Agent (AI Chat) backend
  * as an OpenAI-compatible chat completions endpoint.
  *
- * Auth: paste the `session_id=...` cookie value harvested from genspark.ai (F12 → Network →
- * any /api/copilot/ask request → Request Headers → Cookie). Both the bare session id and the
- * full `session_id=abc123` form are accepted; the executor normalises to the latter.
+ * Auth: paste the FULL cookie jar exported from genspark.ai (F12 → Application → Cookies →
+ * www.genspark.ai → Export). Genspark's edge requires `session_id`, `__cf_bm` (Cloudflare),
+ * `c1`/`c2` and `gslogin` — a bare session id alone fails login/model usage. The pasted jar is
+ * parsed and serialized by `open-sse/services/gensparkWebCookie.js`; a bare `session_id=...`
+ * is still accepted for backward compatibility.
  *
- * Upstream endpoint: POST https://www.genspark.ai/api/copilot/ask (SSE for streaming,
- * application/json for non-streaming). The response is a stream of `data: {json}` frames with
- * types: project_start | message_field | message_field_delta | message_result.
+ * Transport: this provider requires the Python TLS sidecar (`open-sse/services/gensparkTlsSidecar.py`
+ * + `gensparkTlsSidecar.js` harness). Node's vanilla `fetch` is blocked by genspark's
+ * Cloudflare edge (TLS/JA3 fingerprint), so the executor POSTs the body through a
+ * `curl_cffi` (Chrome impersonation) subprocess instead. Endpoint:
+ * POST https://www.genspark.ai/api/agent/ask_proxy, body type `ai_chat`. The response is a
+ * stream of `data:` frames: project_start | agent_notification | message_start |
+ * project_field | message_field | message_field_delta | message_result.
  *
- * Models mirror genspark2api/common/constants.go:
- *   - TextModelList  → exposed directly (single-model MOA chat)
- *   - "-search" suffix on any text model → enables request_web_knowledge (web grounding)
- *   - ImageModelList → routed by the executor to COPILOT_MOA_IMAGE flow (polls /api/ig_tasks_status,
- *     returns markdown image links inside the chat completion)
- *   - MixtureModelList is used as a fallback when the requested model is not in TextModelList and
- *     is not an image model — this triggers Genspark's Mixture-of-Agents routing.
+ * Models are NOT hardcoded. The dashboard suggestion list is fed live from the
+ * same endpoints the genspark.ai AI Chat selector reads (moa_models_config —
+ * see providers/gensparkCatalog.js), so new genspark releases appear without a
+ * code change. Model ids are forwarded verbatim as `ai_chat_model` (verified:
+ * unreleased-in-any-list ids like glm-5p3 and the Mixture-of-Agents comma mix
+ * are accepted upstream), and "-search" on any id enables web grounding.
  *
- * Reference: https://github.com/deanxv/genspark2api
+ * Image models are intentionally NOT suggested: genspark's current API has no
+ * image generation flow (feeding an image id returns a plain text chat).
+ * Requests for an image model id get an honest 400.
+ *
+ * Reference: github.com/SharpWizard/genspark-py (TLS bypass) + github.com/deanxv/genspark2api
  */
 export default {
   id: "genspark-web",
@@ -35,45 +44,17 @@ export default {
   },
   category: "webCookie",
   authType: "cookie",
-  authHint: "Paste your session_id cookie value from genspark.ai (e.g. session_id=abc123)",
+  hasProviderSpecificData: true,
+  authHint: "Paste your full cookie export from genspark.ai (F12 → Application → Cookies → www.genspark.ai → Export). session_id, __cf_bm, c1/c2 and gslogin are all required — a bare session_id is not enough. The executor tunnels this through a bundled Python TLS sidecar (curl_cffi) so genspark's Cloudflare edge doesn't challenge it.",
   transport: {
-    baseUrl: "https://www.genspark.ai/api/copilot/ask",
+    baseUrl: "https://www.genspark.ai/api/agent/ask_proxy",
     format: "genspark-web",
     authType: "cookie",
   },
   passthroughModels: true,
-  // Text models — single-model MOA chat. Source: genspark2api/common/constants.go TextModelList.
-  // Search variants are derived at runtime by appending "-search" to any id below.
-  models: [
-    // ── OpenAI family ───────────────────────────────────────────────────────
-    { id: "gpt-5-pro", name: "GPT-5 Pro" },
-    { id: "gpt-5.1-low", name: "GPT-5.1 Low" },
-    { id: "gpt-5.2", name: "GPT-5.2" },
-    { id: "gpt-5.2-pro", name: "GPT-5.2 Pro" },
-    { id: "o3-pro", name: "o3 Pro" },
-    // ── Anthropic family ────────────────────────────────────────────────────
-    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-    { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
-    { id: "claude-opus-4-5", name: "Claude Opus 4.5" },
-    { id: "claude-4-5-haiku", name: "Claude 4.5 Haiku" },
-    // ── Google family ───────────────────────────────────────────────────────
-    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-    { id: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview" },
-    { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
-    { id: "gemini-3-pro-preview", name: "Gemini 3 Pro Preview" },
-    // ── xAI family ──────────────────────────────────────────────────────────
-    { id: "grok-4-0709", name: "Grok 4 (0709)" },
-    // ── Image generation models (routed to COPILOT_MOA_IMAGE flow) ──────────
-    { id: "nano-banana-pro", name: "Nano Banana Pro", kind: "image" },
-    { id: "nano-banana-2", name: "Nano Banana 2", kind: "image" },
-    { id: "fal-ai/bytedance/seedream/v5/lite", name: "Seedream v5 Lite", kind: "image" },
-    { id: "fal-ai/flux-2", name: "Flux 2", kind: "image" },
-    { id: "fal-ai/flux-2-pro", name: "Flux 2 Pro", kind: "image" },
-    { id: "fal-ai/z-image/turbo", name: "Z-Image Turbo", kind: "image" },
-    { id: "fal-ai/gpt-image-1.5", name: "GPT-Image 1.5", kind: "image" },
-    { id: "recraft-v3", name: "Recraft v3", kind: "image" },
-    { id: "ideogram/V_3", name: "Ideogram V3", kind: "image" },
-    { id: "qwen-image", name: "Qwen Image", kind: "image" },
-  ],
+  // Live model discovery — the suggested-models route special-cases this type
+  // and returns gensparkCatalog's merged snapshot of the genspark.ai selector.
+  // No seeded `models` list on purpose: genspark rotates its lineup weekly and
+  // a hardcoded list ships stale ids upstream rejects.
+  modelsFetcher: { url: "https://www.genspark.ai/api/moa_models_config", type: "genspark-web" },
 };

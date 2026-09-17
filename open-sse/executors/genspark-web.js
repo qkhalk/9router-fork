@@ -1,94 +1,81 @@
 /**
- * Genspark Web Executor — calls https://www.genspark.ai Copilot MOA backend.
+ * Genspark Web Executor — calls https://www.genspark.ai Agent (AI Chat) backend
+ * through the Python curl_cffi TLS sidecar.
  *
- * Architecture mirrors genspark2api (https://github.com/deanxv/genspark2api):
- *   Endpoint: POST https://www.genspark.ai/api/copilot/ask
- *   Auth:     Cookie header (`session_id=...`). Both bare session id and the full
- *             `session_id=abc` form are accepted — we normalise to the latter.
- *   Body:     JSON with shape:
- *             {
- *               "type": "COPILOT_MOA_CHAT",
- *               "current_query_string": "type=COPILOT_MOA_CHAT",
- *               "messages": [...OpenAI messages...],
- *               "action_params": {},
- *               "extra_data": { "models": [...], "run_with_another_model": false,
- *                               "writingContent": null, "request_web_knowledge": false }
- *             }
- *   Response: SSE stream of `data: {json}` frames. Frame types we care about:
- *             - project_start              → captures project_id (used for cleanup if needed)
- *             - message_field              → field_name + delta/content (full or start of field)
- *             - message_field_delta        → field_name + delta (incremental update)
- *             - message_result             → final content, signals completion
+ * Why the sidecar: genspark's Cloudflare edge blocks vanilla Node `fetch` by
+ * TLS/JA3 fingerprint (same WAN IP: Node → 403 "Just a moment", curl_cffi
+ * chrome124 → 200). The proven bypass from the MIT `curlgenspark-py` project is a
+ * real Chrome TLS impersonation, ported here as `open-sse/services/gensparkTlsSidecar.py`
+ * (spawned/streamed by `open-sse/services/gensparkTlsSidecar.js`).
  *
- * Field routing (matches genspark2api handleMessageFieldDelta):
- *   - session_state.answer                       → assistant text delta
- *   - session_state.streaming_detail_answer      → assistant text delta (search-mode o1/o3 path)
- *   - session_state.streaming_markmap            → assistant text delta (rare)
- *   - session_state.answerthink                  → reasoning_content delta (wrapped in <think> tags)
- *   - session_state.answerthink_is_started       → emit "<think>\n"
- *   - session_state.answerthink_is_finished      → emit "\n</think>"
+ *   Endpoint: POST https://www.genspark.ai/api/agent/ask_proxy  (body type "ai_chat")
+ *   Auth:     FULL browser cookie jar passed to the sidecar (curl_cffi Session sets
+ *             them on www.genspark.ai). The pasted jar (chrome-json / netscape /
+ *             kv pairs) is parsed by `open-sse/services/gensparkWebCookie.js`, and
+ *             `extractGensparkWebCredentials` recovers the jar object from
+ *             providerSpecificData.cookies / the pasted credential string.
+ *   Body:     ai_chat shape (ported from genspark-py `chat()`):
+ *             { ai_chat_model, ai_chat_enable_search, ai_chat_disable_personalization,
+ *               use_moa_proxy:false, moa_models:[], writingContent:null,
+ *               type:"ai_chat", project_id:null, messages:[{role,id,content}],
+ *               user_s_input, g_recaptcha_token:"", is_private:true, push_token:"",
+ *               session_state:{steps:[], messages} }
+ *   Response: SSE `data:` frames: project_start | agent_notification (keepalive) |
+ *             message_start | project_field | message_field | message_field_delta |
+ *             message_result.
  *
- * Modes:
- *   - Text chat           → COPILOT_MOA_CHAT, models=[requested_model] or MixtureModelList
- *   - Search ("-search")  → COPILOT_MOA_CHAT with request_web_knowledge=true, model stripped of suffix
- *   - Image model         → COPILOT_MOA_IMAGE flow (handled in a follow-up commit)
+ * Field routing:
+ *   - Answer text = message_field_delta / message_field with `field_name === "content"`
+ *     (incremental `delta` channel, full `field_value` on message_field).
+ *   - Reasoning = message_field with `field_name=reasoning_id` +
+ *     `reasoning_encrypted_content` — client-side encrypted, cannot be rendered
+ *     server-side → dropped silently (answer still streams normally).
+ *   - message_result.message.content carries the final full answer (used for the
+ *     non-stream response / empty-stream fallback).
  *
- * Reference: genspark2api/controller/chat.go (ChatForOpenAI, handleStreamRequest,
- * handleNonStreamRequest, processStreamData, handleMessageFieldDelta, handleMessageResult).
+ * Image models: genspark's current API (ask_proxy) has NO image generation flow —
+ * feeding an image model id just returns a plain text chat. Image-model seeds are
+ * removed from the registry and a requested image model here returns an honest 400.
+ *
+ * Reference: github.com/SharpWizard/genspark-py (audited CLEAN, MIT) + genspark2api.
  */
 
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { SSE_DONE, SSE_HEADERS_NO_BUFFER } from "../utils/sseConstants.js";
 import { sseChunk } from "../utils/sse.js";
+import { extractGensparkWebCredentials, serializeGensparkWebCookieHeader } from "../services/gensparkWebCookie.js";
+import { gensparkSidecarFetch } from "../services/gensparkTlsSidecar.js";
+import { isGensparkImageModel } from "../providers/gensparkCatalog.js";
 
 const GENSPARK_BASE = "https://www.genspark.ai";
-const GENSPARK_ASK_API = PROVIDERS["genspark-web"]?.baseUrl || `${GENSPARK_BASE}/api/copilot/ask`;
-const GENSPARK_USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+// /api/agent/ask_proxy is the live AI Chat endpoint (type:"ai_chat"). The older
+// /api/copilot/ask (COPILOT_MOA_CHAT) is retired ("This feature has been retired…").
+const GENSPARK_ASK_API = PROVIDERS["genspark-web"]?.baseUrl || `${GENSPARK_BASE}/api/agent/ask_proxy`;
 
-// ── Model catalogue (mirrors genspark2api/common/constants.go) ────────────────
-// Single-model MOA chat — sent verbatim as extra_data.models=[<id>].
-const TEXT_MODEL_LIST = new Set([
-  "gpt-5-pro", "gpt-5.1-low", "gpt-5.2", "gpt-5.2-pro", "o3-pro",
-  "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-opus-4-6", "claude-opus-4-5",
-  "claude-4-5-haiku", "gemini-2.5-pro", "gemini-3-flash-preview",
-  "gemini-3.1-pro-preview", "gemini-3-pro-preview", "grok-4-0709",
-]);
+// ── Model catalogue ───────────────────────────────────────────────────────────
+// Model ids are sent verbatim as `ai_chat_model` — the live catalog
+// (providers/gensparkCatalog.js) only decides whether an id is a known image
+// model (honest 400; the image flow was retired with /api/copilot/ask) and
+// feeds the dashboard suggestion list. Unknown text ids are forwarded as-is:
+// genspark accepts its current selector lineup verbatim, so brand-new models
+// work before the catalog even refreshes.
 
-// Image models — trigger COPILOT_MOA_IMAGE flow (commit 2).
-const IMAGE_MODEL_LIST = new Set([
-  "nano-banana-pro", "nano-banana-2",
-  "fal-ai/bytedance/seedream/v5/lite", "fal-ai/flux-2", "fal-ai/flux-2-pro",
-  "fal-ai/z-image/turbo", "fal-ai/gpt-image-1.5", "recraft-v3", "ideogram/V_3",
-  "qwen-image",
-]);
-
-// When the requested model is not in TEXT_MODEL_LIST (and not an image model), Genspark routes
-// the request through its Mixture-of-Agents layer using these three models as candidates.
-const MIXTURE_MODEL_LIST = ["gpt-5.1-low", "claude-sonnet-4-5", "gemini-3-pro-preview"];
-
-const CHAT_TYPE = "COPILOT_MOA_CHAT";
-const IMAGE_TYPE = "COPILOT_MOA_IMAGE";
-const IMAGE_TASK_STATUS_URL = `${GENSPARK_BASE}/api/ig_tasks_status`;
-
-// Field-name allowlist — everything else in message_field/message_field_delta is ignored.
-// Matches genspark2api handleMessageFieldDelta baseAllowed + reasoning fields.
-const FIELD_ANSWER = "session_state.answer";
-const FIELD_STREAMING_DETAIL_ANSWER = "session_state.streaming_detail_answer";
-const FIELD_STREAMING_MARKMAP = "session_state.streaming_markmap";
-const FIELD_ANSWERTHINK = "session_state.answerthink";
-const FIELD_ANSWERTHINK_STARTED = "session_state.answerthink_is_started";
-const FIELD_ANSWERTHINK_FINISHED = "session_state.answerthink_is_finished";
+const CHAT_TYPE = "ai_chat";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Normalise the user-supplied credential into a `session_id=...` cookie header value.
- * Accepts either the bare session id or a full `session_id=abc123` string (matching
- * genspark2api config.InitGSCookies behaviour).
+ * Normalise the user-supplied credential into a full `Cookie:` header value.
+ * Retained for backward compatibility and for the dashboard probe paths that still
+ * exercise a Cookie header; the executor itself now hands the parsed jar object to
+ * the sidecar instead.
  */
 function buildCookieHeader(credentials) {
+  const extracted = extractGensparkWebCredentials(credentials || {});
+  const header = serializeGensparkWebCookieHeader(extracted.cookies || {});
+  if (header) return header;
+
   const raw = (credentials?.apiKey || credentials?.accessToken || "").trim();
   if (!raw) return "";
   if (raw.includes("session_id=")) return raw;
@@ -98,10 +85,10 @@ function buildCookieHeader(credentials) {
 /**
  * Parse the OpenAI-style `messages` array into the shape Genspark expects.
  *
- * Genspark's /api/copilot/ask accepts the same {role, content} objects as OpenAI, where content
- * may be a string or an array of {type, text/image_url} parts. We keep the structure intact so
- * multimodal requests round-trip, but we strip empty messages and convert the `developer` role
- * (OpenAI alias) to `system`.
+ * Genspark's /api/agent/ask_proxy accepts the same {role, content} objects as OpenAI,
+ * where content may be a string or an array of {type, text/image_url} parts. We keep the
+ * structure intact so multimodal requests round-trip, but we strip empty messages and
+ * convert the `developer` role (OpenAI alias) to `system`.
  *
  * For deep-seek-r1 (which Genspark exposes via MOA), genspark2api demotes `system` → `user`
  * because the underlying DeepSeek model rejects system messages. We mirror that here.
@@ -131,16 +118,33 @@ function transformMessages(messages, modelName) {
   return out;
 }
 
+/** Last user turn as plain text (string content, or joined text parts for arrays). */
+function lastUserText(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!msg || msg.role !== "user") continue;
+    const content = msg.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      const texts = content
+        .filter((c) => c && typeof c === "object" && c.type === "text")
+        .map((c) => String(c.text || ""));
+      if (texts.some(Boolean)) return texts.join("\n");
+    }
+  }
+  return "";
+}
+
 /**
- * Build the Genspark /api/copilot/ask request body for a text-chat request.
+ * Build the Genspark /api/agent/ask_proxy body for an AI Chat request.
  *
- * The `current_query_string` carries the chat session id once we have one. For the first turn
- * of a new conversation we send `type=COPILOT_MOA_CHAT` only; Genspark assigns the project id
- * and we'd persist it for follow-ups. 9router is stateless across requests, so we always send
- * the first-turn form — Genspark reconstructs context from the messages array.
+ * Ported from genspark-py `chat()` (audited clean) with the exact live-verified shape.
+ * Every message gets a fresh `id` (genspark tracks message ids); `session_state.messages`
+ * mirrors the full history so a stateless 9router request still reconstructs a coherent
+ * conversation. `user_s_input` carries the last user turn text (search uses it too).
  */
 function buildChatRequestBody(modelName, messages, isSearch) {
-  // Strip "-search" suffix for the upstream models list; genspark2api does the same.
+  // Strip "-search" suffix for the upstream model id; genspark2api does the same.
   let upstreamModel = modelName;
   if (isSearch) upstreamModel = upstreamModel.replace(/-search$/, "");
 
@@ -149,26 +153,33 @@ function buildChatRequestBody(modelName, messages, isSearch) {
     upstreamModel = upstreamModel.replace(/^deepseek/, "deep-seek");
   }
 
-  const models = TEXT_MODEL_LIST.has(upstreamModel) ? [upstreamModel] : MIXTURE_MODEL_LIST;
+  const withIds = (messages || []).map((m) => ({ ...m, id: m.id || crypto.randomUUID() }));
+  const userInput = lastUserText(withIds);
 
   return {
+    ai_chat_model: upstreamModel,
+    ai_chat_enable_search: isSearch,
+    ai_chat_disable_personalization: false,
+    use_moa_proxy: false,
+    moa_models: [],
+    writingContent: null,
     type: CHAT_TYPE,
-    current_query_string: `type=${CHAT_TYPE}`,
-    messages,
-    action_params: {},
-    extra_data: {
-      models,
-      run_with_another_model: false,
-      writingContent: null,
-      request_web_knowledge: isSearch,
-    },
+    project_id: null,
+    messages: withIds,
+    user_s_input: userInput,
+    g_recaptcha_token: "",
+    is_private: true,
+    push_token: "",
+    session_state: { steps: [], messages: withIds },
   };
 }
 
 /**
- * Read an SSE stream from a Response body and yield parsed JSON event objects.
- * Mirrors readPplxSseEvents in perplexity-web.js but treats each `data: <json>` line as a frame.
- * Lines without a `data:` prefix are ignored (comments, event: tags, keepalives).
+ * Read an SSE stream from a Response body / ReadableStream and yield parsed JSON event
+ * objects. Mirrors readPplxSseEvents in perplexity-web.js but treats each
+ * `data: <json>` line as a frame. Lines without a `data:` prefix are ignored
+ * (comments, event: tags, keepalives). The sidecar harness re-prefixes its stdout so
+ * this parser works unchanged.
  */
 async function* readGensparkSseEvents(body, signal) {
   const reader = body.getReader();
@@ -180,8 +191,6 @@ async function* readGensparkSseEvents(body, signal) {
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      // SSE frames are separated by \n\n; individual lines by \n. We process line-by-line and
-      // treat each `data:` line as a self-contained event (Genspark doesn't multi-line data).
       let nlIdx;
       while ((nlIdx = buffer.indexOf("\n")) >= 0) {
         const rawLine = buffer.slice(0, nlIdx);
@@ -211,82 +220,63 @@ async function* readGensparkSseEvents(body, signal) {
 }
 
 /**
- * Classify a response body chunk for the genspark2api-style error short-circuits.
- * Returns one of: "rate_limit" | "free_limit" | "not_login" | "cloudflare" | "server_error"
- * | "service_unavailable" | null.
+ * Classify a response body text for known error signatures.
+ * Returns one of: "rate_limit" | "free_limit" | "not_login" | "cloudflare" |
+ * "server_error" | "service_unavailable" | null.
  *
- * Mirrors genspark2api/common/utils.go IsRateLimit / IsFreeLimit / IsNotLogin / IsServerError /
- * IsServerOverloaded / IsCloudflareChallenge / IsServiceUnavailablePage.
+ * New signatures on the ask_proxy endpoint (verified live):
+ *   - not-logged-in session → HTTP 400 `text/plain;charset=UTF-8` body "bad request cf"
+ *   - Cloudflare challenge   → 403 (or 200) with an HTML page
+ * Old copilot signatures are kept for tolerance.
  */
 function classifyError(data) {
   if (typeof data !== "string") return null;
-  // Rate-limit and not-login are emitted as bare strings by Genspark's edge layer.
   if (data === "Rate limit exceeded cf1" || data === "Rate limit exceeded cf2") return "rate_limit";
+  if (data.includes("Rate limit exceeded")) return "rate_limit";
+  if (data === "bad request cf" || data.includes("bad request cf")) return "not_login";
   if (data.includes('"status":-5,"message":"not login"')) return "not_login";
-  if (data === "Internal Server Error") return "server_error";
-  // Free-limit and server-overloaded come through as message_result frames with specific content.
-  if (data.includes('"content":"You\'ve reached your free usage limit today"')) return "free_limit";
-  if (data.includes('"content":"Server overloaded, please try again later."')) return "service_unavailable";
-  // Cloudflare interstitials are full HTML pages.
-  if (data.includes("<title>Just a moment...</title>") || data.includes("cdn-cgi/challenge-platform")) {
+  if (data === "Internal Server Error" || data.includes("Internal Server Error")) return "server_error";
+  if (data.includes("'You've reached your free usage limit today'") || data.includes("reached your free usage limit")) return "free_limit";
+  if (data.includes("Server overloaded, please try again later.")) return "service_unavailable";
+  if (data.includes("<title>Just a moment...") || data.includes("Just a moment") || data.includes("cdn-cgi/challenge-platform") || data.includes("cf_chl")) {
     return "cloudflare";
   }
   return null;
 }
 
 /**
- * Decide whether a `message_field` / `message_field_delta` event should be emitted to the client
- * and, if so, whether it carries reasoning or answer content.
+ * Decide whether a `message_field` / `message_field_delta` event carries answer text.
  *
- * Returns one of:
- *   { kind: "answer",   delta: <string> }
- *   { kind: "reasoning_open" }
- *   { kind: "reasoning_close" }
- *   { kind: "reasoning", delta: <string> }
- *   null  → ignore this field
+ * Returns { kind: "answer", delta: <string> } or null (ignore).
+ *
+ * Routing (verified on the live ask_proxy stream):
+ *   - `field_name === "content"` is the answer channel. On message_field_delta it is an
+ *     incremental delta; on message_field it carries the full field value (used by some
+ *     flows / the non-stream path).
+ *   - `field_name === "reasoning_id"` / `"reasoning_encrypted_content"` → encrypted
+ *     reasoning; the web client decrypts it, we cannot → dropped silently.
+ *
+ * `modelName` / `isSearch` / `hideReasoning` are accepted for signature compatibility
+ * with the prior copilot-era routing — the answer channel no longer branches on them.
  */
 function classifyFieldEvent(event, modelName, isSearch, hideReasoning) {
   const fieldName = event.field_name;
   if (!fieldName) return null;
-
-  // Answer path.
-  if (
-    fieldName === FIELD_ANSWER ||
-    fieldName === FIELD_STREAMING_DETAIL_ANSWER ||
-    fieldName === FIELD_STREAMING_MARKMAP
-  ) {
-    // o1 in search mode emits the full answer in message_field.delta on the FIELD_ANSWER event.
-    // For other models, FIELD_ANSWER on message_field carries the full field value (not delta)
-    // — genspark2api reads event["delta"] for everything except that one special case, which
-    // reads event["field_value"]. The delta channel is the safer default for streaming UX.
-    const delta = (modelName === "o1" && isSearch && fieldName === FIELD_ANSWER)
-      ? String(event.field_value || "")
-      : String(event.delta || "");
-    return delta ? { kind: "answer", delta } : null;
-  }
-
-  if (hideReasoning) return null;
-
-  if (fieldName === FIELD_ANSWERTHINK_STARTED) return { kind: "reasoning_open" };
-  if (fieldName === FIELD_ANSWERTHINK_FINISHED) return { kind: "reasoning_close" };
-  if (fieldName === FIELD_ANSWERTHINK) {
-    const delta = String(event.delta || "");
-    return delta ? { kind: "reasoning", delta } : null;
-  }
-  return null;
+  if (fieldName === "reasoning_id" || fieldName === "reasoning_encrypted_content") return null;
+  if (fieldName !== "content") return null;
+  const delta = String(event.delta != null ? event.delta : (event.field_value ?? ""));
+  return delta ? { kind: "answer", delta } : null;
 }
 
 /**
- * For non-streaming requests, genspark2api accumulates the full answer + reasoning across all
- * message_field/message_field_delta events and emits them in the final chat.completion response.
- * This generator centralises that accumulation so both streaming and non-streaming paths can
- * consume the same event stream.
+ * Central generator over the whole SSE event stream, accumulating answer deltas and
+ * signalling completion with the final `message_result` content (used for non-stream).
  *
- * Yields { type: "answer_delta"|"reasoning_open"|"reasoning_close"|"reasoning_delta"|"done"|"error",
- *          delta?, message?, projectId? }
+ * Yields { type: "answer_delta"|"done"|"error", delta?, message?, projectId? }
  */
 async function* extractContent(responseBody, modelName, isSearch, hideReasoning, signal) {
   let projectId = "";
+  let accumulated = "";
   for await (const event of readGensparkSseEvents(responseBody, signal)) {
     if (!event || typeof event !== "object") continue;
     const eventType = event.type;
@@ -298,35 +288,24 @@ async function* extractContent(responseBody, modelName, isSearch, hideReasoning,
 
     if (eventType === "message_field" || eventType === "message_field_delta") {
       const classified = classifyFieldEvent(event, modelName, isSearch, hideReasoning);
-      if (!classified) continue;
-      if (classified.kind === "answer") {
-        yield { type: "answer_delta", delta: classified.delta };
-      } else if (classified.kind === "reasoning_open") {
-        yield { type: "reasoning_open" };
-      } else if (classified.kind === "reasoning_close") {
-        yield { type: "reasoning_close" };
-      } else if (classified.kind === "reasoning") {
-        yield { type: "reasoning_delta", delta: classified.delta };
-      }
+      if (!classified || classified.kind !== "answer") continue;
+      const delta = classified.delta;
+      // A message_field can carry the full accumulated value after the deltas streamed —
+      // skip exact repeats so the answer isn't doubled downstream.
+      if (delta === accumulated) continue;
+      accumulated += delta;
+      yield { type: "answer_delta", delta };
       continue;
     }
 
     if (eventType === "message_result") {
-      // message_result is the terminal frame. Its `content` field carries the final answer for
-      // non-streaming consumers; for streaming we've already emitted every delta, so we just
-      // signal completion. genspark2api also has a special o1+search path that reads the
-      // detailAnswer from a nested JSON inside content — we replicate it for completeness.
-      let finalContent = "";
-      if (modelName === "o1" && isSearch && typeof event.content === "string") {
-        try {
-          const inner = JSON.parse(event.content);
-          finalContent = inner?.detailAnswer || "";
-        } catch {
-          finalContent = String(event.content || "");
-        }
-      } else if (typeof event.content === "string") {
-        finalContent = event.content;
-      }
+      // Terminal frame — `message.message.content` (nested) or `content` carries the final
+      // full answer. For streaming we've already emitted every delta; for non-stream this
+      // is the authoritative final text when no deltas arrived.
+      const finalContent =
+        typeof event.message?.content === "string" ? event.message.content
+        : typeof event.content === "string" ? event.content
+        : "";
       yield { type: "done", message: finalContent, projectId };
       return;
     }
@@ -336,14 +315,11 @@ async function* extractContent(responseBody, modelName, isSearch, hideReasoning,
 }
 
 /**
- * Build a streaming Response that emits OpenAI chat.completion.chunk frames from the Genspark
- * SSE event stream. Reasoning deltas are emitted as `reasoning_content` (DeepSeek/Anthropic
- * convention) wrapped in `<think>...</think>` tags so downstream clients that don't understand
- * reasoning_content still see the trace.
+ * Build a streaming Response that emits OpenAI chat.completion.chunk frames from the
+ * Genspark SSE event stream.
  */
 function buildStreamingResponse(responseBody, model, cid, created, modelName, isSearch, hideReasoning, signal) {
   const encoder = new TextEncoder();
-  let thinkOpen = false;
 
   return new ReadableStream({
     async start(controller) {
@@ -364,33 +340,9 @@ function buildStreamingResponse(responseBody, model, cid, created, modelName, is
               id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
               choices: [{ index: 0, delta: { content: ev.delta }, finish_reason: null, logprobs: null }],
             })));
-          } else if (ev.type === "reasoning_open") {
-            thinkOpen = true;
-            controller.enqueue(encoder.encode(sseChunk({
-              id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
-              choices: [{ index: 0, delta: { content: "<think>\n" }, finish_reason: null, logprobs: null }],
-            })));
-          } else if (ev.type === "reasoning_close") {
-            thinkOpen = false;
-            controller.enqueue(encoder.encode(sseChunk({
-              id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
-              choices: [{ index: 0, delta: { content: "\n</think>" }, finish_reason: null, logprobs: null }],
-            })));
-          } else if (ev.type === "reasoning_delta") {
-            controller.enqueue(encoder.encode(sseChunk({
-              id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
-              choices: [{ index: 0, delta: { reasoning_content: ev.delta, content: ev.delta }, finish_reason: null, logprobs: null }],
-            })));
           } else if (ev.type === "done") {
-            // If the upstream closed the <think> tag never sent a close event, close it now.
-            if (thinkOpen) {
-              controller.enqueue(encoder.encode(sseChunk({
-                id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
-                choices: [{ index: 0, delta: { content: "\n</think>" }, finish_reason: null, logprobs: null }],
-              })));
-            }
-            // message_result.content typically repeats what we've already streamed via deltas.
-            // Avoid emitting it here to prevent duplicate assistant content in streamed responses.
+            // message_result.content repeats what we've already streamed via deltas.
+            // Avoid emitting it here to prevent duplicate assistant content.
             break;
           }
         }
@@ -414,38 +366,22 @@ function buildStreamingResponse(responseBody, model, cid, created, modelName, is
 }
 
 /**
- * Build a non-streaming Response by consuming the full event stream and assembling the final
- * chat.completion JSON. Mirrors genspark2api handleNonStreamRequest accumulation logic.
+ * Build a non-streaming Response by consuming the full event stream and assembling the
+ * final chat.completion JSON.
  */
 async function buildNonStreamingResponse(responseBody, model, cid, created, modelName, isSearch, hideReasoning, signal) {
   let answer = "";
-  const reasoningParts = [];
-  let thinkOpen = false;
 
   for await (const ev of extractContent(responseBody, modelName, isSearch, hideReasoning, signal)) {
     if (ev.type === "answer_delta") {
       answer += ev.delta;
-    } else if (ev.type === "reasoning_open") {
-      thinkOpen = true;
-      reasoningParts.push("<think>");
-    } else if (ev.type === "reasoning_close") {
-      thinkOpen = false;
-      reasoningParts.push("</think>");
-    } else if (ev.type === "reasoning_delta") {
-      reasoningParts.push(ev.delta);
     } else if (ev.type === "done") {
-      // For o1+search the final answer arrives once via message_result.content; in all other
-      // cases we've already accumulated it via deltas. Only override if we have nothing.
       if (!answer && ev.message) answer = ev.message;
       break;
     }
   }
 
-  if (thinkOpen) reasoningParts.push("</think>");
-
-  const reasoningContent = reasoningParts.length > 0 ? reasoningParts.join("\n") : undefined;
   const message = { role: "assistant", content: answer };
-  if (reasoningContent) message.reasoning_content = reasoningContent;
 
   // Rough token estimate (4 chars/token) — Genspark doesn't return usage info.
   const promptTokens = Math.ceil(JSON.stringify(model).length / 4);
@@ -466,526 +402,34 @@ async function buildNonStreamingResponse(responseBody, model, cid, created, mode
   }), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
-// ── Image generation flow (COPILOT_MOA_IMAGE) ─────────────────────────────────
-// Mirrors genspark2api/controller/chat.go ImageProcess + createImageRequestBody +
-// extractTaskIDs + pollTaskStatus. The flow is:
-//   1. POST /api/copilot/ask with type=COPILOT_MOA_IMAGE → NDJSON body (NOT SSE) containing
-//      project_start + a frame with task_id list inside content.generated_images.
-//   2. POST /api/ig_tasks_status SSE with {task_ids:[...]} → emits a TASKS_STATUS_COMPLETE
-//      frame whose final_status[taskID].image_urls[0] holds the generated image URL.
-//   3. Format the resulting URL(s) as Markdown image links inside a chat completion so
-//      downstream OpenAI-compatible clients render them inline.
-
-/**
- * Build the COPILOT_MOA_IMAGE request body. The image prompt is taken from the last user
- * message (matching genspark2api OpenAIChatCompletionRequest.GetUserContent behaviour).
- * If the user supplied an array of message parts, the text part is used as the prompt.
- */
-function buildImageRequestBody(imageModel, prompt) {
-  // dall-e-3 alias → Genspark's internal "dalle-3" id (kept for OpenAI-compat clients).
-  const upstreamModel = imageModel === "dall-e-3" ? "dalle-3" : imageModel;
-
-  const modelConfigs = [{
-    model: upstreamModel,
-    aspect_ratio: "auto",
-    use_personalized_models: false,
-    fashion_profile_id: null,
-    hd: false,
-    reflection_enabled: false,
-    style: "auto",
-  }];
-
-  const messages = [{
-    role: "user",
-    content: prompt,
-  }];
-
-  return {
-    type: IMAGE_TYPE,
-    current_query_string: `type=${IMAGE_TYPE}`,
-    messages,
-    user_s_input: prompt,
-    action_params: {},
-    extra_data: {
-      model_configs: modelConfigs,
-      llm_model: "gpt-4o",
-      imageModelMap: {},
-      writingContent: null,
-    },
-  };
-}
-
-/**
- * Extract the project_id and the list of image task_ids from a COPILOT_MOA_IMAGE response body.
- *
- * The response is a stream of `data: <json>` lines (NDJSON-with-prefix, NOT SSE in the strict
- * sense — Genspark emits them without empty-line separators). Each line is one of:
- *   - {"id":"<project_id>", "type":"project_start", ...}
- *   - {"content":"{\"generated_images\":[{\"task_id\":\"...\"}]}", "type":"message_field", ...}
- *
- * We split on newlines, look for project_start to grab the project_id, and look for task_id
- * occurrences to collect the generated_images task ids.
- *
- * Returns [projectId, taskIds[]].
- */
-function extractImageTaskIds(responseBody) {
-  let projectId = "";
-  const taskIds = [];
-  const lines = responseBody.split("\n");
-  for (const line of lines) {
-    if (!line.startsWith("data:")) continue;
-    const jsonStr = line.slice(5).trim();
-    if (!jsonStr) continue;
-    try {
-      const outer = JSON.parse(jsonStr);
-      if (outer.type === "project_start" && outer.id) {
-        projectId = String(outer.id);
-        continue;
-      }
-      // task_id appears inside a nested JSON string in the `content` field.
-      if (typeof outer.content === "string" && outer.content.includes("task_id")) {
-        try {
-          const inner = JSON.parse(outer.content);
-          const imgs = Array.isArray(inner?.generated_images) ? inner.generated_images : [];
-          for (const img of imgs) {
-            if (img?.task_id) taskIds.push(String(img.task_id));
-          }
-        } catch {
-          // content wasn't JSON — skip.
-        }
-      }
-    } catch {
-      // line wasn't JSON — skip.
-    }
-  }
-  return [projectId, taskIds];
-}
-
-/**
- * Poll /api/ig_tasks_status (SSE) until TASKS_STATUS_COMPLETE arrives, then collect the
- * image_urls for each requested task id. Matches genspark2api pollTaskStatus.
- *
- * Returns an array of image URL strings (one per successful task). Tasks that didn't reach
- * SUCCESS status are skipped silently — genspark2api does the same.
- */
-async function pollImageTaskStatus(taskIds, cookieHeader, signal, log) {
-  const imageUrls = [];
-  const requestBody = JSON.stringify({ task_ids: taskIds });
-
-  let response;
-  try {
-    response = await fetch(IMAGE_TASK_STATUS_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "*/*",
-        "Origin": GENSPARK_BASE,
-        "Referer": `${GENSPARK_BASE}/`,
-        "Cookie": cookieHeader,
-        "User-Agent": GENSPARK_USER_AGENT,
-      },
-      body: requestBody,
-      signal,
-    });
-  } catch (err) {
-    log?.error?.("GENSPARK-WEB", `Image status poll fetch failed: ${err.message || String(err)}`);
-    return imageUrls;
-  }
-
-  if (!response.body) return imageUrls;
-
-  for await (const event of readGensparkSseEvents(response.body, signal)) {
-    if (!event || typeof event !== "object") continue;
-    if (event.type !== "TASKS_STATUS_COMPLETE") continue;
-    const finalStatus = event.final_status;
-    if (!finalStatus || typeof finalStatus !== "object") continue;
-    for (const taskId of taskIds) {
-      const task = finalStatus[taskId];
-      if (!task || typeof task !== "object") continue;
-      if (task.status !== "SUCCESS") continue;
-      const urls = Array.isArray(task.image_urls) ? task.image_urls : [];
-      if (urls.length > 0 && typeof urls[0] === "string") {
-        imageUrls.push(urls[0]);
-      }
-    }
-  }
-  return imageUrls;
-}
-
-/**
- * Build the OpenAI chat completion response (streaming or non-streaming) that wraps the
- * generated image URLs as Markdown image links. This matches genspark2api ChatForOpenAI's
- * image-model branch: the image URLs are returned as a Markdown image inside the assistant
- * message content so any OpenAI-compatible client renders them inline.
- */
-function buildImageChatResponse(imageUrls, prompt, model, stream) {
-  const cid = `chatcmpl-genspark-img-${crypto.randomUUID().slice(0, 12)}`;
-  const created = Math.floor(Date.now() / 1000);
-  const markdown = imageUrls.map((u) => `![Image](${u})`).join("\n");
-
-  if (stream) {
-    const encoder = new TextEncoder();
-    const sseStream = new ReadableStream({
-      start(controller) {
-        try {
-          // Initial role chunk.
-          controller.enqueue(encoder.encode(sseChunk({
-            id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
-            choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null, logprobs: null }],
-          })));
-          // Single content delta with all image URLs as Markdown.
-          if (markdown) {
-            controller.enqueue(encoder.encode(sseChunk({
-              id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
-              choices: [{ index: 0, delta: { content: markdown }, finish_reason: null, logprobs: null }],
-            })));
-          }
-          // Terminal chunk.
-          controller.enqueue(encoder.encode(sseChunk({
-            id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: null,
-            choices: [{ index: 0, delta: {}, finish_reason: "stop", logprobs: null }],
-          })));
-          controller.enqueue(encoder.encode(SSE_DONE));
-        } finally {
-          controller.close();
-        }
-      },
-    });
-    return new Response(sseStream, { status: 200, headers: { ...SSE_HEADERS_NO_BUFFER } });
-  }
-
-  // Non-streaming: return the chat.completion JSON with the markdown content.
-  const promptTokens = Math.ceil(prompt.length / 4);
-  const completionTokens = Math.ceil(markdown.length / 4);
-  return new Response(JSON.stringify({
-    id: cid,
-    object: "chat.completion",
-    created,
-    model,
-    system_fingerprint: null,
-    choices: [{
-      index: 0,
-      message: { role: "assistant", content: markdown },
-      finish_reason: "stop",
-      logprobs: null,
-    }],
-    usage: {
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      total_tokens: promptTokens + completionTokens,
-    },
-  }), { status: 200, headers: { "Content-Type": "application/json" } });
-}
-
-// ── Executor ──────────────────────────────────────────────────────────────────
-
-export class GensparkWebExecutor extends BaseExecutor {
-  constructor() {
-    super("genspark-web", PROVIDERS["genspark-web"]);
-  }
-
-  async execute({ model, body, stream, credentials, signal, log }) {
-    const messages = body?.messages;
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      const errResp = new Response(JSON.stringify({
-        error: { message: "Missing or empty messages array", type: "invalid_request" },
-      }), { status: 400, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
-    }
-
-    const cookieHeader = buildCookieHeader(credentials);
-    if (!cookieHeader) {
-      const errResp = new Response(JSON.stringify({
-        error: {
-          message: "Genspark session_id cookie is required. Paste your session_id value (or the full 'session_id=abc123' string) into the provider's cookie field.",
-          type: "invalid_request",
-        },
-      }), { status: 401, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
-    }
-
-    // Detect search mode: any text model with a "-search" suffix.
-    const isSearch = typeof model === "string" && model.endsWith("-search");
-    const baseModel = isSearch ? model.replace(/-search$/, "") : model;
-    // Image model? → route to the COPILOT_MOA_IMAGE flow (image generation with task polling).
-    if (IMAGE_MODEL_LIST.has(baseModel)) {
-      return await this.executeImage({ model, baseModel, body, stream, cookieHeader, signal, log });
-    }
-
-    // Hide reasoning? Read from provider-specific data or default to showing it.
-    const hideReasoning = credentials?.providerSpecificData?.hideReasoning === true;
-
-    const transformedMessages = transformMessages(messages, baseModel);
-    if (transformedMessages.length === 0) {
-      const errResp = new Response(JSON.stringify({
-        error: { message: "Empty messages after processing", type: "invalid_request" },
-      }), { status: 400, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
-    }
-
-    const requestBody = buildChatRequestBody(baseModel, transformedMessages, isSearch);
-    const headers = {
-      "Content-Type": "application/json",
-      "Accept": "text/event-stream",
-      "Origin": GENSPARK_BASE,
-      "Referer": `${GENSPARK_BASE}/`,
-      "Cookie": cookieHeader,
-      "User-Agent": GENSPARK_USER_AGENT,
-    };
-
-    log?.info?.("GENSPARK-WEB", `Query to ${model} (search=${isSearch}), msg_count=${transformedMessages.length}`);
-
-    let response;
-    try {
-      response = await fetch(GENSPARK_ASK_API, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(requestBody),
-        signal,
-      });
-    } catch (err) {
-      log?.error?.("GENSPARK-WEB", `Fetch failed: ${err.message || String(err)}`);
-      const errResp = new Response(JSON.stringify({
-        error: {
-          message: `Genspark connection failed: ${err.message || String(err)}`,
-          type: "upstream_error",
-        },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    if (!response.ok) {
-      const status = response.status;
-      let errMsg = `Genspark returned HTTP ${status}`;
-      if (status === 401 || status === 403) {
-        errMsg = "Genspark auth failed — session_id cookie may be expired or invalid. Re-paste the session_id value from genspark.ai.";
-      } else if (status === 429) {
-        errMsg = "Genspark rate limited. Wait a moment and retry, or rotate session_id cookies.";
-      }
-      log?.warn?.("GENSPARK-WEB", errMsg);
-      const errResp = new Response(JSON.stringify({
-        error: { message: errMsg, type: "upstream_error", code: `HTTP_${status}` },
-      }), { status, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    if (!response.body) {
-      const errResp = new Response(JSON.stringify({
-        error: { message: "Genspark returned empty response body", type: "upstream_error" },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    // Genspark sometimes returns 200 with an error body (rate-limit, not-login, Cloudflare).
-    // We can't peek without consuming the stream, so we wrap the body in a small inspector that
-    // reads the first chunk, classifies it, and either short-circuits with an error Response or
-    // hands off a re-streamed body to the consumer.
-    const inspected = await inspectFirstChunk(response.body, log);
-    if (inspected.error) {
-      const errResp = new Response(JSON.stringify({
-        error: { message: inspected.error, type: "upstream_error", code: inspected.code },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    const cid = `chatcmpl-genspark-${crypto.randomUUID().slice(0, 12)}`;
-    const created = Math.floor(Date.now() / 1000);
-
-    let finalResponse;
-    if (stream) {
-      const sseStream = buildStreamingResponse(
-        inspected.stream, model, cid, created, baseModel, isSearch, hideReasoning, signal,
-      );
-      finalResponse = new Response(sseStream, {
-        status: 200,
-        headers: { ...SSE_HEADERS_NO_BUFFER },
-      });
-    } else {
-      finalResponse = await buildNonStreamingResponse(
-        inspected.stream, model, cid, created, baseModel, isSearch, hideReasoning, signal,
-      );
-    }
-    return { response: finalResponse, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-  }
-
-  /**
-   * Image generation flow. Mirrors genspark2api/controller/chat.go ImageProcess:
-   *   1. Extract the prompt from the last user message (string or array text part).
-   *   2. POST /api/copilot/ask with type=COPILOT_MOA_IMAGE → NDJSON body with task_ids.
-   *   3. Parse the body to extract task_ids.
-   *   4. Poll /api/ig_tasks_status until TASKS_STATUS_COMPLETE.
-   *   5. Build an OpenAI chat completion (stream or non-stream) with the image URLs as
-   *      Markdown image links in the assistant message content.
-   *
-   * Error handling mirrors the chat flow: Genspark returns 200 with an error body for
-   * rate-limit / free-limit / not-login / Cloudflare cases, so we read the body and
-   * classify before treating it as a successful image-task response.
-   */
-  async executeImage({ model, baseModel, body, stream, cookieHeader, signal, log }) {
-    // Extract the prompt from the last user message. Accept both string content and
-    // array content (OpenAI multipart format) — concatenate the text parts.
-    const messages = body?.messages || [];
-    let prompt = "";
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (!msg || msg.role !== "user") continue;
-      const content = msg.content;
-      if (typeof content === "string") {
-        prompt = content;
-      } else if (Array.isArray(content)) {
-        prompt = content
-          .filter((c) => c && typeof c === "object" && c.type === "text")
-          .map((c) => String(c.text || ""))
-          .join("\n");
-      }
-      if (prompt) break;
-    }
-    if (!prompt.trim()) {
-      const errResp = new Response(JSON.stringify({
-        error: {
-          message: `Image generation requested with model ${model} but no prompt text was found in the messages array.`,
-          type: "invalid_request",
-        },
-      }), { status: 400, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
-    }
-
-    const requestBody = buildImageRequestBody(baseModel, prompt);
-    const headers = {
-      "Content-Type": "application/json",
-      // Image endpoint uses */* Accept (not text/event-stream) — matches genspark2api makeImageRequest.
-      "Accept": "*/*",
-      "Origin": GENSPARK_BASE,
-      "Referer": `${GENSPARK_BASE}/`,
-      "Cookie": cookieHeader,
-      "User-Agent": GENSPARK_USER_AGENT,
-    };
-
-    log?.info?.("GENSPARK-WEB", `Image gen ${model} (prompt_len=${prompt.length})`);
-
-    let response;
-    try {
-      response = await fetch(GENSPARK_ASK_API, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(requestBody),
-        signal,
-      });
-    } catch (err) {
-      log?.error?.("GENSPARK-WEB", `Image fetch failed: ${err.message || String(err)}`);
-      const errResp = new Response(JSON.stringify({
-        error: {
-          message: `Genspark image connection failed: ${err.message || String(err)}`,
-          type: "upstream_error",
-        },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    if (!response.ok) {
-      const status = response.status;
-      let errMsg = `Genspark image API returned HTTP ${status}`;
-      if (status === 401 || status === 403) {
-        errMsg = "Genspark auth failed — session_id cookie may be expired or invalid.";
-      } else if (status === 429) {
-        errMsg = "Genspark rate limited. Wait a moment and retry, or rotate session_id cookies.";
-      }
-      log?.warn?.("GENSPARK-WEB", errMsg);
-      const errResp = new Response(JSON.stringify({
-        error: { message: errMsg, type: "upstream_error", code: `HTTP_${status}` },
-      }), { status, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    // Read the full body — image endpoint returns a non-streaming NDJSON blob, not an SSE stream.
-    let bodyText;
-    try {
-      bodyText = await response.text();
-    } catch (err) {
-      const errResp = new Response(JSON.stringify({
-        error: { message: `Failed to read image response: ${err.message || String(err)}`, type: "upstream_error" },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    // Classify known error signatures (rate-limit, free-limit, not-login, Cloudflare, server-error).
-    // These come through as 200 with an error payload — same pattern as the chat flow.
-    const errKind = classifyError(bodyText);
-    if (errKind) {
-      let errMsg;
-      switch (errKind) {
-        case "rate_limit":
-          errMsg = "Genspark rate limit exceeded. Rotate session_id cookies or wait a moment.";
-          break;
-        case "free_limit":
-          errMsg = "Genspark free usage limit reached for this session_id. Switch to a Plus session or another cookie.";
-          break;
-        case "not_login":
-          errMsg = "Genspark session is not logged in. The session_id cookie is invalid or expired.";
-          break;
-        case "cloudflare":
-          errMsg = "Genspark is behind a Cloudflare challenge. Configure an outbound proxy (PROXY_URL) or retry from a different IP.";
-          break;
-        case "server_error":
-          errMsg = "Genspark internal server error. Try again later.";
-          break;
-        case "service_unavailable":
-          errMsg = "Genspark service is overloaded. Try again later.";
-          break;
-        default:
-          errMsg = `Genspark upstream error (${errKind}).`;
-      }
-      log?.warn?.("GENSPARK-WEB", `${errKind}: ${errMsg}`);
-      const errResp = new Response(JSON.stringify({
-        error: { message: errMsg, type: "upstream_error", code: errKind.toUpperCase() },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    // Extract task_ids from the response body.
-    const [projectId, taskIds] = extractImageTaskIds(bodyText);
-    if (taskIds.length === 0) {
-      log?.error?.("GENSPARK-WEB", `No image task_ids in response body (len=${bodyText.length}). First 200 chars: ${bodyText.slice(0, 200)}`);
-      const errResp = new Response(JSON.stringify({
-        error: {
-          message: "Genspark image API returned no task_ids. The session may be rate-limited or the prompt may have been rejected.",
-          type: "upstream_error",
-          code: "NO_TASK_IDS",
-        },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    log?.debug?.("GENSPARK-WEB", `Image tasks: ${taskIds.length} (project=${projectId})`);
-
-    // Poll for completion.
-    const imageUrls = await pollImageTaskStatus(taskIds, cookieHeader, signal, log);
-    if (imageUrls.length === 0) {
-      const errResp = new Response(JSON.stringify({
-        error: {
-          message: "Genspark image generation produced no image URLs. The tasks may have failed or timed out.",
-          type: "upstream_error",
-          code: "NO_IMAGE_URLS",
-        },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
-      return { response: errResp, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
-    }
-
-    log?.info?.("GENSPARK-WEB", `Image gen complete: ${imageUrls.length} image(s)`);
-
-    const finalResponse = buildImageChatResponse(imageUrls, prompt, model, stream);
-    return { response: finalResponse, url: GENSPARK_ASK_API, headers, transformedBody: requestBody };
+/** Map a classifyError() kind to an honest { message, code, status }. */
+function errorForKind(kind) {
+  switch (kind) {
+    case "rate_limit":
+      return { message: "Genspark rate limit exceeded. Rotate session cookies or wait a moment.", code: "RATE_LIMIT", status: 429 };
+    case "free_limit":
+      return { message: "Genspark free usage limit reached for this session. Use a Plus session or another cookie jar.", code: "FREE_LIMIT", status: 402 };
+    case "not_login":
+      return { message: "Genspark session is not logged in. The cookie jar is invalid or expired — re-export from genspark.ai.", code: "NOT_LOGIN", status: 401 };
+    case "cloudflare":
+      return { message: "Genspark returned a Cloudflare challenge. The TLS sidecar normally bypasses this — if it persists, verify the Python sidecar venv or use a residential proxy.", code: "CLOUDFLARE", status: 502 };
+    case "server_error":
+      return { message: "Genspark internal server error. Try again later.", code: "SERVER_ERROR", status: 502 };
+    case "service_unavailable":
+      return { message: "Genspark service is overloaded. Try again later.", code: "SERVICE_UNAVAILABLE", status: 503 };
+    default:
+      return { message: `Genspark upstream error (${kind}).`, code: "UPSTREAM_ERROR", status: 502 };
   }
 }
 
 /**
- * Read the first chunk of a Genspark response body and check it against the genspark2api error
- * signatures. If we detect a known error, return { error, code } and discard the body. Otherwise
- * return { stream } — a ReadableStream that replays the buffered first chunk followed by the
- * remaining body, so downstream consumers see the full stream.
+ * Read the first chunk of a Genspark sidecar body stream and check it against the known
+ * error signatures. If detected, return { error, code, status } and discard the body.
+ * Otherwise return { stream } — a ReadableStream that replays the buffered first chunk
+ * followed by the remaining body, so downstream consumers see the full stream.
  *
- * This is necessary because Genspark returns 200 with an error payload (rather than a 4xx/5xx)
- * for rate-limit, free-limit, not-login, and Cloudflare-challenge cases.
+ * Necessary because ask_proxy can stream an error frame/body (not-login "bad request cf",
+ * HTML challenge, JSON error) even though the exposed transport path is a live stream.
  */
 async function inspectFirstChunk(body, log) {
   const reader = body.getReader();
@@ -993,7 +437,6 @@ async function inspectFirstChunk(body, log) {
   let buffer = "";
   let firstChunk;
   try {
-    // Read enough to identify error patterns (they all fit in the first ~512 bytes).
     while (buffer.length < 2048) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -1003,42 +446,15 @@ async function inspectFirstChunk(body, log) {
       // Quick exit: classify as soon as we have a complete error signature.
       const errKind = classifyError(buffer);
       if (errKind) {
-        let message;
-        let code;
-        switch (errKind) {
-          case "rate_limit":
-            message = "Genspark rate limit exceeded. Rotate session_id cookies or wait a moment.";
-            code = "RATE_LIMIT";
-            break;
-          case "free_limit":
-            message = "Genspark free usage limit reached for this session_id. Switch to a Plus session or another cookie.";
-            code = "FREE_LIMIT";
-            break;
-          case "not_login":
-            message = "Genspark session is not logged in. The session_id cookie is invalid or expired — re-paste from genspark.ai.";
-            code = "NOT_LOGIN";
-            break;
-          case "cloudflare":
-            message = "Genspark is behind a Cloudflare challenge. Configure an outbound proxy (PROXY_URL) or retry from a different IP.";
-            code = "CLOUDFLARE";
-            break;
-          case "server_error":
-            message = "Genspark internal server error. Try again later.";
-            code = "SERVER_ERROR";
-            break;
-          case "service_unavailable":
-            message = "Genspark service is overloaded. Try again later.";
-            code = "SERVICE_UNAVAILABLE";
-            break;
-          default:
-            message = `Genspark upstream error (${errKind}).`;
-            code = "UPSTREAM_ERROR";
-        }
+        const { message, code, status } = errorForKind(errKind);
         log?.warn?.("GENSPARK-WEB", `${code}: ${message}`);
-        return { error: message, code };
+        return { error: message, code, status };
       }
-      // If the buffer already contains a project_start event, we're past the error window.
-      if (buffer.includes('"type":"project_start"') || buffer.includes('"type":"message_field"')) {
+      // Past the error window once a real event frame begins streaming.
+      // Genspark serializes SSE frames with a space after the colon
+      // (`"type": "project_start"`); match regardless of whitespace so first-token
+      // latency isn't inflated by buffering a full 2 KB looking for a byte-exact hit.
+      if (/"type"\s*:\s*"(project_start|message_start|message_field)"/.test(buffer)) {
         break;
       }
     }
@@ -1074,17 +490,176 @@ async function inspectFirstChunk(body, log) {
   return { stream };
 }
 
+/**
+ * Resolve the sidecar's cookie-refresh Promise into a plain cookie-name→value map.
+ *
+ * The harness resolves `refreshedCookies` with either null (nothing changed) or a
+ * JSON object of the diff it emitted on stderr. Normalise both shapes so the
+ * caller can test `Object.keys(refreshed).length` safely; never throws.
+ */
+async function sidecarBodyRefreshedCookies(refreshedCookies) {
+  if (!refreshedCookies || typeof refreshedCookies.then !== "function") return null;
+  try {
+    const r = await refreshedCookies;
+    if (r && typeof r === "object") return r;
+  } catch { /* ignore — refresh is best-effort */ }
+  return null;
+}
+
+/** Quick JSON error Response helper. */
+function jsonError(status, message, type, code) {
+  return new Response(JSON.stringify({
+    error: { message, type: type || "upstream_error", ...(code ? { code } : {}) },
+  }), { status, headers: { "Content-Type": "application/json" } });
+}
+
+// ── Executor ──────────────────────────────────────────────────────────────────
+
+export class GensparkWebExecutor extends BaseExecutor {
+  constructor() {
+    super("genspark-web", PROVIDERS["genspark-web"]);
+  }
+
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions, onCredentialsRefreshed }) {
+    const messages = body?.messages;
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      const errResp = jsonError(400, "Missing or empty messages array", "invalid_request");
+      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
+    }
+
+    // Extract the parsed cookie jar (providerSpecificData.cookies, pasted jar, or bare
+    // session id). The jar is handed to the sidecar as an object — never logged/committed.
+    const cookieExtraction = extractGensparkWebCredentials(credentials || {});
+    if (!cookieExtraction.cookies || !cookieExtraction.valid || !cookieExtraction.cookies.session_id) {
+      const errResp = jsonError(
+        401,
+        "Genspark cookie jar is required. Paste your genspark.ai cookie export (F12 → Application → Cookies → www.genspark.ai → Export) into the provider's cookie field. session_id must be present.",
+        "invalid_request",
+        "COOKIE_MISSING",
+      );
+      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
+    }
+
+    // Detect search mode: any text model with a "-search" suffix.
+    const isSearch = typeof model === "string" && model.endsWith("-search");
+    const baseModel = isSearch ? model.replace(/-search$/, "") : model;
+    // Image models no longer have an upstream flow on genspark — honest error.
+    if (isGensparkImageModel(baseModel)) {
+      const errResp = jsonError(
+        400,
+        `Image generation is no longer supported by genspark (model "${baseModel}" was routed to the retired image flow). Use a text model instead.`,
+        "unsupported_model",
+        "IMAGE_RETIRED",
+      );
+      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
+    }
+
+    // Retained for provider config compat — reasoning is encrypted upstream and dropped,
+    // so there is no reasoning content to hide.
+    const hideReasoning = credentials?.providerSpecificData?.hideReasoning === true;
+
+    const transformedMessages = transformMessages(messages, baseModel);
+    if (transformedMessages.length === 0) {
+      const errResp = jsonError(400, "Empty messages after processing", "invalid_request");
+      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: body };
+    }
+
+    const requestBody = buildChatRequestBody(baseModel, transformedMessages, isSearch);
+
+    log?.info?.("GENSPARK-WEB", `Query to ${model} (search=${isSearch}), msg_count=${transformedMessages.length}, via TLS sidecar`);
+
+    // Detect an http(S) outbound proxy from the connection config (proxyOptions) or env.
+    // chatCore.js builds proxyOptions as { connectionProxyEnabled, connectionProxyUrl, … };
+    // the sidecar wants a plain "http://host:port" (or "http://user:pass@host:port") URL.
+    // connectionNoProxy on the connection means "don't proxy this one" — honor it.
+    let proxy = process.env.GENSPARK_PROXY_URL || null;
+    if (proxyOptions?.connectionProxyEnabled && proxyOptions.connectionProxyUrl && !proxyOptions.connectionNoProxy) {
+      proxy = String(proxyOptions.connectionProxyUrl);
+    }
+
+    const { body: sidecarBody, error: sidecarError, refreshedCookies: sidecarRefreshedCookies } = await gensparkSidecarFetch({
+      cookies: cookieExtraction.cookies,
+      payload: requestBody,
+      proxy,
+      timeoutMs: 90_000,
+      log,
+      signal,
+    });
+
+    if (sidecarError || !sidecarBody) {
+      const message = sidecarError?.message || "Genspark TLS sidecar unavailable";
+      log?.warn?.("GENSPARK-WEB", message);
+      const errResp = jsonError(sidecarError?.status || 502, message, "upstream_error", sidecarError?.code || "SIDECAR_UNAVAILABLE");
+      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: requestBody };
+    }
+
+    // Peek the first chunk for the honest error signatures (not-login, challenge, …).
+    let inspected;
+    try {
+      inspected = await inspectFirstChunk(sidecarBody, log);
+    } catch (err) {
+      log?.warn?.("GENSPARK-WEB", `sidecar stream failed before body: ${err.message || String(err)}`);
+      const errResp = jsonError(502, `Genspark TLS sidecar failed: ${err.message || String(err)}`, "upstream_error", "SIDECAR_STREAM");
+      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: requestBody };
+    }
+
+    if (inspected.error) {
+      const errResp = jsonError(inspected.status || 502, inspected.error, "upstream_error", inspected.code);
+      return { response: errResp, url: GENSPARK_ASK_API, headers: {}, transformedBody: requestBody };
+    }
+
+    const cid = `chatcmpl-genspark-${crypto.randomUUID().slice(0, 12)}`;
+    const created = Math.floor(Date.now() / 1000);
+
+    // Best-effort cookie write-back: on a successful authenticated call the sidecar
+    // returns cookies Cloudflare/anti-bot re-issued (fresher __cf_bm / cf_clearance).
+    // Persisting them into the connection means the user doesn't have to re-paste
+    // the jar every ~30 min when the datacenter IP gets challenged. Detached (no
+    // await before the response): the refresh Promise resolves only when the child
+    // closes (after the full answer streams), so awaiting here would delay TTFT.
+    // We resolve it inside the detached chain instead, and never block the stream.
+    if (onCredentialsRefreshed) {
+      sidecarBodyRefreshedCookies(sidecarRefreshedCookies)
+        .then((refreshed) => {
+          if (!refreshed || !Object.keys(refreshed).length) return;
+          // merge the refreshed diff over the jar we actually used for THIS call
+          // (cookieExtraction.cookies still holds session_id / c1 / c2 / gslogin),
+          // then write back the COMPLETE jar. updateProviderCredentials merges
+          // providerSpecificData one level deep, so a partial `cookies` diff would
+          // replace the whole map and silently drop session_id — which then makes
+          // the next request fail with COOKIE_MISSING. Sending the full merged jar
+          // keeps every field intact while still refreshing __cf_bm / cf_clearance.
+          const merged = { ...cookieExtraction.cookies, ...refreshed };
+          return onCredentialsRefreshed({ providerSpecificData: { cookies: merged } });
+        })
+        .then(() => log?.info?.("GENSPARK-WEB", "cookie refresh written back"))
+        .catch((e) => log?.warn?.("GENSPARK-WEB", `cookie write-back failed: ${e?.message || String(e)}`));
+    }
+
+    let finalResponse;
+    if (stream) {
+      const sseStream = buildStreamingResponse(
+        inspected.stream, model, cid, created, baseModel, isSearch, hideReasoning, signal,
+      );
+      finalResponse = new Response(sseStream, {
+        status: 200,
+        headers: { ...SSE_HEADERS_NO_BUFFER },
+      });
+    } else {
+      finalResponse = await buildNonStreamingResponse(
+        inspected.stream, model, cid, created, baseModel, isSearch, hideReasoning, signal,
+      );
+    }
+    return { response: finalResponse, url: GENSPARK_ASK_API, headers: {}, transformedBody: requestBody };
+  }
+}
+
 export {
   buildCookieHeader,
   transformMessages,
   buildChatRequestBody,
   classifyFieldEvent,
   classifyError,
-  buildImageRequestBody,
-  extractImageTaskIds,
-  TEXT_MODEL_LIST,
-  IMAGE_MODEL_LIST,
-  MIXTURE_MODEL_LIST,
 };
 
 export default GensparkWebExecutor;

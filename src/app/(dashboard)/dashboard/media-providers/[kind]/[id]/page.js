@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams, notFound, useRouter } from "next/navigation";
+import { getProviderIconSrc } from "@/shared/utils/providerIcon";
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { Card, Badge, Button, AddCustomEmbeddingModal, NoAuthProxyCard, ProviderInfoCard } from "@/shared/components";
@@ -84,7 +85,7 @@ export default function MediaProviderDetailPage() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           <div className="size-12 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${provider.color}15` }}>
             <ProviderIcon
-              src={`/providers/${provider.id}.png`}
+              src={getProviderIconSrc(provider.id)}
               alt={provider.name}
               size={48}
               className="object-contain rounded-lg max-w-[48px] max-h-[48px]"
