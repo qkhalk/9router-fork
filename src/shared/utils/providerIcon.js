@@ -8,6 +8,13 @@ const ICON_ALIASES = {
   "ollama-search": "ollama",
 };
 
+// Icon files are PNG by convention; vector logos are registered here by id so
+// they stay crisp at any dashboard size (rasterise to PNG instead when adding
+// yet another entry is not desired).
+const ICON_EXTENSIONS = {
+  "genspark-web": "svg",
+};
+
 // Runtime only — first 404 remembers id for the whole session
 const failedIds = new Set();
 
@@ -26,10 +33,12 @@ export function resolveProviderIconId(providerId) {
   return aliased;
 }
 
-/** `/providers/{id}.png` or null when previously failed. */
+/** `/providers/{id}.{ext}` (png default, svg per ICON_EXTENSIONS) or null when previously failed. */
 export function getProviderIconSrc(providerId) {
   const id = resolveProviderIconId(providerId);
-  return id ? `/providers/${id}.png` : null;
+  if (!id) return null;
+  const ext = ICON_EXTENSIONS[id] || "png";
+  return `/providers/${id}.${ext}`;
 }
 
 /** Call from img onError so later mounts skip the request. */

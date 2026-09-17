@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams, notFound, useRouter } from "next/navigation";
+import { getProviderIconSrc } from "@/shared/utils/providerIcon";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Card, Badge, Button, Toggle, AddCustomEmbeddingModal } from "@/shared/components";
@@ -61,7 +62,7 @@ function MediaProviderCard({ provider, kind, connections, isCustom, onToggle }) 
               style={{ backgroundColor: `${provider.color?.length > 7 ? provider.color : (provider.color ?? "#888") + "15"}` }}
             >
               <ProviderIcon
-                src={`/providers/${provider.id}.png`}
+                src={getProviderIconSrc(provider.id)}
                 alt={provider.name}
                 size={30}
                 className="object-contain rounded-lg max-w-[30px] max-h-[30px]"
@@ -113,7 +114,7 @@ function ComboList({ combos }) {
                   return (
                     <div key={`${entry}-${i}`} title={p?.name || entry} className="size-5 rounded flex items-center justify-center" style={{ backgroundColor: `${(p?.color ?? "#888")}15` }}>
                       <ProviderIcon
-                        src={`/providers/${pid}.png`}
+                        src={getProviderIconSrc(pid)}
                         alt={p?.name || pid}
                         size={18}
                         className="object-contain rounded max-w-[18px] max-h-[18px]"
