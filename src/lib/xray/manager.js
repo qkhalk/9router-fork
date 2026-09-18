@@ -42,6 +42,7 @@ import {
 } from "./process.js";
 import { testProxy, testProxyLatency, isSocksPortOpen, testProxyExitIpWithUri } from "./tester.js";
 import { startFilterXray, stopFilterXray, probeConfigViaApi } from "./apiFilter.js";
+import { shouldPruneFilterResult } from "./filterPrunePolicy.js";
 import {
   getSelectedXrayConfig,
   getXrayConfigById,
@@ -908,9 +909,12 @@ export async function testSingleConfigWithModel(configId, { model: modelStr, tim
 
     const rawText = await result.response.text().catch(() => "");
     if (!result.response.ok) {
+      // HTTP response through the tunnel = config works; failure is upstream
+      // (429/403/5xx), not a dead node — see probeModelViaChatCore tunnelOk.
       await updateXrayTestResult(config.id, { ok: false });
       return {
         ok: false,
+        tunnelOk: true,
         latencyMs,
         status: result.response.status,
         error: summarizeProbeBody(rawText) || `HTTP ${result.response.status}`,
@@ -1022,8 +1026,12 @@ async function probeModelViaChatCore(modelInfo, socksUri, timeoutMs) {
     return { ok: false, status: result.status || 502, error: result.error || "probe failed" };
   }
   if (!result.response.ok) {
+    // An HTTP response arrived through the tunnel — the config itself works;
+    // the rejection is upstream (429 quota / 403 fingerprint / model gate).
+    // Prune policy must keep such configs — they recover when the upstream
+    // condition clears (e.g. free-tier quota resets on the shared exit IP).
     const text = await result.response.text().catch(() => "");
-    return { ok: false, status: result.response.status, error: summarizeProbeBody(text) || `HTTP ${result.response.status}` };
+    return { ok: false, tunnelOk: true, status: result.response.status, error: summarizeProbeBody(text) || `HTTP ${result.response.status}` };
   }
   return { ok: true, status: result.response.status, error: null, _ttft: Date.now() - startedAt };
 }
@@ -1124,8 +1132,12 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
   let cursor = 0;
 
   const maybePruneConfig = async (config, result) => {
-    if (!prune || result.ok) return result;
-    if (runningActiveConfigId && config.id === runningActiveConfigId) {
+    const decision = shouldPruneFilterResult(result, { prune, runningActiveConfigId, configId: config.id });
+    if (!decision.prune) {
+      // Kept configs must keep flowing into recordCache — an upstream-rejected
+      // row (ok=false, status=429) is exactly what tells rotation "skip this
+      // exit for now" and paces re-tests via the fail-retry policy.
+      if (decision.reason === "upstream_rejected") return { ...result, pruned: false };
       return { ...result, pruned: false, pruneSkipped: "active_config_running" };
     }
     await deleteXrayConfig(config.id);

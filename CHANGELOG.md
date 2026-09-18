@@ -1,3 +1,21 @@
+# v0.6.52 (2026-09-18)
+
+The xray model filter was destroying rotation inventory over a transient
+condition: it pruned ANY config whose probe failed, including probes that
+got an upstream HTTP response through a perfectly working tunnel.
+
+## Fixes
+- **xray model filter pruned healthy tunnels on upstream 429/403**: the
+  probe result now carries `tunnelOk: true` when an HTTP response arrived
+  through the tunnel (429 shared-IP quota, 403 fingerprint, 5xx), and the
+  prune policy (`filterPrunePolicy.js`) only ever deletes configs that
+  failed at the CONNECTION level (timeout / dial / TLS — no response at
+  all). "108 tested, 0 usable, 108 failed" was this misread: 108 healthy
+  tunnels whose shared exit IPs had spent their free-tier quota — pruning
+  them would have permanently deleted IPs that recover on quota reset.
+  Upstream-rejected rows are still recorded as unhealthy so rotation skips
+  them and the fail-retry policy re-tests after the reset. +7 unit tests.
+
 # v0.6.51 (2026-09-18)
 
 opencode (zen) free tier fix, round two: within 24h of the identifier-format
