@@ -133,20 +133,24 @@ const REQUIRED_TOOL_NAMES = ["bash", "read"];
 const NOOP_TOOL_DESCRIPTION =
   "Do not call this tool. It exists only for API compatibility and must never be invoked.";
 
-function ensureAgentToolSurface(body) {
+// Both upstream formats gate on the same tool surface, but spell tools
+// differently: Chat Completions nests them under `function`, the Responses API
+// uses the flat {type, name, description, parameters} shape. Verified live on
+// muse-spark via /zen/v1/responses: no tools → 403, flat bash+read → streams.
+function toolName(tool) {
+  return tool?.name || tool?.function?.name;
+}
+
+function noopTool(name, flat) {
+  const fn = { name, description: NOOP_TOOL_DESCRIPTION, parameters: { type: "object", properties: {}, additionalProperties: false } };
+  return flat ? { type: "function", ...fn } : { type: "function", function: fn };
+}
+
+function ensureAgentToolSurface(body, flat = false) {
   if (!Array.isArray(body.tools)) body.tools = [];
-  const present = new Set(body.tools.map((t) => t?.function?.name).filter(Boolean));
+  const present = new Set(body.tools.map(toolName).filter(Boolean));
   for (const name of REQUIRED_TOOL_NAMES) {
-    if (!present.has(name)) {
-      body.tools.push({
-        type: "function",
-        function: {
-          name,
-          description: NOOP_TOOL_DESCRIPTION,
-          parameters: { type: "object", properties: {}, additionalProperties: false },
-        },
-      });
-    }
+    if (!present.has(name)) body.tools.push(noopTool(name, flat));
   }
 }
 
@@ -162,8 +166,9 @@ export class OpenCodeExecutor extends BaseExecutor {
     // same 403 FreeTierError as a bad fingerprint, even with valid headers.
     // chatCore's nonStreamingHandler aggregates the SSE for non-stream clients.
     body.stream = true;
-    if (!isResponsesModel(model)) ensureAgentToolSurface(body);
-    if (isResponsesModel(model)) {
+    const responsesModel = isResponsesModel(model);
+    ensureAgentToolSurface(body, responsesModel);
+    if (responsesModel) {
       // Responses API names the output cap max_output_tokens and takes thinking
       // as reasoning:{effort,summary} — normalize the Chat fields at this boundary.
       if (body.max_output_tokens === undefined) {

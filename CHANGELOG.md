@@ -17,8 +17,11 @@ BODY.
   ensures the tool surface: tool-calling clients pass through untouched
   (missing names are added alongside), non-tool clients get invisible
   no-op stubs (described "Do not call this tool…") so the model has
-  nothing to invoke. Responses-API models are untouched. 3 new unit
-  tests; verified live end-to-end — `oc/big-pickle` streams "pong" again.
+  nothing to invoke. The Responses API gates on the same surface with the
+  flat tool shape (`{type:"function", name, …}` instead of the nested
+  `function:{…}`) — verified live: muse-spark via `/zen/v1/responses`
+  403s without tools and streams with flat bash+read. 5 new unit tests;
+  verified live end-to-end — `oc/big-pickle` streams "pong" again.
 
 # v0.6.50 (2026-09-17)
 

@@ -74,6 +74,25 @@ describe("opencode free-tier fingerprint headers", () => {
     expect(names).toContain("read");
   });
 
+  it("injects the Responses flat tool shape for responses-served models (muse-spark)", () => {
+    const transformed = exec.transformRequest("muse-spark-1.2-contributor-free", body(), true, claudeCredentials);
+    const flat = transformed.tools.filter((t) => t.type === "function" && typeof t.name === "string");
+    expect(flat.map((t) => t.name)).toEqual(expect.arrayContaining(["bash", "read"]));
+    for (const tool of flat) {
+      expect(tool.function).toBeUndefined();
+      expect(tool.description).toContain("Do not call this tool");
+      expect(tool.parameters).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    }
+  });
+
+  it("does not duplicate flat bash/read when a responses client already sends them", () => {
+    const withTools = body();
+    withTools.tools = [{ type: "function", name: "bash", parameters: { type: "object", properties: {} } }];
+    const transformed = exec.transformRequest("muse-spark-1.2-contributor-free", withTools, true, claudeCredentials);
+    expect(transformed.tools.filter((t) => t.name === "bash")).toHaveLength(1);
+    expect(transformed.tools.filter((t) => t.name === "read")).toHaveLength(1);
+  });
+
   it("does not duplicate bash/read when the client already sends them", () => {
     const withTools = body();
     withTools.tools = [
