@@ -122,6 +122,34 @@ function normalizeOpencodeReasoning(model, body) {
   delete body.reasoning_effort;
 }
 
+// The free tier requires the request to carry the coding-agent tool surface —
+// verified empirically: a body whose `tools` array does not contain function
+// tools named "bash" AND "read" is rejected with 403 FreeTierError, regardless
+// of every other header (the official client always sends its 11 coding tools,
+// and injects a `_noop` tool itself when a session has none — same pattern).
+// Tool-calling clients that already send bash/read pass through untouched;
+// everyone else gets invisible no-op stubs so the model has nothing to call.
+const REQUIRED_TOOL_NAMES = ["bash", "read"];
+const NOOP_TOOL_DESCRIPTION =
+  "Do not call this tool. It exists only for API compatibility and must never be invoked.";
+
+function ensureAgentToolSurface(body) {
+  if (!Array.isArray(body.tools)) body.tools = [];
+  const present = new Set(body.tools.map((t) => t?.function?.name).filter(Boolean));
+  for (const name of REQUIRED_TOOL_NAMES) {
+    if (!present.has(name)) {
+      body.tools.push({
+        type: "function",
+        function: {
+          name,
+          description: NOOP_TOOL_DESCRIPTION,
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      });
+    }
+  }
+}
+
 export class OpenCodeExecutor extends BaseExecutor {
   constructor() {
     super("opencode", PROVIDERS.opencode);
@@ -134,6 +162,7 @@ export class OpenCodeExecutor extends BaseExecutor {
     // same 403 FreeTierError as a bad fingerprint, even with valid headers.
     // chatCore's nonStreamingHandler aggregates the SSE for non-stream clients.
     body.stream = true;
+    if (!isResponsesModel(model)) ensureAgentToolSurface(body);
     if (isResponsesModel(model)) {
       // Responses API names the output cap max_output_tokens and takes thinking
       // as reasoning:{effort,summary} — normalize the Chat fields at this boundary.

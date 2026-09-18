@@ -1,3 +1,25 @@
+# v0.6.51 (2026-09-18)
+
+opencode (zen) free tier fix, round two: within 24h of the identifier-format
+fix, opencode.ai added ANOTHER free-tier gate — this time on the request
+BODY.
+
+## Fixes
+- **opencode free — 403 FreeTierError without an agent tool surface**: the
+  zen server now requires the request body to carry a `tools` array
+  containing function tools named **`bash`** and **`read`** (verified by
+  live bisection: minimal bodies without tools, with an empty array, with a
+  `_noop` tool, or with any other tool names all 403; `bash`+`read` passes
+  with any descriptions and in any order). This mirrors the official
+  client, which always sends its 11 coding tools (bash, read, write, edit,
+  glob, grep, skill, task, todowrite, webfetch, websearch) and injects a
+  `_noop` tool itself when a session has none. `OpenCodeExecutor` now
+  ensures the tool surface: tool-calling clients pass through untouched
+  (missing names are added alongside), non-tool clients get invisible
+  no-op stubs (described "Do not call this tool…") so the model has
+  nothing to invoke. Responses-API models are untouched. 3 new unit
+  tests; verified live end-to-end — `oc/big-pickle` streams "pong" again.
+
 # v0.6.50 (2026-09-17)
 
 genspark-web overhaul: the provider was pointed at a dead endpoint with a

@@ -57,6 +57,34 @@ describe("opencode free-tier fingerprint headers", () => {
     expect(transformed.stream).toBe(true);
   });
 
+  it("injects the agent tool surface (bash+read) when the client sends no tools", () => {
+    const transformed = exec.transformRequest("big-pickle", body(), true, claudeCredentials);
+    const names = transformed.tools.map((t) => t.function?.name);
+    expect(names).toContain("bash");
+    expect(names).toContain("read");
+  });
+
+  it("keeps client tools and only fills the missing required names", () => {
+    const withTools = body();
+    withTools.tools = [{ type: "function", function: { name: "my_own_tool", parameters: { type: "object", properties: {} } } }];
+    const transformed = exec.transformRequest("big-pickle", withTools, true, claudeCredentials);
+    const names = transformed.tools.map((t) => t.function?.name);
+    expect(names).toContain("my_own_tool");
+    expect(names).toContain("bash");
+    expect(names).toContain("read");
+  });
+
+  it("does not duplicate bash/read when the client already sends them", () => {
+    const withTools = body();
+    withTools.tools = [
+      { type: "function", function: { name: "bash", parameters: { type: "object", properties: {} } } },
+      { type: "function", function: { name: "read", parameters: { type: "object", properties: {} } } },
+    ];
+    const transformed = exec.transformRequest("big-pickle", withTools, true, claudeCredentials);
+    expect(transformed.tools.filter((t) => t.function?.name === "bash")).toHaveLength(1);
+    expect(transformed.tools.filter((t) => t.function?.name === "read")).toHaveLength(1);
+  });
+
   it("cloaks non-opencode downstream clients with the live CLI UA", () => {
     exec.transformRequest("big-pickle", body(), true, claudeCredentials);
     expect(buildHeaders(exec, claudeCredentials)["User-Agent"]).toBe(CLI_UA);
