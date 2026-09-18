@@ -1134,11 +1134,17 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
   const maybePruneConfig = async (config, result) => {
     const decision = shouldPruneFilterResult(result, { prune, runningActiveConfigId, configId: config.id });
     if (!decision.prune) {
-      // Kept configs must keep flowing into recordCache — an upstream-rejected
-      // row (ok=false, status=429) is exactly what tells rotation "skip this
-      // exit for now" and paces re-tests via the fail-retry policy.
-      if (decision.reason === "upstream_rejected") return { ...result, pruned: false };
-      return { ...result, pruned: false, pruneSkipped: "active_config_running" };
+      // Only the active-config case sets pruneSkipped (which also suppresses
+      // recordCache — correct there: the running config's own result is
+      // already known live). Every other kept config must fall through to
+      // recordCache: an upstream-rejected row (ok=false, status=429) is
+      // exactly what tells rotation "skip this exit for now" and paces
+      // re-tests via the fail-retry policy. With prune disabled this is the
+      // ONLY path that persists the whole quota map — never flag it.
+      if (decision.reason === "active_config_running") {
+        return { ...result, pruned: false, pruneSkipped: "active_config_running" };
+      }
+      return { ...result, pruned: false };
     }
     await deleteXrayConfig(config.id);
     // Cascade: the config row is gone, so its cache entries are meaningless.
