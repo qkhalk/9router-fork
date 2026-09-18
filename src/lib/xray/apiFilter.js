@@ -319,6 +319,10 @@ export async function probeConfigViaApi(handle, config, workerIdx, { probeModel,
   if (!probe.ok) {
     return {
       ok: false,
+      // Upstream answered through the tunnel (429/403/5xx) — keep tunnelOk so
+      // the prune policy never deletes a config whose exit IP is merely out
+      // of quota (see filterPrunePolicy.js).
+      tunnelOk: probe.tunnelOk === true,
       latencyMs: Date.now() - startedAt,
       status: probe.status || 0,
       exitIp: "",
