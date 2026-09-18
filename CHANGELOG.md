@@ -14,7 +14,9 @@ got an upstream HTTP response through a perfectly working tunnel.
   tunnels whose shared exit IPs had spent their free-tier quota — pruning
   them would have permanently deleted IPs that recover on quota reset.
   Upstream-rejected rows are still recorded as unhealthy so rotation skips
-  them and the fail-retry policy re-tests after the reset. +7 unit tests.
+  them and the fail-retry policy re-tests after the reset. Cache persistence
+  is independent of the prune setting — with prune disabled (the recommended
+  setup) every probe still lands in the map rotation reads. +7 unit tests.
 
 # v0.6.51 (2026-09-18)
 
