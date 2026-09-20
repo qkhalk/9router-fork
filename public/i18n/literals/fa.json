@@ -1405,5 +1405,21 @@
   "added": "افزوده شد",
   "skipped": "رد شد",
   "Sign up / Learn more": "ثبت‌نام / بیشتر بدانید",
-  "Automatically register fresh TOTU AI accounts (disposable mail.tm mailbox) and add them as API-key connections, or fetch a batch now.": "به‌طور خودکار حساب‌های جدید TOTU AI را ثبت می‌کند (صندوق پستی یک‌بارمصرف mail.tm) و به‌عنوان اتصال کلید API اضافه می‌کند، یا اکنون یک دسته دریافت کنید."
+  "Automatically register fresh TOTU AI accounts (disposable mail.tm mailbox) and add them as API-key connections, or fetch a batch now.": "به‌طور خودکار حساب‌های جدید TOTU AI را ثبت می‌کند (صندوق پستی یک‌بارمصرف mail.tm) و به‌عنوان اتصال کلید API اضافه می‌کند، یا اکنون یک دسته دریافت کنید.",
+  "Combo & Vision Adapter": "آداپتور بینایی و ترکیبی",
+  "Vision Adapter": "آداپتور بینایی",
+  "Skills": "مهارت‌ها",
+  "Cached Cost": "هزینه‌ی کش‌شده",
+  "Compress prompts and outputs to save tokens": "فشرده‌سازی پرامپت‌ها و خروجی‌ها برای صرفه‌جویی در توکن‌ها",
+  "Manage your web providers": "مدیریت ارائه‌دهندگان خدمات وب خود را انجام دهید",
+  "providers": "ارائه‌دهندگان",
+  "combos": "ترکیبی",
+  "Configure enterprise Single Sign-On (SSO) for dashboard access using SAML 2.0 or OIDC.": "پیکربندی ورود تک‌نشانه سازمانی (SSO) برای دسترسی به داشبورد با استفاده از SAML 2.0 یا OIDC.",
+  "Optional SSO via Okta, Entra ID, Keycloak, or OIDC": "SSO اختیاری از طریق Okta، Entra ID، Keycloak یا OIDC",
+  "Single Sign-On (SSO)": "ورود یک‌باره (SSO)",
+  "SSO Protocol": "پروتکل SSO",
+  "Keep legacy password login.": "حفظ ورود با نام کاربری و رمز عبور قدیمی",
+  "Require SSO for dashboard access.": "برای دسترسی به داشبورد نیاز به SSO دارد.",
+  "Allow password or SSO login.": "اجازه ورود با رمز عبور یا ورود یک‌بار مصرف (SSO)",
+  "Save OIDC settings": "ذخیره تنظیمات OIDC"
 }

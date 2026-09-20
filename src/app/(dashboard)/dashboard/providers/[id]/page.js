@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { getProviderIconSrc, markProviderIconMissing } from "@/shared/utils/providerIcon";
-import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
+import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, XiaomiMimoAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
@@ -47,6 +47,7 @@ export default function ProviderDetailPage() {
   const [providerNode, setProviderNode] = useState(null);
   const [proxyPools, setProxyPools] = useState([]);
   const [showOAuthModal, setShowOAuthModal] = useState(false);
+  const [showXiaomiMimoModal, setShowXiaomiMimoModal] = useState(false);
   const [showIFlowCookieModal, setShowIFlowCookieModal] = useState(false);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
@@ -76,6 +77,8 @@ export default function ProviderDetailPage() {
   // OpenCode Free: upstream deprecation flags (api.json catalog) for row badges.
   // null = not synced yet — every model treated as unknown (fail-open).
   const [ocDeprecatedIds, setOcDeprecatedIds] = useState(null);
+  // Live-catalog fetch warning/error (surfaced for zed only; cursor behavior unchanged).
+  const [liveModelsError, setLiveModelsError] = useState(null);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
   const [confirmState, setConfirmState] = useState(null);
@@ -103,6 +106,11 @@ export default function ProviderDetailPage() {
         setShowAgRiskModal(true);
         return;
       }
+    }
+    // Xiaomi Desktop: auto-import local credentials first, OAuth as fallback
+    if (providerId === "xiaomi-mimo") {
+      setShowXiaomiMimoModal(true);
+      return;
     }
     if (isOAuth) {
       openOAuthConnection();
@@ -153,12 +161,8 @@ export default function ProviderDetailPage() {
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
-  // Live models only apply to Cursor with an active connection; deriving the
-  // display value here hides stale catalogs without a synchronous reset effect.
-  const cursorConnection = providerId === "cursor" ? connections.find((item) => item.isActive !== false) : undefined;
-  const liveCursorModels = cursorConnection?.id ? liveModels : [];
-  const models = providerId === "cursor" && liveCursorModels.length > 0
-    ? liveCursorModels
+  const models = (providerId === "cursor" || providerId === "zed") && liveModels.length > 0
+    ? liveModels
     : staticModels;
   const providerAlias = getProviderAlias(providerId);
   
@@ -474,24 +478,49 @@ export default function ProviderDetailPage() {
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Cursor's model availability is account-specific and changes frequently.
-  // Load the active account's live catalog for the dashboard; the static
-  // registry remains the fallback while the request is pending or unavailable.
+  // Live per-connection catalogs (cursor, zed): the static registry carries
+  // no usable list, so resolve from the active connection. Fires only when
+  // the provider id or connection list changes — no polling, no loop.
+  // Cursor path is statement-identical to before; zed adds error surfacing.
   useEffect(() => {
-    if (!cursorConnection?.id) return;
+    const isLiveCatalog = providerId === "cursor" || providerId === "zed";
+    if (!isLiveCatalog) {
+      setLiveModels([]);
+      return;
+    }
+
+    const connection = connections.find((item) => item.isActive !== false);
+    if (!connection?.id) {
+      setLiveModels([]);
+      if (providerId === "zed") setLiveModelsError(null);
+      return;
+    }
 
     let cancelled = false;
-    fetch(`/api/providers/${cursorConnection.id}/models`, { cache: "no-store" })
-      .then(async (res) => ({ ok: res.ok, data: await res.json() }))
+    if (providerId === "zed") setLiveModelsError(null);
+    fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" })
+      .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
       .then(({ ok, data }) => {
-        if (!cancelled && ok && Array.isArray(data.models) && data.models.length > 0) {
+        if (cancelled) return;
+        if (ok && Array.isArray(data?.models) && data.models.length > 0) {
           setLiveModels(data.models);
+          if (providerId === "zed" && data?.warning) setLiveModelsError(data.warning);
+          return;
+        }
+        if (providerId === "zed") {
+          setLiveModels([]);
+          setLiveModelsError(data?.warning || data?.error || "Zed returned no live models.");
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled && providerId === "zed") {
+          setLiveModels([]);
+          setLiveModelsError("Failed to reach the Zed model catalog.");
+        }
+      });
 
     return () => { cancelled = true; };
-  }, [cursorConnection]);
+  }, [providerId, connections]);
 
   // Fetch suggested models from provider's public API (if configured)
   useEffect(() => {
@@ -1803,7 +1832,36 @@ export default function ProviderDetailPage() {
           })()}
         </div>
         {!!modelsTestError && (
-          <p className="text-xs text-red-500 mb-3 break-words">{modelsTestError}</p>
+          <div className="mb-3">
+            <p className="text-xs text-red-500 break-words">{modelsTestError}</p>
+            {/RegionError|hosted in China|regionNotAllowed/i.test(modelsTestError) && (() => {
+              const str = typeof modelsTestError === "string" ? modelsTestError : JSON.stringify(modelsTestError);
+              const linkMatch = str.match(/https:\/\/opencode\.ai\/workspace\/[^\s"')]+/);
+              const wrkMatch = str.match(/wrk_[0-9A-Za-z]+/);
+              const targetUrl = linkMatch
+                ? (linkMatch[0].endsWith("/go") ? linkMatch[0] : `${linkMatch[0]}/go`)
+                : wrkMatch
+                  ? `https://opencode.ai/workspace/${wrkMatch[0]}/go`
+                  : "https://opencode.ai";
+
+              return (
+                <div className="mt-1.5">
+                  <a
+                    href={targetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600 hover:bg-amber-500/20 dark:text-amber-400 transition-colors"
+                  >
+                    <span>Allow China-hosted models</span>
+                    <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+                  </a>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+        {providerId === "zed" && !!liveModelsError && (
+          <p className="text-xs text-red-500 mb-3 break-words">{liveModelsError}</p>
         )}
         {renderModelsSection()}
       </Card>
@@ -1840,6 +1898,13 @@ export default function ProviderDetailPage() {
           onClose={() => setShowOAuthModal(false)}
         />
       )}
+
+      {/* Xiaomi Desktop: auto-import local credentials modal */}
+      <XiaomiMimoAuthModal
+        isOpen={showXiaomiMimoModal}
+        onSuccess={handleOAuthSuccess}
+        onClose={() => setShowXiaomiMimoModal(false)}
+      />
       {providerId === "iflow" && (
         <IFlowCookieModal
           isOpen={showIFlowCookieModal}
