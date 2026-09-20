@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams, notFound, useRouter } from "next/navigation";
+import { getProviderIconSrc } from "@/shared/utils/providerIcon";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, Button, Input, Toggle, ModelSelectModal } from "@/shared/components";
@@ -300,7 +301,7 @@ export default function ComboDetailPage() {
                 <div key={`${entry}-${idx}`} className="flex items-center gap-3 p-2 rounded-lg bg-black/[0.02] dark:bg-white/[0.02]">
                   <span className="text-xs text-text-muted w-5 text-center">{idx + 1}</span>
                   <ProviderIcon
-                    src={`/providers/${providerId}.png`}
+                    src={getProviderIconSrc(providerId)}
                     alt={p?.name || providerId}
                     size={24}
                     className="object-contain rounded shrink-0"

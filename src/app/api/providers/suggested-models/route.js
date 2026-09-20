@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FILTERS } from "./filters.js";
 import { ensureOpencodeCatalog } from "open-sse/providers/opencodeCatalog.js";
+import { ensureGensparkCatalog, getGensparkSuggestedModels } from "open-sse/providers/gensparkCatalog.js";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,14 @@ export async function GET(request) {
 
   if (!url || !type) {
     return NextResponse.json({ error: "Missing url or type" }, { status: 400 });
+  }
+
+  // genspark-web: the model list comes from two selector endpoints merged by
+  // the catalog (moa_models_config + models_config), not from the single
+  // fetcher URL — serve the catalog snapshot directly.
+  if (type === "genspark-web") {
+    await ensureGensparkCatalog();
+    return NextResponse.json({ data: getGensparkSuggestedModels() });
   }
 
   const filter = FILTERS[type];
