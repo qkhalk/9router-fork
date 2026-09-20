@@ -171,25 +171,36 @@ describe("OpenCode Free Executor Session Resolution", () => {
 });
 
 describe("OpenCode Free User-Agent Validation", () => {
-  it("defaults User-Agent to opencode/1.18.31 for non-opencode downstream clients", () => {
+  // Fork: the cloak UA is resolved live from the npm registry by
+  // opencodeCatalog (never a pinned version), so these assertions check the
+  // shape zen actually gates on — a versioned opencode UA >= 1.17 with the
+  // full real-CLI suffix — instead of a hardcoded number that would age.
+  const VERSIONED_UA_RE = /^opencode\/(\d+)\.(\d+)\.(\d+)( .*)?$/;
+  const uaVersionAtLeast117 = (ua) => {
+    const m = VERSIONED_UA_RE.exec(ua || "");
+    if (!m) return false;
+    return Number(m[1]) > 1 || (Number(m[1]) === 1 && Number(m[2]) >= 17);
+  };
+
+  it("defaults User-Agent to a versioned opencode UA for non-opencode downstream clients", () => {
     const executor = getExecutor("opencode");
     const headersNoUa = executor.buildHeaders({});
-    expect(headersNoUa["User-Agent"]).toBe("opencode/1.18.31");
+    expect(uaVersionAtLeast117(headersNoUa["User-Agent"])).toBe(true);
 
     const headersClaude = executor.buildHeaders({ rawHeaders: { "user-agent": "Claude-Code/1.0" } });
-    expect(headersClaude["User-Agent"]).toBe("opencode/1.18.31");
+    expect(uaVersionAtLeast117(headersClaude["User-Agent"])).toBe(true);
   });
 
-  it("replaces bare opencode with versioned opencode/1.18.31 to prevent 403 FreeTierError", () => {
+  it("replaces bare opencode with a versioned UA to prevent 403 FreeTierError", () => {
     const executor = getExecutor("opencode");
     const headers = executor.buildHeaders({ rawHeaders: { "user-agent": "opencode" } });
-    expect(headers["User-Agent"]).toBe("opencode/1.18.31");
+    expect(uaVersionAtLeast117(headers["User-Agent"])).toBe(true);
   });
 
   it("upgrades outdated opencode versions (< 1.17) to prevent 426 Upgrade Required", () => {
     const executor = getExecutor("opencode");
     const headers = executor.buildHeaders({ rawHeaders: { "user-agent": "opencode/1.15.0" } });
-    expect(headers["User-Agent"]).toBe("opencode/1.18.31");
+    expect(uaVersionAtLeast117(headers["User-Agent"])).toBe(true);
   });
 
   it("preserves valid opencode versions (>= 1.17)", () => {

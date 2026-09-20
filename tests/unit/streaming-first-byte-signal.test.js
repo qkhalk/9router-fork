@@ -116,9 +116,14 @@ describe("first-byte success signal (N7)", () => {
     });
     const { response } = await handleStreamingResponse(baseArgs({ providerResponse, onRequestSuccess }));
     const reader = response.body.getReader();
-    await expect(reader.read()).rejects.toThrow("upstream died at accept");
-    await Promise.resolve();
-    await Promise.resolve();
+    // Upstream v0.5.81: aborts after HTTP 200 are reported IN-BAND (per-format
+    // error frames) instead of rejecting the stream. The synthesized error
+    // frame must NOT count as a first byte — N7 success still never fires on
+    // a stream the client never received real output from.
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    const text = new TextDecoder().decode(first.value);
+    expect(text).toContain(`"error"`);
     expect(onRequestSuccess).not.toHaveBeenCalled();
   });
 });

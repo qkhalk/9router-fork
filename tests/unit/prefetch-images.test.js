@@ -57,7 +57,9 @@ describe("prefetchRemoteImages", () => {
   });
 
   it("openai source -> commandcode target: converts remote URL to base64", async () => {
-    const body = { messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "https://x/a.png" } }] }] };
+    // Unique URL: the C2 fetch cache would otherwise serve the entry cached by
+    // the earlier ollama test and the fetch mock would never fire.
+    const body = { messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "https://x/cc-unique.png" } }] }] };
     const n = await prefetchRemoteImages(body, FORMATS.OPENAI, FORMATS.COMMANDCODE);
     expect(n).toBe(1);
     expect(body.messages[0].content[0].image_url.url.startsWith("data:image/png;base64,")).toBe(true);

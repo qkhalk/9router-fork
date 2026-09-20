@@ -37,7 +37,7 @@ describe("bug: Claude → OpenAI bridge data loss", () => {
 
   // claude-to-openai.js:155-173 — tool_result image block dropped (text only)
   // KNOWN BUG
-  it.fails("tool_result with image block is not turned into raw JSON / dropped", () => {
+  it("tool_result with image block is not turned into raw JSON / dropped", () => {  // was it.fails: upstream v0.5.79/81 commandcode image fixes resolved the documented bug
     const out = T(FORMATS.CLAUDE, FORMATS.OPENAI, {
       messages: [
         { role: "assistant", content: [
