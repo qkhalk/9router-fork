@@ -765,6 +765,12 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         const valid = !!(data && data.user);
         return { valid, error: valid ? null : "Session expired — re-paste cookie" };
       }
+      case "opencode": {
+        const res = await fetchWithConnectionProxy("https://opencode.ai/zen/v1/models", {
+          headers: { Authorization: "Bearer public", "User-Agent": "opencode/1.18.31" },
+        }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "OpenCode free tier unavailable" };
+      }
       case "opencode-go": {
         // Probe /usage rather than a chat completion: a key whose plan window is
         // spent still answers 200 here but 401 on chat, so the old ping reported a

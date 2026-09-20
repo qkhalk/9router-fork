@@ -310,7 +310,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   }
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
-  const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
+  const reason = typeof errorText === "string" ? errorText.slice(0, 200) : "Provider error";
   const lockUpdate = buildModelLockUpdate(githubResetAtMs ? null : model, cooldownMs);
 
   // Scoped failures (e.g. /v1/search locking modelLock_websearch:*) still
