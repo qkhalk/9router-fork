@@ -19,8 +19,21 @@ describe("checkFallbackError — request-scoped vs account-scoped failures", () 
   });
 
   it("still falls back for account-scoped statuses", () => {
-    for (const status of [401, 402, 403, 404, 429]) {
+    // Fork C4 (NO_FALLBACK_STATUSES, see account-fallback-no-fallback.test.js):
+    // a BARE 401/402/404 with no account-specific wording is treated as a
+    // deterministic client error — no fallback, no lock. 403/429 stay
+    // account-scoped, and the account-specific 401/402 wordings still fall
+    // back via the text rules (which always win over C4).
+    for (const status of [403, 429]) {
       expect(checkFallbackError(status, "nope").shouldFallback).toBe(true);
+    }
+    expect(checkFallbackError(401, "invalid api key").shouldFallback).toBe(true);
+    expect(checkFallbackError(402, "insufficient credits").shouldFallback).toBe(true);
+    // C4 contract: the BARE statuses (no account-specific wording) stay
+    // request-scoped — retrying them on every account locks healthy
+    // connections for nothing.
+    for (const status of [401, 402, 404]) {
+      expect(checkFallbackError(status, "nope").shouldFallback).toBe(false);
     }
   });
 
