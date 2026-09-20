@@ -13,8 +13,10 @@ import {
   coerceResponsesArguments,
   coerceResponsesOutput,
 } from "../translator/formats/responsesApi.js";
+// Fork: live UA version + catalog-driven responses routing (providers/opencodeCatalog.js).
+import { ensureOpencodeCatalog, getOpencodeCliUserAgent, isResponsesServed } from "../providers/opencodeCatalog.js";
+import { getModelTargetFormat, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 
-const OPENCODE_UA = "opencode/1.18.31";
 const MAX_SESSION_LENGTH = 256;
 const MAX_TOOL_NAME_LEN = 128;
 const SESSION_HEADER = "x-opencode-session";
@@ -315,7 +317,15 @@ function baseModelId(model) {
 
 function isResponsesModel(model) {
   const base = baseModelId(model);
-  return RESPONSES_MODELS.has(base) || isMuseSparkModel(base);
+  if (RESPONSES_MODELS.has(base) || isMuseSparkModel(base)) return true;
+  // Fork: registry-declared targetFormat is authoritative for declared models;
+  // undeclared ones fall back to the live api.json catalog (same metadata the
+  // official CLI reads), which picks up newly released responses-only models
+  // without a code change.
+  ensureOpencodeCatalog();
+  const declared = getModelTargetFormat(PROVIDER_ID_TO_ALIAS.opencode, base);
+  if (declared) return declared === "openai-responses";
+  return isResponsesServed(base);
 }
 
 function isMessagesModel(model) {
@@ -534,7 +544,10 @@ export class OpenCodeExecutor extends BaseExecutor {
     const headers = {
       "Content-Type": "application/json",
       "Authorization": "Bearer public",
-      "User-Agent": isOpencodeDownstream ? downstreamUa : OPENCODE_UA,
+      // Fork: cloak non-opencode downstream clients with the live CLI UA
+      // (version resolved from the npm registry in opencodeCatalog — no
+      // stale hardcode; upstream's pinned OPENCODE_UA is the fallback).
+      "User-Agent": isOpencodeDownstream ? downstreamUa : getOpencodeCliUserAgent(),
       "x-opencode-client": lower["x-opencode-client"] || "desktop",
       "x-opencode-session": session,
       "x-opencode-request": requestId,
