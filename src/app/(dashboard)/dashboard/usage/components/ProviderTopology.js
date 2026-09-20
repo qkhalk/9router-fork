@@ -61,7 +61,7 @@ function ProviderNode({ data }) {
             loading="lazy"
             decoding="async"
             onError={() => {
-              const m = imageUrl?.match(/^\/providers\/([^/]+)\.png$/i);
+              const m = imageUrl?.match(/^\/providers\/([^/]+)\.(?:png|svg)$/i);
               if (m) markProviderIconMissing(m[1]);
               setImgError(true);
             }}

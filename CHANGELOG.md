@@ -1,3 +1,49 @@
+# v0.6.49 (2026-09-17)
+
+genspark-web overhaul: the provider was pointed at a dead endpoint with a
+frozen model list, and its dashboard entry fell back to a "GS" letter badge.
+
+## Fixes
+- **genspark-web — dead endpoint**: genspark.ai retired `/api/copilot/ask`
+  ("This feature has been retired. Please use AI Chat instead") — every chat
+  request through the provider returned that notice as the assistant message.
+  The executor now speaks the live AI Chat protocol: POST
+  `/api/agent/ask_proxy` with body type `ai_chat` (`ai_chat_model`,
+  `ai_chat_enable_search`, per-message ids, `session_state` mirror,
+  `user_s_input`), including the Python TLS sidecar (curl_cffi Chrome
+  impersonation) required by genspark's Cloudflare edge, full cookie-jar
+  parsing (`session_id` + `__cf_bm` + `c1`/`c2` + `gslogin`), Cloudflare
+  cookie auto-refresh and the `-search` web-grounding suffix. Ported from the
+  fork's battle-tested implementation (SharpWizard/genspark-py + genspark2api
+  references).
+- **genspark-web — hardcoded model list replaced with live catalog**: the
+  15-id list (mirroring genspark2api constants.go) shipped stale ids while
+  genspark rotates its lineup weekly. New `providers/gensparkCatalog.js`
+  mirrors the same endpoints the AI Chat selector reads —
+  `api/moa_models_config` (chat, 56 entries) + `api/models_config` (image/
+  audio/video) — on a background 6h refresh that fails open to the previous
+  snapshot (and ultimately to the classic fallback set). The dashboard
+  suggestion list is served from the catalog via a `genspark-web` filter on
+  the suggested-models route (hidden selector entries dropped, MOA mix
+  included). Model ids are forwarded **verbatim** as `ai_chat_model` —
+  verified live that ids absent from every list (`glm-5p3`) and the
+  Mixture-of-Agents comma mix (`gpt-5.6-luna,claude-sonnet-5,gemini-3.7-flash`)
+  are accepted upstream — so brand-new genspark models work even before the
+  catalog refreshes.
+- **genspark-web — real vector logo**: the dashboard rendered a "GS" letter
+  badge because icon lookup only ever tried `/providers/<id>.png`. Icon
+  resolution gained a per-id extension map (`genspark-web` → svg), the
+  provider-icon regexes accept `.svg`, and a proper four-point spark SVG
+  (brand orange gradient) ships as `public/providers/genspark-web.svg`. The
+  stray `genspark.svg` (a PNG in an SVG wrapper, unreachable by any lookup)
+  is removed. Literal `.png` srcs across providers/media-providers/usage
+  pages now go through `getProviderIconSrc` so the map applies everywhere.
+- **tests**: genspark suite ported and extended for the live catalog
+  (verbatim passthrough, fallback set, suggestion shape); the
+  golden-url-header snapshot updated — it pinned the retired `copilot/ask`
+  URL and the stale `9Router/0.6.35` client version (pre-existing upstream
+  staleness; live endpoint and current version are the correct values).
+
 # v0.6.48 (2026-09-12)
 
 Upstream-sync release: merges upstream **v0.5.75** into the fork
