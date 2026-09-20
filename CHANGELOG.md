@@ -1,48 +1,102 @@
-# v0.6.49 (2026-09-17)
+# v0.6.49 (2026-09-20)
 
-genspark-web overhaul: the provider was pointed at a dead endpoint with a
-frozen model list, and its dashboard entry fell back to a "GS" letter badge.
+Upstream-sync release: merges upstream **v0.5.81** (33 commits, v0.5.75 →
+v0.5.81), merges PR #12 (genspark-web live AI Chat), and cherry-picks the
+xray model-filter prune fix from PR #11. PR #11's opencode fingerprint
+commits are superseded by upstream's implementation of the same gates
+(better: anti-429 stable sessions, exact CLI id derivation, generic
+forceStream); the fork's live-UA + catalog routing deltas are re-ported on
+top. PR #13 (auto-release CI) was declined — releases stay manual.
 
-## Fixes
-- **genspark-web — dead endpoint**: genspark.ai retired `/api/copilot/ask`
-  ("This feature has been retired. Please use AI Chat instead") — every chat
-  request through the provider returned that notice as the assistant message.
-  The executor now speaks the live AI Chat protocol: POST
+## Upstream highlights now in the fork
+- **Xiaomi MiMo**: MiMo Desktop support merged into `xiaomi-mimo` with dual
+  auth (API key + Desktop/OAuth session), Preview models, encrypted-callback
+  OAuth flow.
+- **Claude Code**: 1M-context toggle (`[1m]` marker) and
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` driven from the dashboard.
+- **OpenCode / OpenCode Go**: zen free-tier 403 `FreeTierError` and 429s
+  fixed with canonical session ids (exact CLI derivation), version-gated UA
+  relay, stable session per identity (LRU+TTL), decoy `bash`+`read` tools
+  for both chat and Responses shapes, `forceStream` SSE aggregation for
+  non-stream clients, Muse Free tool-choice normalization, reasoning-item
+  stripping, Union Alpha via Messages API, China-region handling.
+- **Kiro**: underscores preserved in tool names (`mcp__server__tool`) and
+  client names restored in responses; neutral placeholder for
+  tool-result-only turns; tool-result images forwarded.
+- **Stream**: aborts after HTTP 200 are reported in-band (per-format error
+  frames carrying a stall/disconnect message) instead of closing silently.
+- **Models**: DeepSeek-V4.1-Flash on DeepSeek/CodeBuddy-Intl/Ollama
+  (`deepseek-v4.1-flash:cloud`); `low..max` effort levels + vision for
+  DeepSeek-V4.*.
+- **Command Code**: images and `reasoning_effort` preserved on
+  `/alpha/generate`; transient stream-error retry without fake stop chunks;
+  Quota Tracker support.
+- **Zed**: OAuth lifecycle hardened (`systemId` preserved, proxy timeout
+  renewed), live model resolution with error surfacing on the provider
+  page.
+- **Antigravity**: cached thought signatures scoped to model family; Claude
+  Code billing headers stripped from system prompts; Hermes identity
+  sanitized.
+- **Auth**: an account is no longer cooled down for request-scoped 4xx
+  errors; dashboard session cookie maxAge hardened.
+- **Usage**: DeepSeek credit balance displayed as currency credit.
+- **i18n**: Persian (fa) translation integrated (merged key-union with the
+  fork's existing fa literals).
+
+## Features (PR #12, qkhalk) — genspark-web overhaul
+- **Live AI Chat endpoint**: genspark.ai retired `/api/copilot/ask` ("This
+  feature has been retired. Please use AI Chat instead") — every chat
+  request through the provider returned that notice as the assistant
+  message. The executor now speaks the live AI Chat protocol: POST
   `/api/agent/ask_proxy` with body type `ai_chat` (`ai_chat_model`,
   `ai_chat_enable_search`, per-message ids, `session_state` mirror,
   `user_s_input`), including the Python TLS sidecar (curl_cffi Chrome
   impersonation) required by genspark's Cloudflare edge, full cookie-jar
   parsing (`session_id` + `__cf_bm` + `c1`/`c2` + `gslogin`), Cloudflare
-  cookie auto-refresh and the `-search` web-grounding suffix. Ported from the
-  fork's battle-tested implementation (SharpWizard/genspark-py + genspark2api
-  references).
-- **genspark-web — hardcoded model list replaced with live catalog**: the
-  15-id list (mirroring genspark2api constants.go) shipped stale ids while
-  genspark rotates its lineup weekly. New `providers/gensparkCatalog.js`
-  mirrors the same endpoints the AI Chat selector reads —
-  `api/moa_models_config` (chat, 56 entries) + `api/models_config` (image/
-  audio/video) — on a background 6h refresh that fails open to the previous
-  snapshot (and ultimately to the classic fallback set). The dashboard
-  suggestion list is served from the catalog via a `genspark-web` filter on
-  the suggested-models route (hidden selector entries dropped, MOA mix
-  included). Model ids are forwarded **verbatim** as `ai_chat_model` —
-  verified live that ids absent from every list (`glm-5p3`) and the
-  Mixture-of-Agents comma mix (`gpt-5.6-luna,claude-sonnet-5,gemini-3.7-flash`)
-  are accepted upstream — so brand-new genspark models work even before the
-  catalog refreshes.
-- **genspark-web — real vector logo**: the dashboard rendered a "GS" letter
-  badge because icon lookup only ever tried `/providers/<id>.png`. Icon
-  resolution gained a per-id extension map (`genspark-web` → svg), the
-  provider-icon regexes accept `.svg`, and a proper four-point spark SVG
-  (brand orange gradient) ships as `public/providers/genspark-web.svg`. The
-  stray `genspark.svg` (a PNG in an SVG wrapper, unreachable by any lookup)
-  is removed. Literal `.png` srcs across providers/media-providers/usage
-  pages now go through `getProviderIconSrc` so the map applies everywhere.
-- **tests**: genspark suite ported and extended for the live catalog
-  (verbatim passthrough, fallback set, suggestion shape); the
-  golden-url-header snapshot updated — it pinned the retired `copilot/ask`
-  URL and the stale `9Router/0.6.35` client version (pre-existing upstream
-  staleness; live endpoint and current version are the correct values).
+  cookie auto-refresh and the `-search` web-grounding suffix. The sidecar
+  lazily bootstraps its venv (fail-open with a clear error when Python is
+  unavailable).
+- **Dynamic model catalog**: the hardcoded 15-id list (mirroring
+  genspark2api constants.go) shipped stale ids while genspark rotates its
+  lineup weekly. New `providers/gensparkCatalog.js` mirrors the AI Chat
+  selector endpoints (`api/moa_models_config` + `api/models_config`) on a
+  6h background refresh that fails open to the previous snapshot. Model ids
+  forward **verbatim** as `ai_chat_model` — brand-new genspark models work
+  even before the catalog refreshes; MOA comma mixes accepted upstream.
+- **Vector logo**: icon resolution gained a per-id extension map
+  (`genspark-web` → svg), provider-icon regexes accept `.svg`, and a proper
+  four-point spark SVG ships as `public/providers/genspark-web.svg`;
+  literal `.png` srcs across providers/media-providers/usage pages now go
+  through `getProviderIconSrc`.
+
+## Fixes (cherry-picked from PR #11, qkhalk) — xray filter prune policy
+- **The model filter no longer prunes configs whose tunnel works**: the
+  filter pruned ANY config whose probe failed, but a 429/403/5xx probe
+  result proves the opposite of a dead config — an HTTP response traveled
+  through the tunnel, so the exit is healthy and the rejection is upstream
+  (shared-IP free-tier quota, fingerprint gates). Those conditions are
+  transient; pruning permanently destroyed rotation inventory ("108 tested,
+  0 usable" was 108 healthy tunnels misread as dead). Probe results now
+  carry `tunnelOk`, and `filterPrunePolicy.js` only ever deletes
+  connection-level failures (no response at all). Upstream-rejected rows
+  are still recorded ok=false so rotation skips those exits and the
+  fail-retry policy re-tests after the quota reset; a wiring regression
+  that suppressed ALL cache rows when prune was disabled (observed on a
+  649-config sweep: zero rows persisted) is fixed in the follow-up commit.
+  +7 unit tests.
+
+## Merge notes
+- Conflicts resolved preserving fork behavior: opencode executor = upstream
+  taken wholesale with fork deltas re-ported (live npm-resolved CLI UA +
+  registry/catalog-driven responses routing); `streamHandler.js` = fork N7
+  onFirstChunk + upstream abortMessage terminal; provider detail page =
+  fork opencode deprecation badges + upstream zed live-catalog error
+  surfacing; `fa.json` = key union (16 fork + 16 upstream keys, no
+  overlap); capabilities/registry = union.
+- PR version numbers v0.6.50–52 that PR #11 carried are not used; their
+  content is folded into this single release as decided.
+- README.md untouched (upstream README changes are not followed on this
+  fork).
 
 # v0.6.48 (2026-09-12)
 
