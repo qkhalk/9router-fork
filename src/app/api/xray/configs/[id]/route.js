@@ -31,6 +31,13 @@ export async function DELETE(request, { params }) {
 
     if (permanent) {
       const removed = await hardDeleteXrayConfig(id);
+      // Cascade the model-filter cache too: config ids are content hashes, so
+      // a later re-sync of the same link would resurrect the row wearing a
+      // stale pass/fail badge (the prune path does the same).
+      if (removed) {
+        const { deleteModelFilterResultsByConfigIds } = await import("@/lib/db/repos/modelFilterResultsRepo.js");
+        await deleteModelFilterResultsByConfigIds([id]).catch(() => {});
+      }
       return NextResponse.json({ success: removed, permanent: true });
     }
     if (row.deletedAt) {

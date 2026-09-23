@@ -263,8 +263,12 @@ export default function XrayProxyPage() {
       const res = await fetch("/api/xray/version/latest", { cache: "no-store" });
       const data = await res.json();
       setVersionInfo(data);
+      // Return the fresh payload — callers that notify from it would otherwise
+      // read the render-scope state, which lags one fetch behind.
+      return data;
     } catch (e) {
       console.log("version fetch error:", e.message);
+      return null;
     }
   }, []);
 
@@ -276,8 +280,9 @@ export default function XrayProxyPage() {
       setReleases(data.releases || []);
       if (data.error) {
         // Dead-dropdown fallback: a single "Latest (stable)" option sourced
-        // from version/latest.
-        setReleases(versionInfo?.latest ? [{ version: versionInfo.latest, prerelease: false }] : [{ version: "latest-stable", prerelease: false }]);
+        // from version/latest. No fabricated tags — an unknown latest must
+        // not offer an uninstallable option.
+        setReleases(versionInfo?.latest ? [{ version: versionInfo.latest, prerelease: false }] : []);
       }
     } catch (e) {
       console.log("releases fetch error:", e.message);
@@ -350,30 +355,36 @@ export default function XrayProxyPage() {
   const handleInstall = async () => {
     const selected = installVersion === "latest" ? versionInfo?.latest : installVersion;
     const installed = versionInfo?.installed;
+    // Pre-release installs always confirm — a fresh machine has no `installed`
+    // yet, and gating the prerelease warning on it would let v-next-pre slip
+    // through unconfirmed on first install. Only the downgrade comparison
+    // needs `installed`.
+    const isPrerelease = installVersion !== "latest" && releases.find((r) => r.version === installVersion)?.prerelease;
+    let isDowngrade = false;
     if (selected && installed) {
       const stripped = (v) => String(v).replace(/^v/i, "");
       const [a, b] = [stripped(selected), stripped(installed)].map((v) => v.split(".").map(Number));
       const cmp = (a[0] || 0) - (b[0] || 0) || (a[1] || 0) - (b[1] || 0) || (a[2] || 0) - (b[2] || 0);
-      const isPrerelease = installVersion !== "latest" && releases.find((r) => r.version === installVersion)?.prerelease;
-      if (cmp < 0 || isPrerelease) {
-        setConfirmState({
-          message: isPrerelease
-            ? `Install pre-release ${selected}? Pre-releases may be unstable.`
-            : `Downgrade to ${selected} (installed: ${installed})?`,
-          onConfirm: async () => {
-            setConfirmState(null);
-            await installBinary(selected);
-          },
-        });
-        return;
-      }
+      isDowngrade = cmp < 0;
+    }
+    if (isPrerelease || isDowngrade) {
+      setConfirmState({
+        message: isPrerelease
+          ? `Install pre-release ${selected}? Pre-releases may be unstable.`
+          : `Downgrade to ${selected} (installed: ${installed})?`,
+        onConfirm: async () => {
+          setConfirmState(null);
+          await installBinary(selected);
+        },
+      });
+      return;
     }
     await installBinary(selected);
   };
 
   const handleCheckVersion = async () => {
-    await fetchVersionInfo();
-    notify.info(versionInfo?.error ? "Version check failed (GitHub unreachable)" : `Latest stable: ${versionInfo?.latest || "unknown"}`);
+    const data = await fetchVersionInfo();
+    notify.info(data?.error ? "Version check failed (GitHub unreachable)" : `Latest stable: ${data?.latest || "unknown"}`);
   };
 
   const handleVersionDropdownOpen = () => {
@@ -831,7 +842,8 @@ export default function XrayProxyPage() {
           <div>
             <div className="text-text-muted mb-1">Binary</div>
             {status.binaryInstalled ? (
-              <Badge variant="success">Installed v{status.installedVersion}</Badge>
+              /* installedVersion already carries the "v" prefix — don't add another */
+              <Badge variant="success">Installed {status.installedVersion}</Badge>
             ) : (
               <Badge variant="error">Not installed</Badge>
             )}

@@ -317,3 +317,25 @@ describe("legacy one-shot migration (migrateLegacySubscription)", () => {
     expect(await subRepo.listXraySubscriptions()).toEqual([]);
   });
 });
+
+describe("getXrayConfigs includeDeleted combinations", () => {
+  it("includeDeleted combined with other filters returns tombstoned rows without a parameter mismatch", async () => {
+    // Regression: the tombstone predicate used to be removed with where.pop(),
+    // so combining includeDeleted with any other filter kept the deletedAt
+    // filter AND left params one entry longer than the placeholders.
+    const db = await makeFreshAdapter();
+    state.adapter = db;
+    seedConfig(db, "live-1", { link: "vless://live/1" });
+    seedConfig(db, "dead-1", { link: "vless://dead/1", deletedAt: "2026-09-23T00:00:00.000Z" });
+
+    const all = await xrayRepo.getXrayConfigs({ includeDeleted: true, protocol: "vless" });
+    expect(all.map((c) => c.id).sort()).toEqual(["dead-1", "live-1"]);
+
+    const filtered = await xrayRepo.getXrayConfigs({ includeDeleted: true, protocol: "vmess" });
+    expect(filtered).toEqual([]);
+
+    // Without includeDeleted the tombstoned row must stay invisible.
+    const liveOnly = await xrayRepo.getXrayConfigs({ protocol: "vless" });
+    expect(liveOnly.map((c) => c.id)).toEqual(["live-1"]);
+  });
+});

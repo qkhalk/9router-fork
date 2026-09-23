@@ -49,12 +49,18 @@ export async function PATCH(request, { params }) {
     if (body.intervalMin !== undefined && body.intervalMin !== null && body.intervalMin !== "") {
       patch.intervalMin = clampIntervalMin(body.intervalMin);
     }
-    if (body.retentionDays !== undefined && body.retentionDays !== null && body.retentionDays !== "") {
-      const retention = validateRetentionDays(body.retentionDays);
-      if (retention === null) {
-        return NextResponse.json({ error: "retentionDays must be -1, 0, or >= 1" }, { status: 400 });
+    if (body.retentionDays !== undefined) {
+      if (body.retentionDays === null || body.retentionDays === "") {
+        // Explicit clear → back to inherit mode (SQL NULL). Distinguished from
+        // an absent key, which leaves the stored value untouched.
+        patch.retentionDays = null;
+      } else {
+        const retention = validateRetentionDays(body.retentionDays);
+        if (retention === null) {
+          return NextResponse.json({ error: "retentionDays must be -1, 0, or >= 1" }, { status: 400 });
+        }
+        patch.retentionDays = retention;
       }
-      patch.retentionDays = retention;
     }
 
     const updated = await updateXraySubscription(subId, patch);
@@ -103,7 +109,10 @@ export async function DELETE(request, { params }) {
       const unmembered = new Set(await getConfigIdsWithNoMembership());
       const orphans = carried.filter((id) => unmembered.has(id));
       if (orphans.length) {
-        const retention = resolveRetentionDays(sub);
+        // Inherit mode (retentionDays NULL) must resolve against the user's
+        // configured global default, not the repo's hardcoded 7-day fallback.
+        const settings = await getSettings();
+        const retention = resolveRetentionDays(sub, settings.xrayStaleRetentionDays);
         if (retention === 0) {
           // Delete now: deactivate with an already-past horizon, then sweep
           // once (the sweeper's guards keep this limited to zero-membership,

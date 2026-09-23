@@ -44,13 +44,15 @@ function rowToConfig(row) {
  */
 export async function getXrayConfigs(filter = {}) {
   const db = await getAdapter();
-  const where = ["deletedAt IS NULL"]; // tombstoned rows are invisible unless explicitly requested
+  // Tombstoned rows are invisible unless explicitly requested. The predicate
+  // is only added when NOT includeDeleted so it can never desync from `where`.
+  const includeDeleted = filter.includeDeleted === true;
+  const where = includeDeleted ? [] : ["deletedAt IS NULL"];
   const params = [];
   if (filter.protocol) { where.push("protocol = ?"); params.push(filter.protocol); }
   if (filter.country) { where.push("country = ?"); params.push(filter.country); }
   if (filter.isActive !== undefined) { where.push("isActive = ?"); params.push(filter.isActive ? 1 : 0); }
   if (filter.healthyOnly) { where.push("lastLatencyMs > 0"); }
-  if (filter.includeDeleted) { where.pop(); }
   const sql = `SELECT * FROM xrayConfigs${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
   const list = db.all(sql, params).map(rowToConfig);
   // Default sort: selected first, then by latency asc (untested/negative last).
