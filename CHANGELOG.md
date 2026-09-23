@@ -1,4 +1,4 @@
-# v0.6.50 (2026-09-23)
+# v0.6.50 (2026-09-24)
 
 Xray/v2go feature release: **multi-subscription** support and **in-dashboard Xray-core binary updates**, with hardened install orchestration.
 
@@ -21,6 +21,16 @@ The dashboard's V2Ray Proxy now supports **multiple subscription sources** (v2ra
 - **Auto-restart** — if the proxy was running before an update, it restarts automatically on the new binary. If the new binary fails to start, the installer **auto-rolls back** to the previous version and retries, reporting honestly which version you ended up on.
 - Install integrity hardened: version tags are strictly validated before any download URL is built, installs are serialized (a second concurrent install gets a 409), and orphaned install staging directories are reaped at boot.
 - Download failures (restricted networks) surface an actionable message; the version check degrades gracefully to "unknown" instead of erroring the dashboard.
+
+## Hardening from code review + hands-on E2E testing
+
+Found by a dedicated code-review pass and a manual browser walk against a live dev server (real subscriptions, real binary install → proxy start → stop):
+
+- **Pre-release install confirm on fresh installs** — the confirmation dialog for pre-release binaries was skipped when no binary was installed yet; it now always shows. Only the downgrade comparison still requires an installed version.
+- **Rollback reports the truth** — a failed update that auto-rolled back no longer leaves the *failed* version recorded on disk; status/APIs report the version actually running, and reinstalling that tag no longer short-circuits as "already installed".
+- **Sync scheduler resilience** — a transient DB error can no longer leave the auto-sync scheduler disarmed until reboot, and a queued per-subscription sync runs with its own outcome instead of replaying the previous run's error.
+- **UI fixes** — the "Default (inherit)" retention option actually resets to inherit mode (was a silent no-op); the version "Check" button reports the fresh result; no fake uninstallable version is offered when GitHub is unreachable; "Installed vvX" double-prefix fixed; subscription names capped at 128 chars.
+- **Data hygiene** — permanently deleting a server also clears its model-filter cache row (re-syncing the same link can't resurrect a stale pass/fail badge); deleting a subscription resolves inherit-mode retention against the configured global default; `includeDeleted` repo queries combined with other filters no longer risk a SQL parameter mismatch.
 
 # v0.6.49 (2026-09-20)
 
