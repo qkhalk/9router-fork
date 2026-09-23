@@ -79,7 +79,7 @@ Result: Never stop coding, minimal cost + 20-40% token savings via RTK
 
 | Feature | What it adds | Where to enable |
 | --- | --- | --- |
-| 🛰️ **V2Ray Proxy (v2go)** | Managed local **Xray-core** client that turns V2Ray share links (VLESS/VMess/Trojan/SS) from [v2go](https://github.com/Danialsamadi/v2go) into a SOCKS5/HTTP proxy 9Router can route through. Auto-syncs ~1,000+ working configs hourly, per-server latency testing, zero-downtime blue-green auto-rotation (flaky-node + edge-banned-IP quarantine), and a **Model Proxy Filter** that finds the configs a given model actually works through. Bundles the Xray-core binary (auto-download per OS/arch). Creates a managed Proxy Pool you can assign to any connection. *(v0.6.0+)* | Dashboard → **V2Ray Proxy** |
+| 🛰️ **V2Ray Proxy (v2go)** | Managed local **Xray-core** client that turns V2Ray share links (VLESS/VMess/Trojan/SS) from [v2go](https://github.com/Danialsamadi/v2go) and any other subscription into a SOCKS5/HTTP proxy 9Router can route through. **Multi-subscription** sync with per-sub interval/retention/traffic display, **in-dashboard binary updates/downgrades** (stable-latest check, auto-restart with rollback), per-server latency testing, zero-downtime blue-green auto-rotation (flaky-node + edge-banned-IP quarantine), and a **Model Proxy Filter** that finds the configs a given model actually works through. Bundles the Xray-core binary (auto-download per OS/arch). Creates a managed Proxy Pool you can assign to any connection. *(v0.6.0+)* | Dashboard → **V2Ray Proxy** |
 | 🐬 **DeepSeek Web (DS2API)** | Runs a local Go sidecar that turns your DeepSeek Web session into an OpenAI-compatible endpoint. Managed start/stop/install/**update**, per-account proxies + **rotating proxy groups** (round-robin/random/failover). Engine pulled from [`vibecoder11200/ds2api`](https://github.com/vibecoder11200/ds2api) `v4.6.2-rotation`. | Dashboard → **DeepSeek Web** |
 | 🔀 **Proxy Pools & Rotating Groups** | Single-proxy pools **or** rotating groups (many proxies + optional "direct" server-IP slot). Per-request rotation: **on-error** (LRU) / **round-robin** / **random**. All protocols (http, https, socks5/5h/4/4a). Batch import. `strictProxy` fail-hard. Auto-cooldown (60s rate-limit, 30s 5xx). Bind to any provider connection. | Dashboard → **Proxy Pools** |
 | 🌐 **No-auth provider rotation** | Free no-auth providers (OpenCode Free, mimo-free…) can be bound to a rotating pool group from their provider page — set **Rotation Strategy** to round-robin/random (needs ≥2 active pools) to spread requests across IPs. | Provider page → **Proxy / Rotation** card |
@@ -556,7 +556,7 @@ a third party under a provider named "Self-hosted".
 | 🖼️ **PXPipe Token Saver**                                                         | **In-process** multimodal compression — re-renders Claude-format context as dense images (Anthropic bills images by pixels, not text length) | Save context tokens on long Claude requests |
 | 🪨 **Caveman Mode** ([Caveman](https://github.com/JuliusBrussee/caveman) ⭐52K)   | Inject caveman-speak prompt → LLM replies terse, technical substance preserved           | Save **up to 65% output tokens**                  |
 | 🐴 **Ponytail** ([Ponytail](https://github.com/DietrichGebert/ponytail))          | Inject "lazy senior dev" prompt → LLM writes minimal, YAGNI-first code (Lite/Full/Ultra) | **Fewer output tokens, less refactoring**         |
-| 🛰️ **V2Ray Proxy (v2go)** · *fork*                                                | Managed Xray-core client → SOCKS5/HTTP proxy from free V2Ray share links (auto-synced)   | Premium-grade proxies for any provider, free      |
+| 🛰️ **V2Ray Proxy (v2go)** · *fork*                                                | Managed Xray-core client → SOCKS5/HTTP proxy from V2Ray subscriptions (multi-sub sync, in-dashboard binary updates) | Premium-grade proxies for any provider, free      |
 | 🐬 **DeepSeek Web (DS2API)** · *fork*                                             | Local Go sidecar turns your DeepSeek Web session into an OpenAI endpoint                 | Use DeepSeek Web from any CLI tool                |
 | 🔀 **Proxy Pools & Rotating Groups** · *fork*                                     | Single-proxy pools **or** rotating groups (on-error/round-robin/random + direct slot)    | Spread load, beat IP rate-limits                  |
 | 🤖 **Web-Cookie Providers** · *fork*                                              | Genspark (MOA + image), Gemini Web (multimodal, cookie pool)                             | Access web-only AI in any CLI tool                |
@@ -885,15 +885,18 @@ vertex-partner/deepseek-v3.2-maas
 <details>
 <summary><b>🛰️ V2Ray Proxy (v2go)</b> · <i>fork</i></summary>
 
-9Router manages a **local Xray-core client** that turns free V2Ray share links (VLESS/VMess/Trojan/Shadowsocks) into a SOCKS5/HTTP proxy 9Router can route any provider through. The config catalog is auto-synced from [v2go](https://github.com/Danialsamadi/v2go), which publishes ~1,000+ working servers via a GitHub Actions pipeline.
+9Router manages a **local Xray-core client** that turns free V2Ray share links (VLESS/VMess/Trojan/Shadowsocks) into a SOCKS5/HTTP proxy 9Router can route any provider through. The config catalog auto-syncs from one or more **subscriptions** — [v2go](https://github.com/Danialsamadi/v2go) by default (~1,000+ working servers via a GitHub Actions pipeline) — and any other V2Ray subscription URL you add.
 
 ### Setup
 
 ```
 Dashboard → V2Ray Proxy
-  → Install Xray-core   (downloads the official binary, one-time, per OS/arch)
-  → Sync configs        (pulls the v2go catalog — VLESS/VMess/Trojan/SS)
-  → Pick a server       (filter by country / protocol; run a latency test)
+  → Install Xray-core   (downloads the official binary; updates + downgrades
+                         with auto-restart and rollback stay in-dashboard)
+  → Add subscriptions   (v2go is pre-configured as the "Default" subscription;
+                         each sub gets its own schedule + retention)
+  → Sync configs        (per-sub "Sync Now" or "Sync All" — VLESS/VMess/Trojan/SS)
+  → Pick a server       (filter by protocol; run a latency test)
   → Start               (launches the local SOCKS5 + HTTP proxy)
   → Assign the pool     (a managed Proxy Pool "V2Ray Proxy (v2go)" is created
                          automatically — bind it to any provider connection)
@@ -903,8 +906,9 @@ Once started, a managed Proxy Pool named **"V2Ray Proxy (v2go)"** appears in Das
 
 ### Features
 
-- **Auto-sync** — refreshes the server catalog every 60 minutes (configurable) from v2go's `AllConfigsSub.txt`.
-- **Server selection** — country and protocol filters, per-server latency testing.
+- **Multi-subscription sync** — each subscription has its own enable toggle, sync interval, and keep-dropped-servers retention; per-row **traffic + expiry** display when the provider reports a `subscription-userinfo` header; a failing subscription never affects the others.
+- **Server selection** — protocol filters, per-server latency testing, source-subscription badges, and a *Deleted servers* expander (restore or permanently delete).
+- **Binary updates** — in-dashboard Xray-core updates/downgrades: stable-latest check (pre-releases labeled in the picker, never trigger the update badge), auto-restart after update with automatic rollback if the new binary can't start.
 - **Auto-rotation** *(optional)* — when the active server dies, 9Router promotes the next-best server automatically.
 - **Health checks** — periodic liveness checks (default every 10 min).
 - **Share-link parser** — a faithful JS port of v2go's `converter.go`: handles VLESS, VMess, Trojan, Shadowsocks, Hysteria2 with REALITY/TLS/WebSocket/gRPC/XHTTP transports, including the XHTTP host-safety guard that prevents Xray crashes.
@@ -920,8 +924,8 @@ The Xray-core binary is pinned to `v26.3.27` (MPL-2.0) and auto-downloaded on fi
 | `xrayAutoRotate` | `false` | Promote the next server when the active one dies |
 | `xraySocksPort` | `10808` | Local SOCKS5 port |
 | `xrayHttpPort` | `10809` | Local HTTP proxy port |
-| `xraySubscriptionUrl` | v2go `AllConfigsSub.txt` | Config catalog source |
-| `xraySyncIntervalMin` | `60` | Catalog refresh interval (minutes) |
+| `xraySubscriptionUrl` | v2go `AllConfigsSub.txt` | *Legacy* — migrated to the "Default" subscription on upgrade; still the default URL offered to new subscriptions |
+| `xraySyncIntervalMin` | `60` | Default sync interval applied to **new** subscriptions (per-sub intervals live on each subscription) |
 | `xrayHealthCheckIntervalMin` | `10` | Liveness check interval (minutes) |
 
 </details>

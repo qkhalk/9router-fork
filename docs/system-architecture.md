@@ -300,9 +300,16 @@ The config catalog is seeded by syncing the upstream
 [v2go subscription](https://github.com/Danialsamadi/v2go) (~1,000+ working
 configs, refreshed hourly).
 
-- **Binary install** (`installer.js`): auto-downloads the official Xray-core
-  release (default `v26.3.27`, env `XRAY_VERSION`) per OS/arch into
-  `<DATA_DIR>/xray/`, extracts it, and writes MPL-2.0 attribution.
+- **Binary install** (`installer.js` + `manager.installXrayOrchestrated`):
+  auto-downloads the official Xray-core release (default `v26.3.27`, env
+  `XRAY_VERSION`) per OS/arch into `<DATA_DIR>/xray/`, extracts it, and writes
+  MPL-2.0 attribution. Tags are strictly validated (`^v\d+(\.\d+)+$`) at the
+  route AND before any URL construction (a traversal payload would otherwise
+  control both the zip and its `.dgst`, defeating the sha256 gate). The
+  orchestrator serializes installs (409 on concurrent), pauses health
+  rotations, terminates draining/temp instances, captures `wasRunning`,
+  restarts the proxy after the swap, and auto-rolls back from the retained
+  `.prev` files when the post-install restart fails.
 - **Share-link parser** (`parser.js`): a documented line-for-line JS port of
   v2go's Go converter. Supports `vless`, `vmess`, `ss`, `trojan`, `hysteria2`;
   transports `tcp`/`ws`/`grpc`/`httpupgrade`/`xhttp`; security `none`/`tls`/`reality`.
@@ -336,10 +343,27 @@ configs, refreshed hourly).
 - **Manager** (`manager.js`): orchestration facade + in-memory state machine
   (`stopped → starting → running → error`) that reconciles against the live PID
   to survive Next.js HMR. Exposes start/stop/restart/switch/test/health-check.
-- **Sync** (`sync.js`): subscription fetcher + scheduler (initial sync 5s after
-  boot, then every `xraySyncIntervalMin`, default 60). Upserts into the
-  `xrayConfigs` table; stale configs (dropped from the latest sync) are marked
-  inactive.
+- **Sync** (`sync.js`, multi-subscription since v0.6.50): per-subscription
+  fetcher. Each `xraySubscriptions` row (url, enable flag, interval, retention,
+  last-sync state, `subscription-userinfo` traffic/expiry) syncs independently
+  with v2rayN replace-that-sub semantics: `xrayConfigSubscriptions` membership
+  rows track which sub carries which config, so a config shared by two subs
+  survives one sub dropping it (cross-sub isolation). Per-sub fail-closed +
+  shrink guards abort only that sub's sync on a broken fetch; a guarded
+  retention sweeper deletes only inactive, non-tombstoned, membership-free
+  rows past their horizon. The scheduler computes the next due sub
+  (`setTimeout`, clamped 5 min–14 days + a 24h timer cap with re-check;
+  `.unref()`ed; no eligible sub arms no timer) and recomputes on boot, after
+  each sync, and after subscription CRUD. Same-sub syncs are serialized via a
+  per-sub single-flight map. `settings.xraySyncIntervalMin` /
+  `xrayStaleRetentionDays` now act only as DEFAULTS for new subscriptions; a
+  one-shot boot migration (`migrateLegacySubscription`, marker in `_meta`,
+  wired into `runMigrationOnce`) converts the legacy single
+  `xraySubscriptionUrl` into a "Default" subscription.
+- **Version metadata** (`versionInfo.js`): stable-latest + release listing
+  from the Xray-core GitHub API behind a plain 1h TTL cache (no ETag
+  machinery); graceful-degrade sentinel keeps the endpoints at HTTP 200 on
+  upstream failures.
 - **Proxy pool bridge**: the manager creates/syncs a managed proxy pool
   (fixed id `v2go-xray-managed`, `proxyUrl: socks5://127.0.0.1:<socksPort>`,
   flagged `_v2goManaged:true`) so provider connections can egress through the
@@ -350,12 +374,23 @@ configs, refreshed hourly).
 - **Health probes** (`tester.js`): latency via `gstatic.com/generate_204`
   through a `SocksProxyAgent`; exit-IP via `cloudflare.com/cdn-cgi/trace`;
   raw TCP port probe.
-- **API** (`/api/xray/*`): status, start, stop, restart, switch, install, logs,
-  health-check, configs (filter by protocol/country/active/healthy),
-  `configs/[id]/test`. All lifecycle routes are **local-only** per the guard.
-- **Dashboard** (`/dashboard/xray`): binary install/version, SOCKS port, PID,
-  latency badge, server table with filters, per-row test/select, subscription
-  sync card, live log streamer.
+- **API** (`/api/xray/*`): status, start, stop, restart, switch, install,
+  logs, health-check, configs (filter by protocol/active/healthy),
+  `configs/[id]` (DELETE = tombstone, `?permanent=1` = physical delete,
+  PATCH `{restore:true}`), `configs/[id]/test`, `subscriptions` CRUD +
+  `subscriptions/[id]`, `sync` (`{subscriptionId?}`), `version/latest`,
+  `version/releases`. Lifecycle, subscription, and sync routes are
+  **local-only** per the guard (subscription URLs can carry provider tokens
+  and sync triggers server-side egress); `version/*` sit behind the default
+  auth fallthrough. Note: with `requireLogin=false`, non-lifecycle GETs stay
+  readable but the local-only tier still bounds who can mutate subscriptions
+  or trigger installs.
+- **Dashboard** (`/dashboard/xray`): binary version badge + update picker
+  (prereleases labeled), SOCKS port, PID, latency badge, subscription manager
+  (per-sub interval/retention/enable/traffic/expiry, Sync Now / Sync All),
+  server table with source-sub badges + per-row test/select/delete, Deleted
+  servers expander (restore / permanent delete), model filter card, live log
+  streamer.
 
 ### Web-based/session-based executors
 
