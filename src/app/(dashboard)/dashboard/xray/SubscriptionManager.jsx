@@ -217,7 +217,7 @@ export default function SubscriptionManager({
                     <option value="1">24 hours</option>
                     <option value="0">Delete after sync</option>
                     <option value="-1">Forever</option>
-                    <option value="">Default (7 days)</option>
+                    <option value="">Default (inherit)</option>
                   </select>
                 </div>
                 {editorActive && (

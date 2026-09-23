@@ -29,6 +29,10 @@ const XRAY_DIR = path.join(DATA_DIR, "xray");
 const BINARY_NAME = process.platform === "win32" ? "xray.exe" : "xray";
 const BINARY_PATH = path.join(XRAY_DIR, BINARY_NAME);
 const VERSION_FILE = path.join(XRAY_DIR, ".version");
+// Scratch copy of `.version` kept inside `.prev` during an install so a
+// rollback can restore the pre-install version string (RT-5). Never part of
+// the Xray zip, so the `.prev` retention loop can't pick it up by name.
+const PREV_VERSION_MARKER = ".version.9r";
 const DOWNLOAD_LOG = path.join(XRAY_DIR, "download.log");
 
 // Release asset naming per platform/arch. Verified against the XTLS/Xray-core
@@ -339,12 +343,19 @@ export async function installXray(opts = {}) {
     // the auto-rollback source for a failed post-install restart (RT-5).
     let prevPopulated = false;
     try {
+      const previousVersion = getInstalledVersion();
       fs.rmSync(prevDir, { recursive: true, force: true });
       fs.mkdirSync(prevDir, { recursive: true });
       for (const name of fs.readdirSync(stagingDir)) {
         const dest = path.join(XRAY_DIR, name);
         if (fs.existsSync(dest)) fs.renameSync(dest, path.join(prevDir, name));
       }
+      // `.version` is 9router's own file (never part of the Xray zip), so the
+      // loop above never archives it. Persist it separately: rollback must
+      // restore the OLD version string, or status/APIs report the failed tag
+      // as installed and reinstalling that tag short-circuits as
+      // alreadyInstalled with the rolled-back binary.
+      if (previousVersion) fs.writeFileSync(path.join(prevDir, PREV_VERSION_MARKER), previousVersion);
       prevPopulated = fs.readdirSync(prevDir).length > 0;
     } catch { /* .prev best-effort — swap proceeds without rollback source */ }
 
@@ -398,6 +409,16 @@ function restoreFromPrevDir() {
   const prevDir = path.join(XRAY_DIR, ".prev");
   if (!fs.existsSync(prevDir)) return false;
   let restored = false;
+  // The version marker belongs to VERSION_FILE, not the install dir — after a
+  // rollback the file must name the binary that is actually running again.
+  const markerPath = path.join(prevDir, PREV_VERSION_MARKER);
+  if (fs.existsSync(markerPath)) {
+    try {
+      const prevVersion = fs.readFileSync(markerPath, "utf8").trim();
+      if (prevVersion) fs.writeFileSync(VERSION_FILE, prevVersion);
+    } catch { /* best-effort */ }
+    try { fs.rmSync(markerPath, { force: true }); } catch { /* best-effort */ }
+  }
   for (const name of fs.readdirSync(prevDir)) {
     const dest = path.join(XRAY_DIR, name);
     try { fs.rmSync(dest, { force: true, recursive: true }); } catch { /* dest absent */ }

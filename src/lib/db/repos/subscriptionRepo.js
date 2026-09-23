@@ -122,7 +122,8 @@ export async function createXraySubscription({ name, url, enabled, intervalMin, 
     if (effInterval == null) effInterval = raw.xraySyncIntervalMin ?? 60;
     if (effRetention == null) effRetention = raw.xrayStaleRetentionDays ?? 7;
   }
-  const finalName = (typeof name === "string" && name.trim()) || new URL(validUrl).host;
+  // Unbounded names end up verbatim in a bounded UI row — trim and cap.
+  const finalName = ((typeof name === "string" && name.trim()) || new URL(validUrl).host).slice(0, 128);
   const res = db.run(
     `INSERT INTO xraySubscriptions(name, url, enabled, intervalMin, retentionDays, createdAt, updatedAt)
      VALUES(?, ?, ?, ?, ?, ?, ?)`,

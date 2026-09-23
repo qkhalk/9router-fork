@@ -72,8 +72,10 @@ export function isSubscriptionSyncInFlight(subscriptionId) {
 
 function withSingleFlight(subscriptionId, fn) {
   const existing = inFlightSyncs.get(subscriptionId);
+  // Swallow a rejected predecessor: a queued caller must run its own sync and
+  // report its own outcome, not replay the previous run's DB-level error.
   const run = existing
-    ? existing.then(() => fn())
+    ? existing.catch(() => {}).then(() => fn())
     : Promise.resolve().then(fn);
   const tracked = run.finally
     ? run.finally(() => {
@@ -421,11 +423,16 @@ async function fireDueSyncs() {
       results.push({ subscriptionId: sub.id, name: sub.name, count: 0, error: String(e.message || e) });
     }
   }
-  if (results.length) {
-    await writeAggregateState(results);
-    await maybeRunModelFilterAfterSync("scheduled-sync");
+  // finally: a DB hiccup in aggregate/filter writes must never leave the
+  // scheduler disarmed — the next run would never fire until reboot.
+  try {
+    if (results.length) {
+      await writeAggregateState(results);
+      await maybeRunModelFilterAfterSync("scheduled-sync");
+    }
+  } finally {
+    await scheduleNext().catch((e) => console.error("[XraySync] scheduler re-arm failed:", e.message));
   }
-  await scheduleNext();
 }
 
 /**
