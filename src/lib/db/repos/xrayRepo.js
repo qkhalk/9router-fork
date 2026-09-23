@@ -178,57 +178,6 @@ export async function bulkUpsertXrayConfigs(entries = []) {
   return count;
 }
 
-/**
- * Mark configs whose id is NOT in keepIds as isActive=0 (stale — dropped from
- * the latest subscription). Does not delete; stale rows retain latency history.
- */
-export async function markStaleXrayConfigs(keepIds = []) {
-  const db = await getAdapter();
-  const now = new Date().toISOString();
-  if (keepIds.length === 0) {
-    db.run(`UPDATE xrayConfigs SET isActive = 0, updatedAt = ?`, [now]);
-    return;
-  }
-  const keep = new Set(keepIds);
-  const staleIds = db
-    .all(`SELECT id FROM xrayConfigs`)
-    .map((r) => r.id)
-    .filter((id) => !keep.has(id));
-  if (staleIds.length === 0) return;
-
-  // SQLite parameter limit is generous (999+); chunk defensively for big catalogs.
-  const CHUNK = 500;
-  for (let i = 0; i < staleIds.length; i += CHUNK) {
-    const slice = staleIds.slice(i, i + CHUNK);
-    const placeholders = slice.map(() => "?").join(",");
-    db.run(
-      `UPDATE xrayConfigs SET isActive = 0, updatedAt = ?
-       WHERE id IN (${placeholders})`,
-      [now, ...slice]
-    );
-  }
-}
-
-/** Permanently remove configs inactive longer than the given ISO timestamp. */
-export async function deleteStaleXrayConfigs(beforeIso) {
-  const db = await getAdapter();
-  if (!beforeIso) return 0;
-  const res = db.run(`DELETE FROM xrayConfigs WHERE isActive = 0 AND updatedAt < ?`, [beforeIso]);
-  return res?.changes || 0;
-}
-
-export async function cleanupStaleXrayConfigs(retentionDays) {
-  const days = Number(retentionDays);
-  if (!Number.isFinite(days) || days < 0) return 0;
-  const db = await getAdapter();
-  if (days === 0) {
-    const res = db.run(`DELETE FROM xrayConfigs WHERE isActive = 0`);
-    return res?.changes || 0;
-  }
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  return deleteStaleXrayConfigs(cutoff);
-}
-
 // ─── delete semantics (multi-subscription) ────────────────────────────────
 //
 // User-intent delete = TOMBSTONE (soft). A tombstoned row is invisible to
@@ -348,6 +297,19 @@ export async function getConfigIdsWithNoMembership() {
          AND NOT EXISTS (SELECT 1 FROM xrayConfigSubscriptions m WHERE m.configId = x.id)`
     )
     .map((r) => r.id);
+}
+
+/** Tombstoned config ids (the sync flow must skip/never resurrect these). */
+export async function getTombstonedConfigIds() {
+  const db = await getAdapter();
+  return db.all(`SELECT id FROM xrayConfigs WHERE deletedAt IS NOT NULL`).map((r) => r.id);
+}
+
+/** How many configs a subscription currently carries (X2/shrink-guard input). */
+export async function countSubMemberships(subscriptionId) {
+  const db = await getAdapter();
+  const row = db.get(`SELECT COUNT(*) AS c FROM xrayConfigSubscriptions WHERE subscriptionId = ?`, [subscriptionId]);
+  return Number(row?.c) || 0;
 }
 
 /**
