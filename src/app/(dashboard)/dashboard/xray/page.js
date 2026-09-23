@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useRef } from "react";
 import { Badge, Button, Card, CardSkeleton, Input, Toggle, ConfirmModal } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
+import SubscriptionManager from "./SubscriptionManager.jsx";
+import VersionPanel from "./VersionPanel.jsx";
 
 function formatDateTime(value) {
   if (!value) return "Never";
@@ -149,6 +151,17 @@ export default function XrayProxyPage() {
   // the custom inputs stay visible while the user is editing them, even before
   // (or without) saving.
   const [customMode, setCustomMode] = useState(false);
+
+  // ── Multi-subscription manager (Phase 4) ─────────────────────────────────
+  const [subscriptions, setSubscriptions] = useState([]);
+  // Binary-update panel (Phase 4)
+  const [versionInfo, setVersionInfo] = useState(null); // {installed, latest, hasUpdate, error}
+  const [releases, setReleases] = useState([]);
+  const [releasesLoaded, setReleasesLoaded] = useState(false);
+  const [installVersion, setInstallVersion] = useState("latest");
+  // Deleted-servers expander (tombstoned configs)
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [deletedConfigs, setDeletedConfigs] = useState([]);
   const notify = useNotificationStore();
   const pollRef = useRef(null);
 
@@ -158,11 +171,6 @@ export default function XrayProxyPage() {
       const data = await res.json();
       if (res.ok) {
         setStatus(data);
-        // Only use sync.sourceUrl as a fallback if the user hasn't set one.
-        setSettings((prev) => ({
-          ...prev,
-          xraySubscriptionUrl: prev.xraySubscriptionUrl || data.sync?.sourceUrl || "",
-        }));
       }
     } catch (e) {
       console.log("status fetch error:", e.message);
@@ -185,7 +193,6 @@ export default function XrayProxyPage() {
           xrayStaleRetentionDays: data.xrayStaleRetentionDays ?? 7,
           xraySocksPort: data.xraySocksPort ?? prev.xraySocksPort,
           xrayHttpPort: data.xrayHttpPort ?? prev.xrayHttpPort,
-          xraySubscriptionUrl: data.xraySubscriptionUrl || prev.xraySubscriptionUrl,
           xrayModelFilterEnabled: data.xrayModelFilterEnabled === true,
           xrayModelFilterModel: data.xrayModelFilterModel || "",
           xrayModelFilterLimit: data.xrayModelFilterLimit ?? 50,
@@ -225,12 +232,14 @@ export default function XrayProxyPage() {
       if (filter.status === "active") params.set("active", "1");
       if (filter.status === "inactive") params.set("active", "0");
       if (filter.healthyOnly) params.set("healthy", "1");
+      params.set("includeDeleted", "1"); // feeds the Deleted-servers expander
       const res = await fetch(`/api/xray/configs?${params}`, { cache: "no-store" });
       const data = await res.json();
       if (res.ok) {
         setConfigs(data.configs || []);
         setFacets(data.facets || { countries: [], protocols: [] });
         setConfigCounts(data.counts || { active: 0, inactive: 0, total: 0 });
+        setDeletedConfigs(data.deleted || []);
       }
     } catch (e) {
       console.log("configs fetch error:", e.message);
@@ -239,12 +248,50 @@ export default function XrayProxyPage() {
     }
   }, [filter]);
 
+  const fetchSubscriptions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/xray/subscriptions", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) setSubscriptions(data.subscriptions || []);
+    } catch (e) {
+      console.log("subscriptions fetch error:", e.message);
+    }
+  }, []);
+
+  const fetchVersionInfo = useCallback(async () => {
+    try {
+      const res = await fetch("/api/xray/version/latest", { cache: "no-store" });
+      const data = await res.json();
+      setVersionInfo(data);
+    } catch (e) {
+      console.log("version fetch error:", e.message);
+    }
+  }, []);
+
+  // Lazy: fetched the first time the version dropdown is opened.
+  const fetchReleases = useCallback(async () => {
+    try {
+      const res = await fetch("/api/xray/version/releases", { cache: "no-store" });
+      const data = await res.json();
+      setReleases(data.releases || []);
+      if (data.error) {
+        // Dead-dropdown fallback: a single "Latest (stable)" option sourced
+        // from version/latest.
+        setReleases(versionInfo?.latest ? [{ version: versionInfo.latest, prerelease: false }] : [{ version: "latest-stable", prerelease: false }]);
+      }
+    } catch (e) {
+      console.log("releases fetch error:", e.message);
+    } finally {
+      setReleasesLoaded(true);
+    }
+  }, [versionInfo]);
+
   useEffect(() => {
     const fetchInitialData = async () => {
-      await Promise.all([fetchStatus(), fetchConfigs(), fetchSettings()]);
+      await Promise.all([fetchStatus(), fetchConfigs(), fetchSettings(), fetchSubscriptions(), fetchVersionInfo()]);
     };
     fetchInitialData();
-  }, [fetchStatus, fetchConfigs, fetchSettings]);
+  }, [fetchStatus, fetchConfigs, fetchSettings, fetchSubscriptions, fetchVersionInfo]);
 
   // Poll status while running so health/latency/filter progress stay fresh.
   useEffect(() => {
@@ -278,15 +325,173 @@ export default function XrayProxyPage() {
     }
   };
 
-  const handleInstall = async () => {
+  // Bug fix (Phase 4): this used to post {} so the server always installed
+  // the pinned default. Post the selected tag; on downgrade or prerelease a
+  // confirm dialog ran before we get here.
+  const installBinary = async (version) => {
     try {
       notify.info("Downloading Xray binary (~20MB)...");
-      await api("/api/xray/install", "POST", {});
-      notify.success("Xray binary installed");
+      const body = version && version !== "latest" ? { version } : {};
+      const result = await api("/api/xray/install", "POST", body);
+      if (result.rolledBack) {
+        notify.error(`Update failed to start (auto-rolled back to the previous binary)${result.restartError ? `: ${result.restartError}` : ""}`);
+      } else if (result.restarted === false && status?.status === "running") {
+        notify.error("Installed, but the proxy did not restart — use Start");
+      } else {
+        notify.success(`Xray ${result.version || "binary"} installed${result.restarted ? " · proxy restarted" : ""}`);
+      }
       await fetchStatus();
+      await fetchVersionInfo();
     } catch (e) {
-      notify.error(`Install failed: ${e.message}`);
+      notify.error(`Install failed: ${e.message} — GitHub may be unreachable from this machine; check network or configure a system proxy`);
     }
+  };
+
+  const handleInstall = async () => {
+    const selected = installVersion === "latest" ? versionInfo?.latest : installVersion;
+    const installed = versionInfo?.installed;
+    if (selected && installed) {
+      const stripped = (v) => String(v).replace(/^v/i, "");
+      const [a, b] = [stripped(selected), stripped(installed)].map((v) => v.split(".").map(Number));
+      const cmp = (a[0] || 0) - (b[0] || 0) || (a[1] || 0) - (b[1] || 0) || (a[2] || 0) - (b[2] || 0);
+      const isPrerelease = installVersion !== "latest" && releases.find((r) => r.version === installVersion)?.prerelease;
+      if (cmp < 0 || isPrerelease) {
+        setConfirmState({
+          message: isPrerelease
+            ? `Install pre-release ${selected}? Pre-releases may be unstable.`
+            : `Downgrade to ${selected} (installed: ${installed})?`,
+          onConfirm: async () => {
+            setConfirmState(null);
+            await installBinary(selected);
+          },
+        });
+        return;
+      }
+    }
+    await installBinary(selected);
+  };
+
+  const handleCheckVersion = async () => {
+    await fetchVersionInfo();
+    notify.info(versionInfo?.error ? "Version check failed (GitHub unreachable)" : `Latest stable: ${versionInfo?.latest || "unknown"}`);
+  };
+
+  const handleVersionDropdownOpen = () => {
+    if (!releasesLoaded) fetchReleases();
+  };
+
+  // ── Subscription manager handlers ────────────────────────────────────────
+
+  const handleAddSub = async (newSub, done) => {
+    if (!newSub.url.trim()) {
+      notify.error("Subscription URL is required");
+      return;
+    }
+    try {
+      await api("/api/xray/subscriptions", "POST", { name: newSub.name, url: newSub.url });
+      notify.success("Subscription added");
+      done?.();
+      await fetchSubscriptions();
+    } catch (e) {
+      notify.error(`Add failed: ${e.message}`);
+    }
+  };
+
+  const handleToggleSub = async (sub, enabled) => {
+    try {
+      await api(`/api/xray/subscriptions/${sub.id}`, "PATCH", { enabled });
+      await fetchSubscriptions();
+    } catch (e) {
+      notify.error(`Update failed: ${e.message}`);
+    }
+  };
+
+  const handlePatchSub = async (sub, patch, successMsg) => {
+    try {
+      await api(`/api/xray/subscriptions/${sub.id}`, "PATCH", patch);
+      if (successMsg) notify.success(successMsg);
+      await fetchSubscriptions();
+    } catch (e) {
+      notify.error(`Update failed: ${e.message}`);
+      await fetchSubscriptions();
+    }
+  };
+
+  const handleSyncSub = async (sub) => {
+    try {
+      notify.info(`Syncing ${sub.name}...`);
+      const result = await api("/api/xray/sync", "POST", { subscriptionId: sub.id });
+      const r = result.results?.[0];
+      if (r?.error) {
+        notify.error(`${sub.name}: ${r.error}`);
+      } else {
+        notify.success(`${sub.name}: ${r?.count ?? result.count} configs`);
+      }
+      await Promise.all([fetchSubscriptions(), fetchConfigs(), fetchStatus()]);
+    } catch (e) {
+      notify.error(`Sync failed: ${e.message}`);
+    }
+  };
+
+  // Sync All replaces the old single-sub Sync Now.
+  const handleSync = async () => {
+    try {
+      notify.info("Syncing all enabled subscriptions...");
+      const result = await api("/api/xray/sync", "POST", {});
+      const ok = (result.results || []).filter((r) => !r.error).length;
+      const failed = (result.results || []).length - ok;
+      notify.success(
+        `${ok} subs synced, ${result.count} configs` +
+          (failed ? ` · ${failed} failed` : "") +
+          (result.stalePruned ? ` · removed ${result.stalePruned} inactive` : "") +
+          (result.autoFilter?.queued ? " · model filter queued" : "")
+      );
+      await Promise.all([fetchSubscriptions(), fetchConfigs(), fetchStatus()]);
+    } catch (e) {
+      notify.error(`Sync failed: ${e.message}`);
+    }
+  };
+
+  const handleDeleteSub = (sub) => {
+    setConfirmState({
+      message: `Delete subscription "${sub.name}"? Its servers are kept per the subscription's retention setting.`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        try {
+          await api(`/api/xray/subscriptions/${sub.id}`, "DELETE");
+          notify.success(`Subscription "${sub.name}" deleted`);
+          await Promise.all([fetchSubscriptions(), fetchConfigs(), fetchStatus()]);
+        } catch (e) {
+          notify.error(e.message.includes("409") || e.message.includes("in progress") ? "Sync in progress — try again when it finishes" : `Delete failed: ${e.message}`);
+        }
+      },
+    });
+  };
+
+  const handleRestoreConfig = async (configId) => {
+    try {
+      await api(`/api/xray/configs/${configId}`, "PATCH", { restore: true });
+      notify.success("Server restored");
+      await fetchConfigs();
+    } catch (e) {
+      notify.error(`Restore failed: ${e.message}`);
+    }
+  };
+
+  const handleHardDeleteConfig = (configId) => {
+    setConfirmState({
+      message: "Permanently delete this server? It cannot be restored (a future sync will re-add it if the subscription still carries it).",
+      onConfirm: async () => {
+        setConfirmState(null);
+        try {
+          await api(`/api/xray/configs/${configId}?permanent=1`, "DELETE");
+          notify.success("Server permanently deleted");
+          await fetchConfigs();
+        } catch (e) {
+          notify.error(`Delete failed: ${e.message}`);
+        }
+      },
+    });
   };
 
   const handleStart = async (configId) => {
@@ -342,18 +547,6 @@ export default function XrayProxyPage() {
       notify.error(`Test failed: ${e.message}`);
     } finally {
       setTestingId(null);
-    }
-  };
-
-  const handleSync = async () => {
-    try {
-      notify.info("Syncing subscription from v2go...");
-      const result = await api("/api/xray/sync", "POST", {});
-      notify.success(`Synced ${result.count} configs${result.stalePruned ? ` · removed ${result.stalePruned} inactive` : ""}${result.autoFilter?.queued ? " · model filter queued" : ""}`);
-      await fetchStatus();
-      await fetchConfigs();
-    } catch (e) {
-      notify.error(`Sync failed: ${e.message}`);
     }
   };
 
@@ -617,7 +810,7 @@ export default function XrayProxyPage() {
               {!status.binaryInstalled && (
                 <li><strong>Install</strong> the Xray binary (one-time, ~20MB download)</li>
               )}
-              <li><strong>Sync</strong> configs from v2go (auto-runs {formatInterval(settings.xraySyncIntervalMin ?? 60)} after first sync — configure below)</li>
+              <li><strong>Add a subscription</strong> and sync configs — each subscription has its own schedule, retention, and traffic display</li>
               <li><strong>Start</strong> the proxy — a SOCKS5 proxy opens on <code className="text-xs bg-surface-2 px-1 rounded">127.0.0.1:10808</code></li>
               <li>Go to <Link href="/dashboard/providers" className="text-primary hover:underline font-medium">Providers</Link>, pick a connection, and assign the <strong>“V2Ray Proxy (v2go)”</strong> pool — requests to that provider now route through the proxy</li>
             </ol>
@@ -642,6 +835,19 @@ export default function XrayProxyPage() {
             ) : (
               <Badge variant="error">Not installed</Badge>
             )}
+            {/* Latest-stable line + update badge (versionInfo may still be loading) */}
+            <div className="mt-1 text-xs text-text-muted">
+              {versionInfo?.error ? (
+                <span>Latest: unknown (check failed)</span>
+              ) : versionInfo?.latest ? (
+                <>
+                  Latest {versionInfo.latest}{" "}
+                  {versionInfo.hasUpdate && <Badge variant="warning">update available</Badge>}
+                </>
+              ) : (
+                <span>Latest: …</span>
+              )}
+            </div>
           </div>
           <div>
             <div className="text-text-muted mb-1">SOCKS Port</div>
@@ -680,15 +886,28 @@ export default function XrayProxyPage() {
         )}
 
         <div className="flex flex-wrap gap-2">
-          {!status.binaryInstalled ? (
-            <Button onClick={handleInstall} disabled={busy}>Install Xray Binary</Button>
-          ) : status.status === "running" ? (
+          {/* Version picker + Update/Install — ALWAYS visible (Install when
+              the binary is missing, Update otherwise). Selecting an older tag
+              is a downgrade (same endpoint); prereleases are labeled. */}
+          <VersionPanel
+            status={status}
+            versionInfo={versionInfo}
+            releases={releases}
+            installVersion={installVersion}
+            onInstallVersionChange={setInstallVersion}
+            busy={busy}
+            onInstall={handleInstall}
+            onCheck={handleCheckVersion}
+            onDropdownOpen={handleVersionDropdownOpen}
+          />
+          {status.binaryInstalled && status.status === "running" && (
             <>
               <Button variant="secondary" onClick={() => handleStart()} disabled={busy}>Restart</Button>
               <Button variant="danger" onClick={handleStop} disabled={busy}>Stop</Button>
               <Button variant="ghost" onClick={handleHealthCheck} disabled={busy}>Health Check</Button>
             </>
-          ) : (
+          )}
+          {status.binaryInstalled && status.status !== "running" && (
             <Button onClick={() => handleStart()} disabled={busy}>Start Proxy</Button>
           )}
           <Button variant="ghost" onClick={() => setShowLogs((v) => !v)}>
@@ -709,70 +928,28 @@ export default function XrayProxyPage() {
         </Card>
       )}
 
-      {/* Sync card */}
+      {/* Subscription manager (multi-sub, v2rayN per-sub model) */}
+      <SubscriptionManager
+        subscriptions={subscriptions}
+        status={status}
+        busy={busy}
+        onSyncAll={handleSync}
+        onSyncSub={handleSyncSub}
+        onToggleSub={handleToggleSub}
+        onPatchSub={handlePatchSub}
+        onDeleteSub={handleDeleteSub}
+        onAddSub={handleAddSub}
+      />
+
+      {/* Settings card */}
       <Card className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold">Subscription Sync</h2>
-          <Badge>auto-update {formatInterval(settings.xraySyncIntervalMin ?? 60)}</Badge>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-          <div>
-            <div className="text-text-muted mb-1">Last sync</div>
-            <div>{formatDateTime(status.sync?.lastSyncAt)}</div>
-          </div>
-          <div>
-            <div className="text-text-muted mb-1">Configs</div>
-            <div>{status.sync?.lastSyncCount ?? 0}</div>
-          </div>
-          <div>
-            <div className="text-text-muted mb-1">Total syncs</div>
-            <div>{status.sync?.totalSyncRuns ?? 0}</div>
-          </div>
-        </div>
-        {status.sync?.lastSyncError && (
-          <div className="text-sm text-amber-600 dark:text-amber-400">
-            Last error: {status.sync.lastSyncError}
-          </div>
-        )}
-        <div className="flex gap-2 items-end">
-          <div className="flex-1">
-            <label className="text-xs text-text-muted block mb-1">Subscription URL</label>
-            <Input
-              value={settings.xraySubscriptionUrl || ""}
-              onChange={(e) => setSettings((s) => ({ ...s, xraySubscriptionUrl: e.target.value }))}
-              placeholder="https://raw.githubusercontent.com/Danialsamadi/v2go/main/AllConfigsSub.txt"
-            />
-          </div>
-          <Button variant="ghost" onClick={() => handleSaveSetting("xraySubscriptionUrl", settings.xraySubscriptionUrl)} disabled={busy}>
-            Save
-          </Button>
-          <Button onClick={handleSync} disabled={busy}>Sync Now</Button>
-        </div>
+        <h2 className="font-semibold">Settings</h2>
+        {/* Defaults for NEW subscriptions: per-sub values live on the
+            subscription rows above; these keys materialize into newly created
+            subscriptions (repo layer) and stay as the fallback defaults. */}
         <div className="grid sm:grid-cols-[220px_1fr] gap-3 items-end text-sm">
           <div>
-            <label className="text-xs text-text-muted block mb-1">Keep inactive servers</label>
-            <select
-              className="w-full text-sm border border-border rounded px-2 py-2 bg-transparent"
-              value={String(settings.xrayStaleRetentionDays ?? 7)}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                setSettings((s) => ({ ...s, xrayStaleRetentionDays: value }));
-                handleSaveSetting("xrayStaleRetentionDays", value);
-              }}
-            >
-              <option value="7">7 days</option>
-              <option value="1">24 hours</option>
-              <option value="0">Delete after sync</option>
-              <option value="-1">Forever</option>
-            </select>
-          </div>
-          <div className="text-xs text-text-muted pb-2">
-            Sync marks missing servers inactive first, then this setting decides when inactive rows are deleted.
-          </div>
-        </div>
-        <div className="grid sm:grid-cols-[220px_1fr] gap-3 items-end text-sm">
-          <div>
-            <label className="text-xs text-text-muted block mb-1">Auto-sync interval</label>
+            <label className="text-xs text-text-muted block mb-1">Default auto-sync interval (new subscriptions)</label>
             <select
               className="w-full text-sm border border-border rounded px-2 py-2 bg-transparent"
               value={(() => {
@@ -802,7 +979,7 @@ export default function XrayProxyPage() {
             </select>
           </div>
           <div className="text-xs text-text-muted pb-2">
-            How often the subscription is re-fetched automatically. Choose “Never” for manual-only syncs.
+            Default for subscriptions added without an explicit interval. Existing subscriptions keep their own schedule.
           </div>
         </div>
         {(customMode || intervalToPresetValue(settings.xraySyncIntervalMin ?? 60) === "custom") && (
@@ -841,11 +1018,28 @@ export default function XrayProxyPage() {
             </div>
           </div>
         )}
-      </Card>
-
-      {/* Settings card */}
-      <Card className="space-y-3">
-        <h2 className="font-semibold">Settings</h2>
+        <div className="grid sm:grid-cols-[220px_1fr] gap-3 items-end text-sm">
+          <div>
+            <label className="text-xs text-text-muted block mb-1">Default keep-dropped-servers (new subscriptions)</label>
+            <select
+              className="w-full text-sm border border-border rounded px-2 py-2 bg-transparent"
+              value={String(settings.xrayStaleRetentionDays ?? 7)}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                setSettings((s) => ({ ...s, xrayStaleRetentionDays: value }));
+                handleSaveSetting("xrayStaleRetentionDays", value);
+              }}
+            >
+              <option value="7">7 days</option>
+              <option value="1">24 hours</option>
+              <option value="0">Delete after sync</option>
+              <option value="-1">Forever</option>
+            </select>
+          </div>
+          <div className="text-xs text-text-muted pb-2">
+            When a subscription stops carrying a server, the row is kept for this long before deletion.
+          </div>
+        </div>
         <div className="space-y-3 text-sm">
           <label className="flex items-center justify-between">
             <span>Auto-start on boot</span>
@@ -1107,17 +1301,21 @@ export default function XrayProxyPage() {
               <option value="">All protocols</option>
               {facets.protocols.map((p) => <option key={p} value={p}>{p.toUpperCase()}</option>)}
             </select>
-            <select
-              className="text-sm border border-border rounded px-2 py-1 bg-transparent"
-              value={filter.country}
-              onChange={(e) => {
-                setServerPage(1);
-                setFilter((f) => ({ ...f, country: e.target.value }));
-              }}
-            >
-              <option value="">All countries</option>
-              {facets.countries.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            {/* RT-15/Asm-7: country data only exists for v2go-style names —
+                hide the filter entirely when the catalog has none. */}
+            {facets.countries.length > 0 && (
+              <select
+                className="text-sm border border-border rounded px-2 py-1 bg-transparent"
+                value={filter.country}
+                onChange={(e) => {
+                  setServerPage(1);
+                  setFilter((f) => ({ ...f, country: e.target.value }));
+                }}
+              >
+                <option value="">All countries</option>
+                {facets.countries.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
             <label className="text-sm flex items-center gap-1">
               <input
                 type="checkbox"
@@ -1201,6 +1399,9 @@ export default function XrayProxyPage() {
                       {c.isSelected && <span className="w-2 h-2 rounded-full bg-green-500" title="active" />}
                       <span className="truncate max-w-xs">{c.name || c.host}</span>
                       {c.isActive === false && <Badge>inactive</Badge>}
+                      {(c.subs || []).map((name) => (
+                        <Badge key={name} title={`From subscription: ${name}`}>{name}</Badge>
+                      ))}
                       {c.modelFilterResult ? (
                         <Badge variant={c.modelFilterResult.ok ? "success" : "error"} title={`Last model probe: ${c.modelFilterResult.ok ? "usable" : "failed"}${c.modelFilterResult.latencyMs != null && c.modelFilterResult.latencyMs >= 0 ? ` · ${c.modelFilterResult.latencyMs}ms` : ""}`}>
                           {c.modelFilterResult.ok ? "✓" : "✗"} {formatTimeAgo(c.modelFilterResult.testedAt)}
@@ -1231,6 +1432,26 @@ export default function XrayProxyPage() {
                       >
                         {testingId === c.id ? "..." : "Test"}
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setConfirmState({
+                          message: `Delete server "${c.name || c.host}"? It disappears from the list (recoverable from Deleted servers until a permanent delete).`,
+                          onConfirm: async () => {
+                            setConfirmState(null);
+                            try {
+                              await api(`/api/xray/configs/${c.id}`, "DELETE");
+                              notify.success("Server deleted (recoverable from Deleted servers)");
+                              await fetchConfigs();
+                            } catch (e) {
+                              notify.error(`Delete failed: ${e.message}`);
+                            }
+                          },
+                        })}
+                        disabled={busy}
+                      >
+                        Delete
+                      </Button>
                     </div>
                   </td>
                 </tr>
@@ -1239,7 +1460,7 @@ export default function XrayProxyPage() {
           </table>
           {configs.length === 0 && (
             <div className="text-center py-8 text-text-muted">
-              No {filter.status === "all" ? "" : `${filter.status} `}configs found. Click <strong>Sync Now</strong> to fetch from v2go.
+              No {filter.status === "all" ? "" : `${filter.status} `}configs found. Click <strong>Sync All</strong> to fetch from your subscriptions.
             </div>
           )}
           {configs.length > 200 && (
@@ -1287,6 +1508,51 @@ export default function XrayProxyPage() {
             </div>
           )}
         </div>
+        {/* RT-10: tombstoned servers live here until restored or permanently
+            deleted — without this the restore endpoint would be dead code and
+            the tombstone list unbounded. */}
+        {deletedConfigs.length > 0 && (
+          <div className="border-t pt-3">
+            <button
+              className="text-sm text-text-muted hover:text-text-default flex items-center gap-1"
+              onClick={() => setShowDeleted((v) => !v)}
+            >
+              <span className={`inline-block transition-transform ${showDeleted ? "rotate-90" : ""}`}>▸</span>
+              Deleted servers ({deletedConfigs.length})
+            </button>
+            {showDeleted && (
+              <table className="w-full text-sm mt-2">
+                <thead className="text-left text-text-muted border-b">
+                  <tr>
+                    <th className="py-2 pr-3">Server</th>
+                    <th className="py-2 px-3">Protocol</th>
+                    <th className="py-2 px-3">Deleted</th>
+                    <th className="py-2 pl-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deletedConfigs.map((c) => (
+                    <tr key={c.id} className="border-b last:border-0 opacity-70">
+                      <td className="py-2 pr-3">{c.name || c.host}</td>
+                      <td className="py-2 px-3"><Badge>{c.protocol?.toUpperCase()}</Badge></td>
+                      <td className="py-2 px-3 text-xs text-text-muted">{formatDateTime(c.deletedAt)}</td>
+                      <td className="py-2 pl-3 text-right">
+                        <div className="flex gap-1 justify-end">
+                          <Button size="sm" variant="ghost" onClick={() => handleRestoreConfig(c.id)} disabled={busy}>
+                            Restore
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleHardDeleteConfig(c.id)} disabled={busy}>
+                            Delete permanently
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </Card>
 
       <ConfirmModal

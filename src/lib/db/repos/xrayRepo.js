@@ -321,6 +321,26 @@ export async function getSubMemberConfigIds(subscriptionId) {
 }
 
 /**
+ * Source-sub names per config (server-table badges). One grouped query; the
+ * configs list path already loads the full table.
+ */
+export async function getConfigSubscriptionNames() {
+  const db = await getAdapter();
+  const rows = db.all(
+    `SELECT m.configId AS configId, s.name AS name
+     FROM xrayConfigSubscriptions m
+     JOIN xraySubscriptions s ON s.id = m.subscriptionId
+     ORDER BY s.id ASC`
+  );
+  const map = new Map();
+  for (const r of rows) {
+    if (!map.has(r.configId)) map.set(r.configId, []);
+    map.get(r.configId).push(r.name);
+  }
+  return map;
+}
+
+/**
  * Deactivate configs that just lost their last membership. deleteAfterIso is
  * the retention horizon for the sweeper (now+retention, now for retention 0,
  * or NULL to keep forever). Tombstoned rows are never touched.
