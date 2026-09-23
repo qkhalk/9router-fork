@@ -103,7 +103,7 @@ export {
 export {
   getXrayConfigs, getXrayConfigById, getXrayConfigByLink, getXrayConfigCounts, getXrayFacets,
   upsertXrayConfig, bulkUpsertXrayConfigs,
-  markStaleXrayConfigs, deleteStaleXrayConfigs, cleanupStaleXrayConfigs, deleteXrayConfig, clearXrayConfigs,
+  tombstoneXrayConfig, deleteXrayConfig, restoreXrayConfig, hardDeleteXrayConfig, clearXrayConfigs,
   setSelectedXrayConfig, getSelectedXrayConfig, updateXrayTestResult,
   getXraySyncState, setXraySyncState,
 } from "./repos/xrayRepo.js";
