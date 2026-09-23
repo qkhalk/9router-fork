@@ -1,3 +1,27 @@
+# v0.6.50 (2026-09-23)
+
+Xray/v2go feature release: **multi-subscription** support and **in-dashboard Xray-core binary updates**, with hardened install orchestration.
+
+## Multi-subscription sync
+
+The dashboard's V2Ray Proxy now supports **multiple subscription sources** (v2rayN-style), each with its own schedule and settings:
+
+- **Subscriptions manager** — add/delete subscriptions, per-sub enable toggle, sync interval (presets, custom, or manual-only), and a "keep dropped servers" retention per subscription (7 days / 24 hours / delete after sync / forever).
+- **Per-subscription sync** — "Sync Now" refreshes exactly one subscription; "Sync All" refreshes every enabled one. A failing subscription never blocks or wipes the others; a broken fetch (HTTP 200 with no parseable servers, or a suspiciously shrunken catalog) aborts only that subscription's sync.
+- **Traffic & expiry display** — subscriptions that report a `subscription-userinfo` header show "X GB / Y GB used" (with percentage) and expiry countdown right on their row.
+- **Source badges** — the server table shows which subscription(s) each server came from; the same share link in two subscriptions is stored once and badged twice.
+- **Safe deletes** — deleting a server from the table now *tombstones* it (recoverable from the new **Deleted servers** expander with Restore / Delete permanently); subscription syncs never resurrect a deleted server, and automatic retention cleanup never touches one. The model-filter auto-prune keeps physically deleting (never tombstones).
+- **Automatic migration** — the previous single "Subscription URL" setting becomes a "Default" subscription on first boot: same URL, same schedule, all existing servers kept, selected server untouched. Removing all subscriptions later does not re-create it.
+- Subscription CRUD + sync routes are **local-only** (localhost/CLI-token), matching the install route, since subscription URLs can contain provider tokens.
+
+## Xray-core binary updates from the dashboard
+
+- **Update / Reinstall button** (always visible) with an "Installed vX / Latest vY" badge — the latest check compares against the **stable** release only, so Xray-core pre-releases never trigger the update badge.
+- **Version picker** — lists recent releases (drafts hidden, pre-releases labeled) and supports deliberate downgrades with a confirmation step.
+- **Auto-restart** — if the proxy was running before an update, it restarts automatically on the new binary. If the new binary fails to start, the installer **auto-rolls back** to the previous version and retries, reporting honestly which version you ended up on.
+- Install integrity hardened: version tags are strictly validated before any download URL is built, installs are serialized (a second concurrent install gets a 409), and orphaned install staging directories are reaped at boot.
+- Download failures (restricted networks) surface an actionable message; the version check degrades gracefully to "unknown" instead of erroring the dashboard.
+
 # v0.6.49 (2026-09-20)
 
 Upstream-sync release: merges upstream **v0.5.81** (33 commits, v0.5.75 →
