@@ -29,6 +29,9 @@ const TEMP_FILE_PATTERNS = [
   /^config\.json\.model-test-/,        // spawn-per-test probe configs (+ api overlays)
   /^filter-api-\d+-\d+\.json(\.|$)/,   // api-mode filter base configs (+ .ob-* overlays)
 ];
+// Orphaned binary-install staging dirs (RT-5): a crashed installer leaves
+// `.staging-<ts>/` behind — reaped as directories, not unlink'ed as files.
+const STAGING_DIR_PATTERN = /^\.staging-\d+$/;
 const TEMP_CMDLINE_RE = /config\.json\.model-test-|filter-api-[0-9]+-[0-9]+/;
 
 // Best-effort persistent log (reaper runs at boot before the app logger is up;
@@ -67,6 +70,17 @@ export async function reapOrphanedTempProbes({ xrayDir, skipProcessKill = false 
     try {
       const entries = await fs.promises.readdir(scanDir);
       for (const name of entries) {
+        if (STAGING_DIR_PATTERN.test(name)) {
+          matchCount += 1;
+          matchNames.push(`${scanDir}${path.sep}${name}`);
+          try {
+            await fs.promises.rm(path.join(scanDir, name), { recursive: true, force: true });
+            unlinked += 1;
+          } catch (e) {
+            reapLog("staging rm failed", { dir: scanDir, name, error: e?.message || String(e) });
+          }
+          continue;
+        }
         if (!TEMP_FILE_PATTERNS.some((re) => re.test(name))) continue;
         matchCount += 1;
         matchNames.push(`${scanDir}${path.sep}${name}`);
@@ -106,7 +120,7 @@ export async function reapOrphanedTempProbes({ xrayDir, skipProcessKill = false 
 }
 
 /** Kill processes whose cmdline references temp-probe/filter configs. */
-function killTempXrayProcesses() {
+export function killTempXrayProcesses() {
   let killed = 0;
   try {
     if (process.platform === "win32") {

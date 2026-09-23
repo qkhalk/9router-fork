@@ -66,6 +66,21 @@ export function stopXrayHealthCheck(state = g) {
   state.intervalMs = 0;
 }
 
+// Install-quiesce support (RT-5): the binary installer pauses rotation ticks
+// so the health scheduler can't fire a rotation mid-swap. Pause remembers the
+// configured cadence; resume re-arms it from settings.
+export function pauseXrayHealthCheck(state = g) {
+  if (state.paused) return;
+  state.paused = true;
+  stopXrayHealthCheck(state);
+}
+
+export function resumeXrayHealthCheck(settings = {}, state = g) {
+  if (!state.paused) return;
+  state.paused = false;
+  configureXrayHealthCheck(settings, state);
+}
+
 export function configureXrayHealthCheck(settings = {}, state = g) {
   const n = Number(settings.xrayHealthCheckIntervalMin ?? 10);
   // 0 / negative / NaN = manual-only (N6): never run, not even clamped.

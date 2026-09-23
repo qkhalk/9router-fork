@@ -104,6 +104,8 @@ const LOCAL_ONLY_PATHS = [
   "/api/ds2api/start",
   "/api/ds2api/stop",
   "/api/xray/install",
+  "/api/xray/subscriptions", // FORK (multi-sub): stores token-bearing URLs, triggers egress
+  "/api/xray/sync",          // FORK (multi-sub): triggers server-side egress
   "/api/xray/start",
   "/api/xray/stop",
   "/api/xray/restart",

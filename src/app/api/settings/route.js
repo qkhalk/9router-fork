@@ -212,14 +212,10 @@ export async function PATCH(request) {
       applyDs2apiUrl(settings.ds2apiUrl);
     }
 
-    // Restart the xray subscription sync scheduler when its interval changes.
-    // startSyncScheduler is idempotent (clears the previous timer first) and
-    // honors interval = 0 by stopping the scheduler entirely (manual mode).
-    if (Object.prototype.hasOwnProperty.call(body, "xraySyncIntervalMin")) {
-      import("@/lib/xray/sync.js")
-        .then(({ startSyncScheduler }) => startSyncScheduler())
-        .catch((error) => console.warn("[XraySync] restart failed:", error.message));
-    }
+    // FORK (multi-sub): the xraySyncIntervalMin scheduler-restart block was
+    // removed — that key is now only the DEFAULT interval for NEW
+    // subscriptions; per-sub timers are recomputed by subscription CRUD via
+    // startSyncScheduler(). The clamp above stays.
 
     // Reconfigure the TOTU account auto-fetch scheduler when toggled or its
     // interval changes. configureTotuAutoFetch stops the timer for interval 0

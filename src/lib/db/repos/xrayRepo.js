@@ -312,6 +312,14 @@ export async function countSubMemberships(subscriptionId) {
   return Number(row?.c) || 0;
 }
 
+/** Config ids a subscription currently carries (sub-DELETE orphan detection). */
+export async function getSubMemberConfigIds(subscriptionId) {
+  const db = await getAdapter();
+  return db
+    .all(`SELECT configId FROM xrayConfigSubscriptions WHERE subscriptionId = ?`, [subscriptionId])
+    .map((r) => r.configId);
+}
+
 /**
  * Deactivate configs that just lost their last membership. deleteAfterIso is
  * the retention horizon for the sweeper (now+retention, now for retention 0,

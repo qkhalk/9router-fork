@@ -227,6 +227,21 @@ function sha256File(filePath) {
 }
 
 /**
+ * Strict release-tag validation (RT-1, Critical): `installXray` builds BOTH
+ * the zip URL and the `.dgst` URL from this string with `redirect: "follow"`
+ * — a traversal payload like "../../../../attacker/repo/releases/download/v1"
+ * would otherwise fetch an attacker's zip AND the attacker's `.dgst`, making
+ * the sha256 gate verify against the attacker's own digest. Enforced here
+ * AND at the API route (defense in depth — the lib is also callable from
+ * boot paths).
+ */
+const XRAY_TAG_RE = /^v\d+(\.\d+)+$/;
+
+export function isValidXrayTag(version) {
+  return typeof version === "string" && XRAY_TAG_RE.test(version);
+}
+
+/**
  * Download and install the xray binary for the current platform.
  * Skips if the requested version is already installed.
  *
@@ -235,6 +250,10 @@ function sha256File(filePath) {
  * staging dir; a running managed instance is stopped before the verified
  * files are swapped into place. A missing/unparseable .dgst fails the install
  * (fail-closed — never run an unverified binary).
+ *
+ * RT-5 swap hardening: the previous files are RETAINED in `.prev` (rename,
+ * not rm) so a failed post-install restart can auto-rollback; a swap that
+ * fails mid-loop is undone from `.prev` before throwing.
  *
  * @param {{ version?: string, onProgress?: (msg) => void, signal?: AbortSignal }} opts
  * @returns {{ installed: true, version: string, path: string }}
@@ -245,6 +264,12 @@ export async function installXray(opts = {}) {
     onProgress(msg);
     try { ensureDir(); fs.appendFileSync(DOWNLOAD_LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch {}
   };
+
+  if (!isValidXrayTag(version)) {
+    const err = new Error(`invalid xray version tag: ${JSON.stringify(version)}`);
+    err.code = "INVALID_VERSION";
+    throw err;
+  }
 
   const installedVersion = getInstalledVersion();
   if (installedVersion === version && isXrayInstalled()) {
@@ -287,6 +312,7 @@ export async function installXray(opts = {}) {
   log(`Checksum verified (sha256 ${actualHash.slice(0, 12)}…), extracting to staging...`);
 
   const stagingDir = path.join(XRAY_DIR, `.staging-${Date.now()}`);
+  const prevDir = path.join(XRAY_DIR, ".prev");
   try {
     await extractZip(zipPath, stagingDir, { signal });
 
@@ -296,20 +322,46 @@ export async function installXray(opts = {}) {
     }
 
     // Stop a running managed instance before swapping the binary out from
-    // under it (Windows also refuses to replace a running .exe) (X5).
+    // under it (Windows also refuses to replace a running .exe) (X5). The
+    // stop also clears the stale PID file so a crash mid-swap never leaves
+    // the manager pointing at a dead process.
     try {
-      const { getManagedPid, terminateXrayPid } = await import("./process.js");
+      const { getManagedPid, terminateXrayPid, setManagedPid } = await import("./process.js");
       const runningPid = getManagedPid();
       if (runningPid) {
         log("Stopping running xray before binary swap...");
         await terminateXrayPid(runningPid);
+        setManagedPid(null);
       }
     } catch { /* process module/pid unavailable — proceed with the swap */ }
 
-    for (const name of fs.readdirSync(stagingDir)) {
-      const dest = path.join(XRAY_DIR, name);
-      try { fs.rmSync(dest, { force: true, recursive: true }); } catch { /* dest absent */ }
-      fs.renameSync(path.join(stagingDir, name), dest);
+    // Retain the current files in `.prev` (rename, not rm) BEFORE swapping —
+    // the auto-rollback source for a failed post-install restart (RT-5).
+    let prevPopulated = false;
+    try {
+      fs.rmSync(prevDir, { recursive: true, force: true });
+      fs.mkdirSync(prevDir, { recursive: true });
+      for (const name of fs.readdirSync(stagingDir)) {
+        const dest = path.join(XRAY_DIR, name);
+        if (fs.existsSync(dest)) fs.renameSync(dest, path.join(prevDir, name));
+      }
+      prevPopulated = fs.readdirSync(prevDir).length > 0;
+    } catch { /* .prev best-effort — swap proceeds without rollback source */ }
+
+    try {
+      for (const name of fs.readdirSync(stagingDir)) {
+        const dest = path.join(XRAY_DIR, name);
+        try { fs.rmSync(dest, { force: true, recursive: true }); } catch { /* dest absent */ }
+        fs.renameSync(path.join(stagingDir, name), dest);
+      }
+    } catch (swapErr) {
+      // Mid-swap failure on a mixed-version dir is worse than the old
+      // install: undo from `.prev` before propagating.
+      if (prevPopulated) {
+        log(`swap failed (${swapErr.message}) — restoring previous files from .prev`);
+        try { restoreFromPrevDir(); } catch { /* best-effort */ }
+      }
+      throw swapErr;
     }
   } catch (e) {
     throw new Error(`Failed to install verified archive: ${e.message}`);
@@ -335,6 +387,27 @@ export async function installXray(opts = {}) {
   } catch {}
 
   return { installed: true, version, path: BINARY_PATH, alreadyInstalled: false };
+}
+
+/** Move `.prev` contents back into the install dir (auto-rollback, RT-5). */
+export function rollbackXrayToPrev() {
+  return restoreFromPrevDir();
+}
+
+function restoreFromPrevDir() {
+  const prevDir = path.join(XRAY_DIR, ".prev");
+  if (!fs.existsSync(prevDir)) return false;
+  let restored = false;
+  for (const name of fs.readdirSync(prevDir)) {
+    const dest = path.join(XRAY_DIR, name);
+    try { fs.rmSync(dest, { force: true, recursive: true }); } catch { /* dest absent */ }
+    try {
+      fs.renameSync(path.join(prevDir, name), dest);
+      restored = true;
+    } catch { /* best-effort per file */ }
+  }
+  try { fs.rmSync(prevDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  return restored;
 }
 
 /** Remove the xray binary and all extracted assets. */
