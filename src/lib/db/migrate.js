@@ -293,6 +293,23 @@ export async function runMigrationOnce(adapter) {
   // Stamp the schema version we just reached so future boots skip re-backup.
   setMetaSync(adapter, "backupSchemaVersion", SCHEMA_VERSION);
 
+  // 4. FORK (multi-subscription): one-shot legacy migration — the single
+  // `settings.xraySubscriptionUrl` becomes a "Default" subscription with a
+  // membership backfill for every existing config. Guarded by a _meta marker
+  // (NOT an emptiness check): deleting all subs later must not resurrect it.
+  // Runs AFTER the fresh legacy-JSON import above so imported settings are
+  // visible, and BEFORE the scheduler starts (initializeApp awaits the first
+  // getSettings(), which drives this whole function). Marker-guaranteed
+  // single run; failure here must never break boot (same posture as S6).
+  const runLegacyXraySubMigration = async () => {
+    try {
+      const { migrateLegacySubscription } = await import("./repos/subscriptionRepo.js");
+      migrateLegacySubscription(adapter);
+    } catch (e) {
+      console.warn(`[DB][migrate] legacy xray subscription migration skipped: ${e.message}`);
+    }
+  };
+
   // 3. One-time legacy JSON import (only if DB was fresh on entry)
   const alreadyImported = fs.existsSync(MIGRATED_MARKER);
   const legacyMain = readJsonSafe(LEGACY_FILES.main);
@@ -319,6 +336,7 @@ export async function runMigrationOnce(adapter) {
     } catch (err) {
       if (err instanceof MigrationAborted) {
         console.error(`[DB][migrate] aborted: ${err.message} | legacy JSON kept | backup: ${backupDir}`);
+        await runLegacyXraySubMigration();
         return;
       }
       throw err;
@@ -327,6 +345,7 @@ export async function runMigrationOnce(adapter) {
     try { fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString()); } catch {}
     pruneOldBackups();
     console.log(`[DB][migrate] JSON → SQLite in ${Date.now() - t0}ms | legacy JSON kept at DATA_DIR | backup: ${backupDir}`);
+    await runLegacyXraySubMigration();
     return;
   }
 
@@ -335,4 +354,6 @@ export async function runMigrationOnce(adapter) {
   const newVer = getAppVersion();
   const oldVer = getMetaSync(adapter, "appVersion", null);
   if (oldVer !== newVer) setMetaSync(adapter, "appVersion", newVer);
+
+  await runLegacyXraySubMigration();
 }

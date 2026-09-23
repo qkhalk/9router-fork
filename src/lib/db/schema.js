@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -183,12 +183,21 @@ export const TABLES = {
       isSelected: "INTEGER DEFAULT 0",
       addedAt: "TEXT NOT NULL",
       updatedAt: "TEXT NOT NULL",
+      // FORK (multi-subscription): tombstone = user-intent delete; sync never
+      // resurrects a tombstoned row and the retention sweeper never eats one.
+      // staleDeleteAfter = retention horizon set when a config loses its last
+      // membership (NULL = not scheduled / keep forever). UPSTREAM RE-PORT:
+      // re-add these two columns + the idx_xc_deleted index when merging.
+      deletedAt: "TEXT",
+      staleDeleteAfter: "TEXT",
     },
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_xc_country ON xrayConfigs(country)",
       "CREATE INDEX IF NOT EXISTS idx_xc_protocol ON xrayConfigs(protocol)",
       "CREATE INDEX IF NOT EXISTS idx_xc_active ON xrayConfigs(isActive)",
       "CREATE INDEX IF NOT EXISTS idx_xc_selected ON xrayConfigs(isSelected)",
+      // FORK (multi-subscription)
+      "CREATE INDEX IF NOT EXISTS idx_xc_deleted ON xrayConfigs(deletedAt)",
     ],
   },
   // v2go/xray sync state singleton.
@@ -222,6 +231,49 @@ export const TABLES = {
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_xmfr_model ON xrayModelFilterResults(model)",
       "CREATE INDEX IF NOT EXISTS idx_xmfr_configId ON xrayModelFilterResults(configId)",
+    ],
+  },
+  // ── FORK (multi-subscription): subscription sources + config membership. ──
+  // UPSTREAM RE-PORT: re-add these two TABLES entries when merging upstream.
+  // A subscription is one fetch source (v2rayN per-sub model): its own url,
+  // enable flag, interval, retention, and last-sync/traffic state. Membership
+  // rows map configs to the subs that currently carry them; the same share
+  // link in 2 subs dedups to 1 xrayConfigs row (id = sha1 of link) + 2
+  // membership rows.
+  xraySubscriptions: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      name: "TEXT NOT NULL",
+      url: "TEXT NOT NULL UNIQUE",
+      enabled: "INTEGER DEFAULT 1",
+      // NULL = inherit legacy global default (xraySyncIntervalMin /
+      // xrayStaleRetentionDays). intervalMin 0 = manual-only.
+      intervalMin: "INTEGER",
+      retentionDays: "INTEGER",
+      lastSyncAt: "TEXT",
+      lastSyncCount: "INTEGER",
+      lastSyncError: "TEXT",
+      // subscription-userinfo traffic/expiry (bytes; expireAt = ISO 8601, NULL = never).
+      uploadBytes: "INTEGER DEFAULT 0",
+      downloadBytes: "INTEGER DEFAULT 0",
+      totalBytes: "INTEGER DEFAULT 0",
+      expireAt: "TEXT",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_xs_enabled ON xraySubscriptions(enabled)",
+    ],
+  },
+  xrayConfigSubscriptions: {
+    columns: {
+      configId: "TEXT NOT NULL",
+      subscriptionId: "INTEGER NOT NULL",
+      lastSeenAt: "TEXT NOT NULL",
+    },
+    primaryKey: "PRIMARY KEY (configId, subscriptionId)",
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_xcs_sub ON xrayConfigSubscriptions(subscriptionId)",
     ],
   },
 };
