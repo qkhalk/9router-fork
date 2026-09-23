@@ -50,7 +50,10 @@ import {
   updateXrayTestResult,
   getXrayConfigs,
   getXraySyncState,
-  deleteXrayConfig,
+  // Auto-prune (model filter) must HARD-delete: tombstones are user-intent
+  // only — a pruning run would otherwise permanently ban hundreds of configs
+  // with no restore path (RT-4).
+  hardDeleteXrayConfig,
 } from "../db/repos/xrayRepo.js";
 import {
   getModelFilterResultsByConfigIds,
@@ -1146,7 +1149,7 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
       }
       return { ...result, pruned: false };
     }
-    await deleteXrayConfig(config.id);
+    await hardDeleteXrayConfig(config.id);
     // Cascade: the config row is gone, so its cache entries are meaningless.
     await deleteModelFilterResultsByConfigIds([config.id]).catch(() => {});
     return { ...result, pruned: true };
