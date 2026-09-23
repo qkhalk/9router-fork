@@ -11,9 +11,7 @@ const ICON_ALIASES = {
 // Icon files are PNG by convention; vector logos are registered here by id so
 // they stay crisp at any dashboard size (rasterise to PNG instead when adding
 // yet another entry is not desired).
-const ICON_EXTENSIONS = {
-  "genspark-web": "svg",
-};
+const ICON_EXTENSIONS = {};
 
 // Runtime only — first 404 remembers id for the whole session
 const failedIds = new Set();
