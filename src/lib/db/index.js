@@ -105,6 +105,7 @@ export {
   upsertXrayConfig, bulkUpsertXrayConfigs,
   tombstoneXrayConfig, deleteXrayConfig, restoreXrayConfig, hardDeleteXrayConfig, clearXrayConfigs,
   setSelectedXrayConfig, getSelectedXrayConfig, updateXrayTestResult,
+  getConfigSubscriptionNames,
   getXraySyncState, setXraySyncState,
 } from "./repos/xrayRepo.js";
 
