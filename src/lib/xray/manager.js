@@ -1462,5 +1462,113 @@ export async function runHealthCheck() {
   };
 }
 
+// ─── binary update orchestration (RT-5) ───────────────────────────────────
+//
+// installXray is a download/verify/swap lib; THIS owns the operational
+// safety: single-flight install lock, quiescing rotations/draining/temp
+// probes before the swap, capturing whether the proxy was running, and
+// auto-rollback to `.prev` when the post-install restart fails.
+
+const installLock = (global.__xrayInstallLock ??= { busy: false });
+
+export function isInstallInFlight() {
+  return installLock.busy;
+}
+
+/**
+ * Install (or upgrade/downgrade to) an xray version with full orchestration.
+ * Never concurrent: a second call while one is in flight rejects with
+ * code INSTALL_IN_PROGRESS (route → 409).
+ *
+ * @returns {{ installed: true, version, path, alreadyInstalled?, restarted, rolledBack?, restartError? }}
+ */
+export async function installXrayOrchestrated({ version, onProgress } = {}) {
+  if (installLock.busy) {
+    const e = new Error("an xray install is already in progress");
+    e.code = "INSTALL_IN_PROGRESS";
+    throw e;
+  }
+  installLock.busy = true;
+
+  // pauseXrayHealthCheck mutates scheduler state; keep a settings snapshot
+  // around so resume can re-arm with the same cadence.
+  let healthSettings = null;
+  try {
+    const { pauseXrayHealthCheck, resumeXrayHealthCheck } = await import("./healthScheduler.js");
+    const { killTempXrayProcesses } = await import("./reaper.js");
+    const { getDrainingPids, terminateXrayPid, removeDrainingPid } = await import("./process.js");
+    const { rollbackXrayToPrev } = await import("./installer.js");
+
+    try {
+      healthSettings = await getSettings();
+      pauseXrayHealthCheck();
+    } catch { /* scheduler pause best-effort */ }
+
+    // Quiesce: blue-green retirees (up to 3 xray processes can coexist for
+    // the 90s drain window) and cmdline-verified temp probe/filter instances
+    // — all spawned from the SAME BINARY_PATH the swap replaces. Windows
+    // refuses to rename a running .exe; never leave stragglers holding it.
+    for (const entry of getDrainingPids()) {
+      try {
+        await terminateXrayPid(entry.pid);
+        removeDrainingPid(entry.pid);
+      } catch { /* best-effort per pid */ }
+    }
+    try { killTempXrayProcesses(); } catch { /* best-effort */ }
+
+    const wasRunning = Boolean(getStatus().pid);
+
+    let result;
+    try {
+      result = await installXray({ version, onProgress });
+    } catch (e) {
+      // Swap already failed → restore from .prev is handled inside the
+      // installer; nothing running to restart here.
+      throw e;
+    }
+
+    const response = { ...result, restarted: false };
+    if (!wasRunning) return response;
+
+    // A previously-running proxy comes back automatically. If the NEW binary
+    // can't start, roll back to `.prev` and retry once — then report
+    // honestly which state the user is in.
+    try {
+      await restartXrayService();
+      response.restarted = true;
+      return response;
+    } catch (restartErr) {
+      response.restartError = restartErr.message;
+      try {
+        if (rollbackXrayToPrev()) {
+          response.rolledBack = true;
+          response.version = getInstalledVersion() || result.version;
+          try {
+            await restartXrayService();
+            response.restarted = true;
+          } catch (retryErr) {
+            response.restartError = retryErr.message;
+            response.restarted = false;
+          }
+          return response;
+        }
+      } catch (rbErr) {
+        response.restartError = rbErr.message;
+      }
+      // Rollback unavailable or failed: report the broken state honestly.
+      response.restarted = false;
+      return response;
+    }
+  } finally {
+    try {
+      if (healthSettings) {
+        const { resumeXrayHealthCheck } = await import("./healthScheduler.js");
+        resumeXrayHealthCheck(healthSettings);
+      }
+    } catch { /* resume best-effort */ }
+    installLock.busy = false;
+  }
+}
+
 export { installXray, getXrayRuntimeVersion, getXrayLogTail, getXraySyncState };
 export { MANAGED_POOL_ID };
