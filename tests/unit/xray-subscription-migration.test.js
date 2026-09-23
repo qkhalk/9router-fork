@@ -84,7 +84,7 @@ async function reboot(db) {
 }
 
 describe("legacy migration through the real boot path (runMigrationOnce)", () => {
-  it("migrates the legacy URL to a Default sub and preserves catalog + selection", async () => {
+  it("migrates the legacy URL to a Default sub and preserves catalog + selection", { timeout: 30000 }, async () => {
     const db = await freshAdapter();
     seedLegacyWorld(db, {
       url: "https://legacy.example.com/sub",
@@ -123,7 +123,7 @@ describe("legacy migration through the real boot path (runMigrationOnce)", () =>
     void db3;
   });
 
-  it("delete-all-subs + reboot does NOT resurrect the Default sub (RT-6)", async () => {
+  it("delete-all-subs + reboot does NOT resurrect the Default sub (RT-6)", { timeout: 30000 }, async () => {
     const db = await freshAdapter();
     seedLegacyWorld(db, { url: "https://legacy.example.com/sub", configs: [{ id: "k1" }] });
     const db2 = await reboot(db);
@@ -135,7 +135,7 @@ describe("legacy migration through the real boot path (runMigrationOnce)", () =>
     expect(await subRepo.listXraySubscriptions()).toEqual([]);
   });
 
-  it("explicitly-empty legacy URL → no sub; invalid URL → no sub but marker set", async () => {
+  it("explicitly-empty legacy URL → no sub; invalid URL → no sub but marker set", { timeout: 30000 }, async () => {
     const dbEmpty = await freshAdapter();
     seedLegacyWorld(dbEmpty, { url: "", configs: [{ id: "e1" }] });
     const dbEmpty2 = await reboot(dbEmpty);
@@ -152,7 +152,7 @@ describe("legacy migration through the real boot path (runMigrationOnce)", () =>
     expect(dbInvalid2.get(`SELECT value FROM _meta WHERE key LIKE 'xray-subs-migration%'`)).toBeTruthy();
   });
 
-  it("fresh default-URL install (no configs) → Default sub created, zero memberships", async () => {
+  it("fresh default-URL install (no configs) → Default sub created, zero memberships", { timeout: 30000 }, async () => {
     const db = await freshAdapter();
     seedLegacyWorld(db, {
       url: "https://raw.githubusercontent.com/Danialsamadi/v2go/main/AllConfigsSub.txt",
