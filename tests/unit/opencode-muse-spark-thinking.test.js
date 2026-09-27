@@ -241,8 +241,11 @@ describe("OpenCode Free Muse Spark thinking", () => {
     // User message, function_call, function_call_output, and next user message survive
     const types = out.input.map((item) => item.type);
     expect(types).toEqual(["message", "function_call", "function_call_output", "message"]);
-    // Tools flattened and empty properties added
-    expect(out.tools).toEqual([
+    // Tools flattened and empty properties added. Upstream v0.5.91's
+    // applyFingerprintTools appends the zen quartet (bash/glob/grep/read)
+    // after the client tools — keep the prefix assertion for the flattened
+    // client tool and check the quartet names only.
+    expect(out.tools.slice(0, 1)).toEqual([
       {
         type: "function",
         name: "shell",
@@ -250,5 +253,7 @@ describe("OpenCode Free Muse Spark thinking", () => {
         parameters: { type: "object", properties: {} },
       },
     ]);
+    const quartet = out.tools.slice(1).map((t) => t.name).sort();
+    expect(quartet).toEqual(["bash", "glob", "grep", "read"]);
   });
 });

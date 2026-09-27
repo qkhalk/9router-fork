@@ -347,8 +347,11 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const vercelRelayUrl = normalizeString(proxyOptions?.vercelRelayUrl);
   if (vercelRelayUrl) {
     const parsed = new URL(targetUrl);
+    const baseHeaders = options.headers instanceof Headers
+      ? Object.fromEntries(options.headers.entries())
+      : { ...(options.headers || {}) };
     const relayHeaders = {
-      ...options.headers,
+      ...baseHeaders,
       "x-relay-target": `${parsed.protocol}//${parsed.host}`,
       "x-relay-path": `${parsed.pathname}${parsed.search}`,
     };
@@ -357,8 +360,20 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
 
   // Strict connections must egress via THEIR proxy only (P1): an env-var
   // proxy is never an acceptable substitute, and a direct fetch is worse.
+  // That policy is CONNECTION-scoped — callers pass it alongside connection
+  // proxy fields (chat pipeline: strictProxy from providerSpecificData).
+  // Executors also pass a bare `{ strictProxy: true }` as an anti-replay
+  // guard (qoder COSY: a retried signed POST 403s with code 103) — for those,
+  // an env proxy is fine and MUST be used; only the direct fallback after a
+  // transport loss is forbidden. Distinguish the two by the presence of any
+  // connection-proxy field.
   const strict = proxyOptions?.strictProxy === true;
   const proxyEnabled = proxyOptions?.enabled === true || proxyOptions?.connectionProxyEnabled === true;
+  const connectionScoped = proxyOptions && (
+    "enabled" in proxyOptions || "connectionProxyEnabled" in proxyOptions
+    || "url" in proxyOptions || "connectionProxyUrl" in proxyOptions
+    || "noProxy" in proxyOptions || "connectionNoProxy" in proxyOptions
+  );
   const rawConnUrl = normalizeString(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl);
   let connectionProxyUrl = null;
   let noProxyBypassed = false;
@@ -383,7 +398,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     err.proxyInfra = true; // proxy-side outage — never lock/feed the account (chat loop)
     throw err;
   }
-  const envProxyUrl = connectionProxyUrl || noProxyBypassed || strict
+  const envProxyUrl = connectionProxyUrl || noProxyBypassed || (strict && connectionScoped)
     ? null
     : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
   const proxyUrl = connectionProxyUrl || envProxyUrl;

@@ -4,10 +4,10 @@
 
 import { getGitHubUsage } from "./usage/github.js";
 import { getGeminiUsage, getAntigravityUsage } from "./usage/google.js";
-import { getClaudeUsage } from "./usage/claude.js";
+import { getClaudeUsage, consumeClaudeResetGrant } from "./usage/claude.js";
 import { getCodexUsage, consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits } from "./usage/codex.js";
 
-export { consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits };
+export { consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits, consumeClaudeResetGrant };
 import { getKiroUsage } from "./usage/kiro.js";
 import { getMiniMaxUsage } from "./usage/minimax.js";
 import { getCodeBuddyCnUsage, getCodeBuddyIntlUsage } from "./usage/codebuddy-cn.js";
@@ -17,6 +17,7 @@ import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
 import { getNewApiBalanceUsage } from "./usage/newapi.js";
 import { getOrcarouterUsage } from "./usage/orcarouter.js";
+import { getOpenCodeZenUsage } from "./usage/opencode-zen.js";
 import { getGroqUsage } from "./usage/groq.js";
 import { getZedUsage } from "./usage/zed.js";
 import { getXiaomiMimoUsage } from "./usage/xiaomi-mimo.js";
@@ -43,12 +44,8 @@ const USAGE_HANDLERS = {
   claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions, { force: c.force }),
   codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions),
   kiro: (c) => getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
-  qoder: async (c) => {
-    // PAT (pt-...) connections must be exchanged to a job token before the
-    // quota endpoint accepts them.
-    const resolved = await resolveQoderCredentials(c, c.proxyOptions).catch(() => null);
-    return getQoderUsage(resolved?.accessToken || c.accessToken, c.proxyOptions);
-  },
+  qoder: (c) => getQoderUsageFor(c),
+  "qoder-cn": (c) => getQoderUsageFor(c),
   iflow: (c) => getIflowUsage(c.accessToken),
   ollama: (c) => getOllamaUsage(c.apiKey, c.providerSpecificData, c.proxyOptions),
   glm: (c) => getGlmUsage(c.apiKey, c.provider, c.proxyOptions),
@@ -61,6 +58,7 @@ const USAGE_HANDLERS = {
   "grok-cli": (c) => getGrokCliUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   "opencode-go": (c) => getOpenCodeGoUsage(c.apiKey, c.proxyOptions),
   kimi: (c) => getKimiUsage(c.accessToken, c.apiKey, c.proxyOptions, c.providerSpecificData),
+  "opencode-zen": (c) => getOpenCodeZenUsage(c.apiKey, c.proxyOptions),
   deepseek: (c) => getDeepseekUsage(c.apiKey, c.proxyOptions),
   tokenrouter: (c) => getNewApiBalanceUsage({
     baseUrl: "https://api.tokenrouter.com",
@@ -83,6 +81,14 @@ const USAGE_HANDLERS = {
   "xiaomi-mimo": (c) => getXiaomiMimoUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   commandcode: (c) => getCommandCodeUsage(c.apiKey, c.proxyOptions),
 };
+
+// Qoder intl/CN share one usage path: PATs must be exchanged to a job token
+// before the quota endpoint accepts them, and the quota URL comes from the
+// provider's own registry usage block (region-correct via c.provider).
+async function getQoderUsageFor(c) {
+  const resolved = await resolveQoderCredentials(c, c.proxyOptions).catch(() => null);
+  return getQoderUsage(resolved?.accessToken || c.accessToken, c.proxyOptions, c.provider || "qoder");
+}
 
 export async function getUsageForProvider(connection, proxyOptions = null, options = {}) {
   const { provider, accessToken, apiKey, providerSpecificData, projectId } = connection;

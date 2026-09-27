@@ -189,14 +189,16 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
   const reader = originalResponse.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  // Upstream v0.5.91: raw byte chunks replay verbatim on the happy path —
+  // lossless for ANY chunk split (multi-byte UTF-8, sentinel + trailing deltas
+  // in one TCP read), superseding the old C1 afterSentinelLines bookkeeping.
+  const rawChunks = [];
+  // Fork C8/N8 bookkeeping: complete buffered lines (replayed by the catch
+  // path) plus a byte cap so a sentinel-less stream can't buffer unbounded.
   const bufferedLines = [];
   let bufferedBytes = 0;
   let detectedError = null;
   let overflowed = false;
-  // C1: complete lines that arrived in the SAME chunk after the sentinel.
-  // Providers routinely flush sentinel + first deltas in one TCP read; these
-  // lines must replay in order ahead of the live stream — never be dropped.
-  let afterSentinelLines = [];
 
   const recordLine = (line) => {
     bufferedLines.push(line);
@@ -226,6 +228,7 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
         break;
       }
 
+      rawChunks.push(value);
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
@@ -235,8 +238,6 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
         if (!trimmed) continue;
         const jsonStr = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
         if (!jsonStr || jsonStr === "[DONE]") {
-          recordLine(trimmed);
-          afterSentinelLines = lines.slice(i + 1).map((l) => l.trim()).filter(Boolean);
           break scan;
         }
 
@@ -256,7 +257,6 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
         recordLine(trimmed);
 
         if (PEEK_SENTINEL_TYPES.has(event?.type)) {
-          afterSentinelLines = lines.slice(i + 1).map((l) => l.trim()).filter(Boolean);
           break scan;
         }
       }
@@ -315,12 +315,41 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
     );
   }
 
-  const combinedStream = createReplayedStream(
-    [...bufferedLines, ...afterSentinelLines],
-    buffer,
-    reader
-  );
+  const combinedStream = createRawReplayedStream(rawChunks, reader);
   return wrapNdjsonAsOpenAISse(combinedStream, model, originalResponse);
+}
+
+// Upstream v0.5.91: replay the exact upstream bytes first, then continue with
+// the live reader. One chunk per pull keeps the replay lossless and ordered.
+function createRawReplayedStream(rawChunks, reader) {
+  let chunkIndex = 0;
+
+  return new ReadableStream({
+    async pull(controller) {
+      if (chunkIndex < rawChunks.length) {
+        controller.enqueue(rawChunks[chunkIndex++]);
+        return;
+      }
+
+      try {
+        const { value, done } = await reader.read();
+        if (done) {
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } catch {
+        /* ignore */
+      }
+    },
+  });
 }
 
 function createReplayedStream(bufferedLines, remainingBuffer, reader, closeWhenReaderMissing = false) {
