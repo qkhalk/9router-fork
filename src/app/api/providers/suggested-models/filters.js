@@ -29,6 +29,13 @@ export const FILTERS = {
 
       .map((m) => ({ id: m.id, name: m.id })),
 
+  // Go subscription catalogue — every /models id is selectable; the endpoint lane
+  // per model is resolved by the family regex (see open-sse/providers/models/helpers.js)
+  "opencode-go": (models) =>
+    (Array.isArray(models) ? models : [])
+      .filter((m) => typeof m?.id === "string")
+      .map((m) => ({ id: m.id, name: m.id })),
+
   // models.dev returns a large catalog; keep only mimo models
   "mimo-free": (models) =>
     (Array.isArray(models) ? models : [])

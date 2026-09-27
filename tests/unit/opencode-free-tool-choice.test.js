@@ -14,6 +14,17 @@ const CREDS = { connectionId: "opencode-free-tool-choice-test" };
 const INPUT = [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }];
 const TOOLS = [{ type: "function", name: "get_weather", description: "w", parameters: { type: "object", properties: {} } }];
 
+// Upstream v0.5.91: applyFingerprintTools appends the zen free-tier quartet
+// (bash/glob/grep/read) to EVERY opencode request, after the client tools.
+const FINGERPRINT_QUARTET = ["bash", "glob", "grep", "read"];
+function expectToolsPreserved(out) {
+  // Client tools stay intact, in order, as the prefix…
+  expect(out.tools.slice(0, TOOLS.length)).toEqual(TOOLS);
+  // …with the fingerprint quartet appended for the free-tier gate.
+  const names = out.tools.slice(TOOLS.length).map((t) => t.name || t.function?.name).sort();
+  expect(names).toEqual([...FINGERPRINT_QUARTET].sort());
+}
+
 function responsesBody(model, tool_choice) {
   const body = { model, input: structuredClone(INPUT), tools: structuredClone(TOOLS) };
   if (tool_choice !== undefined) body.tool_choice = tool_choice;
@@ -36,7 +47,7 @@ describe("opencode Free 1.3 tool_choice auto-only", () => {
       const body = responsesBody(model, structuredClone(choice));
       const out = new OpenCodeExecutor().transformRequest(model, body, true, CREDS);
       expect(out.tool_choice).toBe("auto");
-      expect(out.tools).toEqual(TOOLS);
+      expectToolsPreserved(out);
       expect(out.input).toEqual(INPUT);
     }
   });
@@ -46,14 +57,17 @@ describe("opencode Free 1.3 tool_choice auto-only", () => {
       FREE_13, responsesBody(FREE_13, "auto"), true, CREDS,
     );
     expect(autoOut.tool_choice).toBe("auto");
-    expect(autoOut.tools).toEqual(TOOLS);
+    expectToolsPreserved(autoOut);
     expect(autoOut.input).toEqual(INPUT);
 
+    // Absent choice: upstream v0.5.91's applyFingerprintTools now defaults
+    // Responses requests to "auto" once it supplies the quartet — the demote
+    // quirk keeps that consistent with the 1.3-Free auto-only contract.
     const absentOut = new OpenCodeExecutor().transformRequest(
       FREE_13, responsesBody(FREE_13, undefined), true, CREDS,
     );
-    expect("tool_choice" in absentOut).toBe(false);
-    expect(absentOut.tools).toEqual(TOOLS);
+    expect(absentOut.tool_choice).toBe("auto");
+    expectToolsPreserved(absentOut);
     expect(absentOut.input).toEqual(INPUT);
   });
 
@@ -84,7 +98,7 @@ describe("opencode Free 1.3 tool_choice auto-only", () => {
     const sent = JSON.parse(actualInit.body);
     expect(sent.tool_choice).toBe("auto");
     expect(sent.model).toBe(FREE_13);
-    expect(sent.tools).toEqual(TOOLS);
+    expectToolsPreserved(sent);
     expect(sent.input).toEqual(INPUT);
   });
 });

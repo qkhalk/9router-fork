@@ -19,6 +19,7 @@ import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
+import { upstreamResponseHeaders } from "open-sse/utils/upstreamHeaders.js";
 import { handleComboChat, handleFusionChat, detectRequiredCapabilities } from "open-sse/services/combo.js";
 import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
@@ -304,6 +305,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // that denied a candidate this request. Infinity until one does; only the
   // all-candidates-denied terminal path reads it.
   let breakerRetryAfterMs = Infinity;
+  // Upstream rate-limit headers from the last failed attempt, forwarded on the
+  // terminal error so clients see the real retry window.
+  let lastHeaders = null;
 
   while (true) {
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
@@ -328,7 +332,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             });
           } catch { /* alerts must never break the error path */ }
         }
-        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman, lastHeaders);
       }
       if (excludeConnectionIds.size === 0) {
         log.warn("AUTH", `No active credentials for provider: ${provider}`);
@@ -351,7 +355,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         return unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, msg, retryAfter, formatRetryAfter(retryAfter));
       }
       log.warn("CHAT", "No more accounts available", { provider });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable", lastHeaders);
     }
 
     // Strict-proxy failure (pool exhausted / resolution error): never direct —
@@ -681,6 +685,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       if (!(provider === "antigravity" && isStrikeBlocked(credentials.connectionId, model))) {
         recordFailure(credentials.connectionId, provider);
       }
+      lastHeaders = upstreamResponseHeaders(result.response?.headers);
       continue;
     }
 

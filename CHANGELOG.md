@@ -1,3 +1,45 @@
+# v0.6.51 (2026-09-28)
+
+Upstream-sync release: merges upstream **v0.5.91** (79 commits, v0.5.81 → v0.5.91 — includes the v0.5.85, v0.5.86, and v0.5.91 releases). All fork subsystems preserved (xray multi-subscription + binary updates, genspark-web/ds2api/gemini-web/orcarouter/totu-ai providers, masked-key S7 plumbing, strict-proxy pools, archive encryption, key portability). Upstream README changes were skipped per fork policy — this fork keeps its own README.
+
+## Upstream highlights now in the fork
+
+### New providers & models
+- **OpenCode Zen** (`opencode-zen`, alias `ocz`): free-tier provider with its own executor, registry entry, usage module, and fingerprint gating.
+- **Qoder CN** (`qoder-cn`, alias `qdcn`): qoder.com.cn with OAuth flow, COSY protocol, and CN gateway routing; shares Qoder's executor/usage path with region-correct catalogs.
+- **Aggregators**: Token Harbor, dahl, atria, agnes, bai (OpenAI-compatible).
+- **Claude Opus 5.5** support (spoofed CLI version bumped to 2.1.280); **Codex GPT-6 Sol and Luna**; **Xiaomi MiMo v2.6** pro/flash/pro-ultraspeed with five account clusters (cn/sgp/ams/ru/in) and server-assisted desktop login for headless/Docker; **OpenCode Go** complete 40-model Go catalog with auto-fetch + family endpoint regex; **Cline** `cline-free/*` tier priced at zero; **Hermes** multi-role model config (delegation + auxiliary slots).
+
+### Features
+- **System One**: `/v1/systemone` decision endpoint (Jev models), sidebar + Media Providers integration with probe testing.
+- **CLI tools**: multiple model profiles for Codex CLI; dynamic configuration + logos for Pi, OMP, Crush, ForgeCode, Smelt, CodeWhale; Codex settings refresh after apply; existing `ANTHROPIC_AUTH_TOKEN` preserved when applying Claude settings.
+- **Analytics/Usage**: Requests mode + provider/model breakdown charts, All Time period, bounded 2-day lastUsed overlay, per-API-key usage attribution keyed by full key (team keys no longer collide), free limit resets shown/redeemed for cc accounts.
+- **Model capabilities**: capability metadata on `/v1/models`, aggregated across combo targets; vision adapter models in an ordered combos table.
+- **Claude**: `x-claude-code-session-id` forwarded on OAuth requests; client `anthropic-beta` flags merged + rate-limit headers forwarded; thinking text returned to OpenAI-format clients; upstream response headers propagated onto SSE/error responses.
+- **i18n**: React text rewrites translated via characterData mutation observer.
+- **Tray**: native arm64 macOS menubar binary (no Rosetta) built by `scripts/buildTrayArm64.js` + `tray-binaries.yml` CI.
+- **Docker CI**: release pipeline rewritten — native amd64/arm64 runners, per-platform + resolved-manifest health checks, verified manifests, `workflow_dispatch` republish with `promote_latest` opt-in, FIFO concurrency queue, tag/version validation.
+
+### Fixes
+- **Command Code**: raw byte-chunk replay preserves every NDJSON line under any chunk split (merged with the fork's C8/N8 peek hardening: raw-chunk happy path + fork line-replay catch path + buffer cap).
+- **Providers API**: POST `/api/providers` is O(1) and refuses silent key overwrite; capabilities catalog no longer cached per module copy; model selector filtered by active connections/noAuth.
+- **Qoder**: signed-request replay prevention (`403/103 Duplicate request`), code 110 billing blocks, upstream SSE error status preserved.
+- **Gemini/STT**: `normalizeGeminiContents` guards terminal model turns + unresponded functionCalls; live-API-only Gemini models dispatch over the Live WebSocket transport; Responses `response.completed` carries streamed output items and usage.
+- **Translator**: Claude `refusal` maps to `content_filter` with explanation; empty `<think>` markers no longer emitted into OpenAI content; replayed reasoning fields stripped for Groq/Mistral/Cerebras.
+- **Cursor**: AgentService empty turns/hangs (fold system prompts, `ModelDetails`, Composer/Grok `thinking_delta`, reject IDE execs); RTK compresses Cursor `tool_result` pre-translation.
+- **Antigravity**: drops requestType `agent` (false 429 `RESOURCE_EXHAUSTED`); weekly vs 5-hour quotas separated and deduplicated; all Hermes identity variants rewritten.
+- **Hugging Face**: Inference Providers router migration, expanded image catalog, STT route. **Proxy pools**: lossless header forwarding through Vercel/Cloudflare/Deno relays. **Tailscale**: enable-flow health wait capped at 20s. **OAuth**: Zed paste-token crash fixed + IDE auto-import.
+- **OpenCode free tier**: fingerprint quartet (bash/glob/grep/read) applied to every request with case-canonicalisation and response-side name restoration.
+
+## Merge notes & fork deltas on top
+- **GLM-5.2 `reasoning_effort` restored**: upstream's new exact-model capability entry for `glm-5.2` (1M context) accidentally dropped `thinkingEffortSupported`, regressing reasoning_effort — fails upstream's own `thinking-unified` test. The fork re-adds the flag (keeps upstream's 1M context).
+- **strictProxy semantics bridged**: the fork's P1 rule (connection-scoped strict ignores env proxies) now only applies when connection-proxy fields are present; executor-level bare `{ strictProxy: true }` (upstream's qoder anti-replay guard) honors env proxies and still refuses direct fallback after transport loss. Both the fork's `proxy-fetch-strict-env` (P1/P5) and upstream's `qoder-proxy-replay` suites pass.
+- **Provider registry renumbering**: fork providers moved p124–p128 → p131–p135 (upstream took p124–p130 for qoder-cn/opencode-zen/aggregators); providers/alias baselines re-snapshotted (93 providers, 117 alias tokens) — also fixes a stale `genspark-web` modelKeys entry shipped since v0.6.50.
+- **CodexToolCard**: upstream's auto-select of `apiKeys[0].key` on mount was kept OUT — in this fork that column holds the masked display key (S7), never a credential.
+- **usageRepo byApiKey**: fork's raw-key map + `resolveApiKeyMeta` fingerprint retained (upstream's masked-tail keying is weaker under the fork's S7 schema).
+- **Docker CI adapted**: upstream's new pipeline kept with the fork's image namespaces (`vibecoder11200/9router` Docker Hub + derived GHCR), the fork-defining-files release gate (gemini-web/ds2api), and the post-publish deploy trigger.
+- **Tests**: 3 fork tests adapted to upstream v0.5.91 behavior (opencode fingerprint quartet on tools assertions; image-generation pins the Codex version from the registry instead of a literal). Suite: 3627→3642 passing; no regressions vs the pre-merge Windows-local baseline.
+
 # v0.6.50 (2026-09-24)
 
 Xray/v2go feature release: **multi-subscription** support and **in-dashboard Xray-core binary updates**, with hardened install orchestration.

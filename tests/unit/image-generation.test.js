@@ -11,8 +11,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { handleImageGenerationCore } from "../../open-sse/handlers/imageGenerationCore.js";
+import { PROVIDERS } from "../../open-sse/config/providers.js";
 
 const originalFetch = global.fetch;
+
+// The spoofed Codex CLI version lives in the registry (single source) — read
+// it instead of pinning a literal so registry bumps don't break this test
+// (the suite's intent: "current Codex version header").
+const CODEX_VERSION = PROVIDERS.codex?.headers?.version || PROVIDERS.codex?.cliVersion;
 
 describe("handleImageGenerationCore", () => {
   beforeEach(() => {
@@ -351,7 +357,7 @@ describe("handleImageGenerationCore", () => {
         headers: expect.objectContaining({
           authorization: "Bearer codex-token",
           "chatgpt-account-id": "account-123",
-          version: "0.154.0",
+          version: CODEX_VERSION,
         }),
       })
     );
