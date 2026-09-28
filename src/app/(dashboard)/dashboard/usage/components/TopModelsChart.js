@@ -47,16 +47,16 @@ export default function TopModelsChart({ byModel }) {
     <Card className="flex min-w-0 flex-col gap-3 p-3 sm:p-4">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-text-muted uppercase tracking-wide">Top Models</span>
-        <div className="grid grid-cols-2 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1">
+        <div className="grid grid-cols-2 items-center gap-1 rounded-lg border border-border bg-surface-2 p-1">
           <button
             onClick={() => setViewMode("tokens")}
-            className={`px-2.5 py-0.5 rounded-md text-xs font-medium transition-colors ${viewMode === "tokens" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
+            className={`px-2.5 py-0.5 rounded-md text-xs font-medium transition-colors ${viewMode === "tokens" ? "bg-primary text-primary-foreground shadow-sm" : "text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5"}`}
           >
             Tokens
           </button>
           <button
             onClick={() => setViewMode("requests")}
-            className={`px-2.5 py-0.5 rounded-md text-xs font-medium transition-colors ${viewMode === "requests" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
+            className={`px-2.5 py-0.5 rounded-md text-xs font-medium transition-colors ${viewMode === "requests" ? "bg-primary text-primary-foreground shadow-sm" : "text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5"}`}
           >
             Requests
           </button>
@@ -89,15 +89,19 @@ export default function TopModelsChart({ byModel }) {
               width={90}
             />
             <Tooltip
+              cursor={{ fill: "#888", fillOpacity: 0.15 }}
               contentStyle={{
                 backgroundColor: "var(--color-bg)",
                 border: "1px solid var(--color-border)",
                 borderRadius: "8px",
                 fontSize: "12px",
               }}
+              itemStyle={{ color: "var(--color-text-main)" }}
+              labelStyle={{ color: "var(--color-text-main)" }}
               formatter={(value) => [fmt(value), label]}
             />
-            <Bar dataKey={viewMode} radius={[0, 4, 4, 0]}>
+            {/* Bar-level fill gives the tooltip entry a color; Cells still override per bar */}
+            <Bar dataKey={viewMode} fill={COLORS[0]} radius={[0, 4, 4, 0]}>
               {chartData.map((_, i) => (
                 <Cell key={i} fill={COLORS[i % COLORS.length]} fillOpacity={0.85} />
               ))}

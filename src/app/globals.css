@@ -27,6 +27,9 @@
   /* Primary (legacy alias for backward compat with existing components) */
   --color-primary: var(--color-brand-500);
   --color-primary-hover: var(--color-brand-600);
+  /* Dark warm text: coral #E56A4A only reaches ~5:1 contrast with dark text
+     (white manages ~3:1), and one value must hold in both themes. */
+  --color-primary-foreground: #2b1610;
 
   /* Surfaces & backgrounds (light) */
   --color-bg: #FDFAF6;
@@ -150,6 +153,7 @@ select {
   /* Primary aliases */
   --color-primary: var(--color-primary);
   --color-primary-hover: var(--color-primary-hover);
+  --color-primary-foreground: var(--color-primary-foreground);
 
   /* Semantic */
   --color-bg: var(--color-bg);
