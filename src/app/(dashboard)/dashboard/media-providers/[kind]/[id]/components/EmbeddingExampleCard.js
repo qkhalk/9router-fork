@@ -73,13 +73,20 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
         setError("That is a masked display key (sk-…••••). Paste the RAW key, or leave the field empty for local mode.");
         return;
       }
-      const headers = { "Content-Type": "application/json" };
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/v1/embeddings", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(buildBody()),
-      });
+      const payload = JSON.stringify(buildBody());
+      // No key pasted → trusted internal example proxy (works with
+      // Require-API-Key on); a RAW key still hits the public endpoint.
+      const res = apiKey
+        ? await fetch("/api/v1/embeddings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+            body: payload,
+          })
+        : await fetch("/api/example/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-example-path": "/v1/embeddings" },
+            body: payload,
+          });
       const latencyMs = Date.now() - start;
       const data = await res.json();
       if (!res.ok) { setError(data?.error?.message || data?.error || `HTTP ${res.status}`); return; }

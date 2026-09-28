@@ -1,3 +1,16 @@
+# v0.6.53 (2026-09-28)
+
+Makes the dashboard Example/Test **Run** buttons work under **Require-API-Key = on** — the same trusted path the provider-page Test button uses — and fixes the System One endpoint's auth gate that upstream shipped without the fork's internal-caller hardening.
+
+## Fixed — System One auth gate (upstream regression vs fork doctrine)
+- Upstream's new `handleSystemone` copied the old requireApiKey gate without the fork's **`isTrustedInternalRequest` bypass** (loopback + `x-9r-cli-token`) that every other media endpoint has — so the provider-page **Test** button and any internal caller got `401 Missing API key` for systemone models even though they authenticate as trusted-internal. Added the canonical gate (bypass + `enforceKeyBudget`, matching `fetch`/`search`/`stt`/`tts`/`embeddings`/`imageGeneration`/`videoGeneration`/`chat`).
+
+## Added — internal example runner (`/api/example/run`)
+- The Example cards' Run button is a browser call to the public `/v1/*` endpoints, which Require-API-Key gates behind a client key — and since S7 the dashboard can't prefill one (masked display values only). New **session-authed** internal proxy replays the request against the server's own loopback listener with the CLI token, streaming the upstream response (JSON / binary / SSE) back untouched. All five example/test cards (Generic — image/video/music/imageToText/systemone, TTS, STT, Embedding, Combo detail) now:
+  - **No key pasted** → run via the internal proxy (works regardless of Require-API-Key) — verified E2E against a live server with requireApiKey=on: `oc/jev-1.13-free` returns a real Jev decision.
+  - **RAW key pasted** → still exercises the real public endpoint exactly like the curl snippet.
+- The proxy is deliberately not a general relay: POST only, exact-path whitelist from `MEDIA_PROVIDER_KINDS`, target always this process's own origin, dashboard session required (proxy-enforced + explicit check). Verified: no session → 401, non-whitelisted path → 400, direct public call without key → still 401 (the gate for real off-box clients is unchanged).
+
 # v0.6.52 (2026-09-28)
 
 Fork-polish release on top of the v0.5.91 sync: drops upstream's NEW badges and fixes the masked-API-key bug that broke every dashboard Example/Test "Run" button (surfaced by the new System One card).

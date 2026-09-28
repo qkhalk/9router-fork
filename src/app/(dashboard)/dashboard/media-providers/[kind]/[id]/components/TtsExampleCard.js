@@ -215,14 +215,21 @@ export function TtsExampleCard({ providerId }) {
         setError("That is a masked display key (sk-…••••). Paste the RAW key, or leave the field empty for local mode.");
         return;
       }
-      const headers = { "Content-Type": "application/json" };
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       const url = `/api/v1/audio/speech${responseFormat === "json" ? "?response_format=json" : ""}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ ...ttsBody, input: input.trim() }),
-      });
+      const payload = JSON.stringify({ ...ttsBody, input: input.trim() });
+      // No key pasted → trusted internal example proxy (works with
+      // Require-API-Key on); a RAW key still hits the public endpoint.
+      const res = apiKey
+        ? await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+            body: payload,
+          })
+        : await fetch("/api/example/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-example-path": url },
+            body: payload,
+          });
       setLatency(Date.now() - start);
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));

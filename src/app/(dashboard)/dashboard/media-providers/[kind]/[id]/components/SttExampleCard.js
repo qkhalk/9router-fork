@@ -87,9 +87,19 @@ export function SttExampleCard({ providerId }) {
       if (allowedParams.includes("temperature") && temperature) fd.append("temperature", temperature);
       if (allowedParams.includes("prompt") && prompt) fd.append("prompt", prompt);
 
-      const headers = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/v1/audio/transcriptions", { method: "POST", headers, body: fd });
+      // No key pasted → trusted internal example proxy (works with
+      // Require-API-Key on); a RAW key still hits the public endpoint.
+      const res = apiKey
+        ? await fetch("/api/v1/audio/transcriptions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${apiKey}` },
+            body: fd,
+          })
+        : await fetch("/api/example/run", {
+            method: "POST",
+            headers: { "x-example-path": "/v1/audio/transcriptions" },
+            body: fd,
+          });
       setLatency(Date.now() - start);
       const ct = res.headers.get("content-type") || "";
       const data = ct.includes("application/json") ? await res.json() : await res.text();

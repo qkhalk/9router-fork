@@ -159,16 +159,28 @@ export function GenericExampleCard({ providerId, kind }) {
         setError("That is a masked display key (sk-…••••). Paste the RAW key, or leave the field empty for local mode.");
         return;
       }
-      const headers = { "Content-Type": "application/json" };
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      if (pinnedConnectionId) headers["x-connection-id"] = pinnedConnectionId;
-      if (useStreaming) headers["Accept"] = "text/event-stream";
       const body = { ...requestBody, model: modelFull };
-      const res = await fetch(`/api${apiPathWithQuery}`, {
-        method: kindConfig.endpoint.method,
-        headers,
-        body: JSON.stringify(body),
-      });
+      // No key pasted → run through the trusted internal example proxy
+      // (/api/example/run, session-authed, CLI-token on loopback) so the Run
+      // button works with Require-API-Key on — same path the provider-page
+      // Test button takes. A pasted RAW key still exercises the real public
+      // endpoint exactly like the curl snippet.
+      const res = apiKey
+        ? await fetch(`/api${apiPathWithQuery}`, {
+            method: kindConfig.endpoint.method,
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+              ...(pinnedConnectionId ? { "x-connection-id": pinnedConnectionId } : {}),
+              ...(useStreaming ? { Accept: "text/event-stream" } : {}),
+            },
+            body: JSON.stringify(body),
+          })
+        : await fetch("/api/example/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-example-path": apiPathWithQuery },
+            body: JSON.stringify(body),
+          });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setError(data?.error?.message || data?.error || `HTTP ${res.status}`);

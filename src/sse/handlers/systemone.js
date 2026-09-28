@@ -3,7 +3,9 @@ import {
   markAccountUnavailable,
   clearAccountError,
   extractApiKey,
+  isTrustedInternalRequest,
   isValidApiKey,
+  enforceKeyBudget,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
@@ -42,9 +44,13 @@ export async function handleSystemone(request) {
     log.debug("AUTH", "No API key provided (local mode)");
   }
 
-  // Enforce API key if enabled in settings
+  // Enforce API key if enabled in settings — same gate as every other media
+  // endpoint: loopback + CLI-token callers (dashboard model-test ping, the
+  // internal example runner) pass without a key; off-box callers need one.
+  // Budget enforcement covers this spending endpoint too (audit finding 26
+  // pattern — upstream's fresh copy of this handler shipped without either).
   const settings = await getSettings();
-  if (settings.requireApiKey) {
+  if (settings.requireApiKey && !(await isTrustedInternalRequest(request))) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
@@ -54,6 +60,8 @@ export async function handleSystemone(request) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
+    const budgetResponse = await enforceKeyBudget(apiKey);
+    if (budgetResponse) return budgetResponse;
   }
 
   if (!modelStr) {
