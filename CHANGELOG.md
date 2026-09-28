@@ -1,3 +1,25 @@
+# v0.6.55 (2026-09-29)
+
+Five fixes that make the xray **Model Proxy Filter** and multi-subscription sync behave correctly when more than one subscription is configured. The headline bug: servers from newly added subscriptions could never enter the filter's tested set — and therefore never reached the proxy rotation pools at all.
+
+## Fixed — new subscriptions' servers starved out of the model filter (and thus out of rotation)
+- The filter's tested slice was `configs.slice(0, limit)` over a latency-sorted catalog: servers that had never been probed (i.e. every server from a freshly added subscription) sorted last, never got probed, so they could never pass — and since the managed-pool 429 rotation picks candidates from model-filter results and the health auto-rotate needs a measured latency, those servers were invisible to both rotation paths no matter how many subscriptions carried them.
+- Slice selection is now a stable three-tier partition: never-filter-tested first, then stale/retry-due rows (success cache past its TTL, failed rows past the retry window), then fresh-cache rows — with the legacy latency order preserved inside each tier. With no backlog this is byte-for-byte the old slice; `all` / force-retest / prune modes are unchanged.
+- The filter's cache maps are now built over the full catalog instead of the slice, and one shared predicate (`isDueForProbe`) drives both the slice ranking and the re-test filter so the two can never drift.
+
+## Fixed — auto-filter triggers silently lost while a run was already in flight
+- "Auto-filter after subscription sync" triggers arriving while a filter run was executing used to be dropped (`already_running`), leaving just-synced subscriptions unvalidated until the next sync cycle. They now latch exactly one coalesced re-run with the latest saved settings, consumed when the running job settles; a manual dashboard click still only reports the skip (no latch, no queue).
+- The dashboard shows an amber "Auto-filter skipped (already running) at … — it re-runs automatically once the running filter finishes" line under the filter card instead of burying the reason in the server console. The message clears as soon as the follow-up run starts and re-stamps with a fresh timestamp if the follow-up is itself skipped.
+
+## Fixed — api-mode filter runs never wrote latency back to the server catalog
+- Spawn-mode probes persist `lastLatencyMs`/`lastExitIp`/failure markers into `xrayConfigs`; api-mode (the shared filter-xray) only wrote its own result cache, so latency-sorted slices and health-rotate candidates never saw api-mode results. Api-mode now mirrors spawn-mode bookkeeping: success writes latency + exit IP, a returned failure (e.g. upstream 429 through the tunnel) writes the failure marker, and thrown errors remain owned by the outer test loop.
+
+## Fixed — a server carried by two subscriptions churned its display identity on every sync
+- The same canonical share link dedupes into one `xrayConfigs` row (id = sha1 of the link without fragment), but whichever subscription synced last overwrote `link`/`name`/`country` — server names jumped around depending on sync order. Both upserts now implement first-namer identity: the first subscription that named a config pins its link/name/country; a row with no name yet adopts the incoming values. Test state (latency/exit IP/selected) was already preserved and stays that way.
+
+## Tests
+- New `tests/unit/xray-filter-multi-sub-fixes.test.js` (slice tiers, api-mode bookkeeping, the re-run latch end-to-end, `queueRerunIfBusy` wiring) and `tests/unit/xray-config-identity-upsert.test.js` (first-namer identity against a real SQLite adapter). Full xray suite: 144 existing + 12 new, all green.
+
 # v0.6.54 (2026-09-28)
 
 Two usage-dashboard fixes: the live topology now lights up for noAuth/free providers, and the By Provider / Top Models breakdown charts render correctly in both themes.
