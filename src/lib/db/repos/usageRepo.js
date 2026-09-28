@@ -252,6 +252,24 @@ export async function getActiveRequests() {
     }
   }
 
+  // noAuth/free providers run without a connection row, so trackPendingRequest
+  // never lands them in byAccount — surface their live requests from byModel
+  // or the topology stays dark for exactly those providers.
+  for (const [modelKey, count] of Object.entries(pendingRequests.byModel)) {
+    if (count <= 0) continue;
+    const withConnection = Object.values(pendingRequests.byAccount)
+      .reduce((sum, models) => sum + (models[modelKey] || 0), 0);
+    const withoutConnection = count - withConnection;
+    if (withoutConnection <= 0) continue;
+    const match = modelKey.match(/^(.*) \((.*)\)$/);
+    activeRequests.push({
+      model: match ? match[1] : modelKey,
+      provider: match ? match[2] : "unknown",
+      account: "Free (no connection)",
+      count: withoutConnection,
+    });
+  }
+
   await ensureRingInitialized();
   const seen = new Set();
   const recentRequests = [...recentRing.items]
