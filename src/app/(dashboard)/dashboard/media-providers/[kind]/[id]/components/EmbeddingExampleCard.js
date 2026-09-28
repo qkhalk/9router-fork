@@ -38,10 +38,8 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
 
   useEffect(() => {
     setLocalEndpoint(window.location.origin);
-    fetch("/api/keys")
-      .then((r) => r.json())
-      .then((d) => { setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || ""); })
-      .catch(() => {});
+    // S7: /api/keys returns the MASKED display value — never prefill it into a
+    // credential field (U+2022 breaks fetch headers). Local mode sends no key.
     fetch("/api/tunnel/status")
       .then((r) => r.json())
       .then((d) => { if (d.publicUrl) setTunnelEndpoint(d.publicUrl); })
@@ -71,6 +69,10 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
     setResult(null);
     const start = Date.now();
     try {
+      if (apiKey && apiKey.includes("\u2022")) {
+        setError("That is a masked display key (sk-…••••). Paste the RAW key, or leave the field empty for local mode.");
+        return;
+      }
       const headers = { "Content-Type": "application/json" };
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       const res = await fetch("/api/v1/embeddings", {
