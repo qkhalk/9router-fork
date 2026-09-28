@@ -1,3 +1,17 @@
+# v0.6.54 (2026-09-28)
+
+Two usage-dashboard fixes: the live topology now lights up for noAuth/free providers, and the By Provider / Top Models breakdown charts render correctly in both themes.
+
+## Fixed — topology live animation never lit for free/noAuth providers
+- `getActiveRequests()` derived `activeRequests` only from `pendingRequests.byAccount`, and pending tracking only populates `byAccount` when the request carries a `connectionId` — so live requests to connection-less (noAuth/free) providers never reached the SSE stream and the usage topology stayed dark for exactly those providers. Same behavior since upstream 0.4.x.
+- Connection-less pending requests are now surfaced from `byModel` with a `Free (no connection)` account label. Regression-tested (`tests/unit/usage-active-requests.test.js`, fails 3/3 without the fix) and verified E2E against a live server: a real `oc/mimo-v2.5-free` stream went from an always-empty `activeRequests` to a lit electric edge for the whole request (0/77 → 82/82 lit DOM samples).
+- The topology's provider list was fetched once on mount, so providers added after the page loaded stayed invisible until reload — now re-polled every 60s.
+
+## Fixed — By Provider / Top Models charts vs dark & light mode
+- The Tokens/Requests segmented toggle used purged design tokens (`bg-bg-subtle`, `bg-bg-hover`) → transparent container, no hover feedback. Now the same tokens as the Tokens & Cost chart (`bg-surface-2`, `hover:bg-black/5 dark:hover:bg-white/5`).
+- Tooltip text fell back to recharts' default black (the Bar had no Bar-level `fill`; colors lived on per-index `Cell`s) → invisible black-on-dark tooltip in dark mode. The tooltip now forces `var(--color-text-main)` for item and label, truncates the provider label at 24 chars (node ids are UUID-length), gains a proper swatch color from the Bar-level fill, and uses a theme-neutral hover cursor band (`#888` @ 0.15) instead of recharts' harsh default.
+- `--color-primary-foreground` was referenced across the dashboard but never defined — active chips silently inherited per-theme text color (washed-out coral chips in dark mode). Now defined once (`#2b1610`, ~5:1 contrast on the coral `#E56A4A` primary in both themes), standardizing every coral chip app-wide.
+
 # v0.6.53 (2026-09-28)
 
 Makes the dashboard Example/Test **Run** buttons work under **Require-API-Key = on** — the same trusted path the provider-page Test button uses — and fixes the System One endpoint's auth gate that upstream shipped without the fork's internal-caller hardening.
