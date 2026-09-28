@@ -36,10 +36,8 @@ export function SttExampleCard({ providerId }) {
 
   useEffect(() => {
     setLocalEndpoint(window.location.origin);
-    fetch("/api/keys")
-      .then((r) => r.json())
-      .then((d) => { setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || ""); })
-      .catch(() => {});
+    // S7: /api/keys returns the MASKED display value — never prefill it into a
+    // credential field (U+2022 breaks fetch headers). Local mode sends no key.
     fetch("/api/tunnel/status")
       .then((r) => r.json())
       .then((d) => { if (d.publicUrl) setTunnelEndpoint(d.publicUrl); })
@@ -77,6 +75,10 @@ export function SttExampleCard({ providerId }) {
     setResult(null);
     const start = Date.now();
     try {
+      if (apiKey && apiKey.includes("\u2022")) {
+        setError("That is a masked display key (sk-…••••). Paste the RAW key, or leave the field empty for local mode.");
+        return;
+      }
       const fd = new FormData();
       fd.append("file", audioFile);
       fd.append("model", modelFull);
@@ -154,11 +156,15 @@ export function SttExampleCard({ providerId }) {
           </div>
         </Row>
 
-        {/* API Key */}
+        {/* API Key — RAW key input; empty = local mode (no Authorization header) */}
         <Row label="API Key">
-          <span className="px-3 py-1.5 text-sm font-mono text-text-main bg-sidebar rounded-lg truncate block">
-            {apiKey ? `${apiKey.slice(0, 8)}${"\u2022".repeat(Math.min(20, Math.max(0, apiKey.length - 8)))}` : <span className="text-text-muted italic">No key configured</span>}
-          </span>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="Empty = local mode · paste RAW key if Require API Key is on"
+            className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
+          />
         </Row>
 
         {/* Audio file */}

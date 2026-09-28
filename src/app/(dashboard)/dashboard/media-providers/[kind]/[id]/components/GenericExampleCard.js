@@ -78,10 +78,10 @@ export function GenericExampleCard({ providerId, kind }) {
 
   useEffect(() => {
     setLocalEndpoint(window.location.origin);
-    fetch("/api/keys")
-      .then((r) => r.json())
-      .then((d) => { setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || ""); })
-      .catch(() => {});
+    // S7: /api/keys returns the MASKED display value (sk-…••••), never a
+    // credential — prefilling it here used to build Authorization headers the
+    // browser rejects outright (U+2022 is not ISO-8859-1). Local mode sends no
+    // key; with Require-API-Key on, the user pastes a RAW key into the input.
     fetch("/api/tunnel/status")
       .then((r) => r.json())
       .then((d) => { if (d.publicUrl) setTunnelEndpoint(d.publicUrl); })
@@ -155,6 +155,10 @@ export function GenericExampleCard({ providerId, kind }) {
     if (binaryImageUrl) { try { URL.revokeObjectURL(binaryImageUrl); } catch {} setBinaryImageUrl(""); }
     const start = Date.now();
     try {
+      if (apiKey && apiKey.includes("\u2022")) {
+        setError("That is a masked display key (sk-…••••). Paste the RAW key, or leave the field empty for local mode.");
+        return;
+      }
       const headers = { "Content-Type": "application/json" };
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       if (pinnedConnectionId) headers["x-connection-id"] = pinnedConnectionId;
@@ -288,11 +292,15 @@ export function GenericExampleCard({ providerId, kind }) {
           </div>
         </Row>
 
-        {/* API Key */}
+        {/* API Key — RAW key input; empty = local mode (no Authorization header) */}
         <Row label="API Key">
-          <span className="px-3 py-1.5 text-sm font-mono text-text-main bg-sidebar rounded-lg truncate block">
-            {apiKey ? `${apiKey.slice(0, 8)}${"\u2022".repeat(Math.min(20, Math.max(0, apiKey.length - 8)))}` : <span className="text-text-muted italic">No key configured</span>}
-          </span>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="Empty = local mode · paste RAW key if Require API Key is on"
+            className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
+          />
         </Row>
 
         {/* Connection picker - only show when 2+ connections (or any with email) */}

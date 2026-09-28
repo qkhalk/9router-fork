@@ -65,19 +65,16 @@ export default function ComboDetailPage() {
 
   const fetchAll = async () => {
     try {
-      const [comboRes, settingsRes, logsRes, keysRes, connsRes, aliasesRes] = await Promise.all([
+      const [comboRes, settingsRes, logsRes, connsRes, aliasesRes] = await Promise.all([
         fetch(`/api/combos/${id}`, { cache: "no-store" }),
         fetch("/api/settings", { cache: "no-store" }),
         fetch("/api/usage/logs", { cache: "no-store" }),
-        fetch("/api/keys", { cache: "no-store" }),
         fetch("/api/providers", { cache: "no-store" }),
         fetch("/api/models/alias", { cache: "no-store" }),
       ]);
       if (aliasesRes.ok) setModelAliases((await aliasesRes.json()).aliases || {});
-      if (keysRes.ok) {
-        const k = await keysRes.json();
-        setApiKey((k.keys || []).find((x) => x.isActive !== false)?.key || "");
-      }
+      // S7: /api/keys returns the MASKED display value — never prefill it into
+      // a credential field (U+2022 breaks fetch headers). Local mode sends no key.
       if (connsRes.ok) setConnections((await connsRes.json()).connections || []);
       if (!comboRes.ok) { setCombo(null); setLoading(false); return; }
       const c = await comboRes.json();
@@ -178,6 +175,10 @@ export default function ComboDetailPage() {
     if (testResult?.imageUrl?.startsWith("blob:")) { try { URL.revokeObjectURL(testResult.imageUrl); } catch {} }
     const start = Date.now();
     try {
+      if (apiKey && apiKey.includes("\u2022")) {
+        setTestError("That is a masked display key (sk-…••••). Paste the RAW key, or leave the field empty for local mode.");
+        return;
+      }
       const path = EXAMPLE_PATHS[combo.kind];
       const body = EXAMPLE_BODIES[combo.kind](combo.name);
       const headers = { "Content-Type": "application/json" };
@@ -338,6 +339,19 @@ export default function ComboDetailPage() {
             <Button size="sm" icon="play_arrow" onClick={handleTest} disabled={testing || providers.length === 0}>
               {testing ? "Running..." : "Run"}
             </Button>
+          </div>
+          {/* RAW key input — empty = local mode (no Authorization header).
+              S7: /api/keys only exposes the MASKED display value, so this can
+              never be prefilled from the dashboard. */}
+          <div className="mb-3 flex flex-col gap-1">
+            <label className="text-xs text-text-muted">API Key (RAW — only needed when Require API Key is on)</label>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Empty = local mode · paste RAW key if Require API Key is on"
+              className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
+            />
           </div>
           <pre className="text-xs font-mono bg-black/[0.03] dark:bg-white/[0.03] p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all">
             {curlExample}

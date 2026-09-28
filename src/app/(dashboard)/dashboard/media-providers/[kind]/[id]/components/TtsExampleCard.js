@@ -68,10 +68,8 @@ export function TtsExampleCard({ providerId }) {
 
   useEffect(() => {
     setLocalEndpoint(window.location.origin);
-    fetch("/api/keys")
-      .then((r) => r.json())
-      .then((d) => { setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || ""); })
-      .catch(() => {});
+    // S7: /api/keys returns the MASKED display value — never prefill it into a
+    // credential field (U+2022 breaks fetch headers). Local mode sends no key.
     fetch("/api/providers", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => { setConnectionCount((d.connections || []).filter((c) => c.provider === providerId && c.isActive !== false).length); })
@@ -213,6 +211,10 @@ export function TtsExampleCard({ providerId }) {
     setJsonResponse(null);
     const start = Date.now();
     try {
+      if (apiKey && apiKey.includes("\u2022")) {
+        setError("That is a masked display key (sk-…••••). Paste the RAW key, or leave the field empty for local mode.");
+        return;
+      }
       const headers = { "Content-Type": "application/json" };
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       const url = `/api/v1/audio/speech${responseFormat === "json" ? "?response_format=json" : ""}`;
@@ -271,14 +273,17 @@ export function TtsExampleCard({ providerId }) {
               )}
             </div>
           </Row>
+          {/* API Key — RAW key input; empty = local mode (no Authorization header) */}
           <Row label="API Key">
-            <span className="px-3 py-1.5 text-sm font-mono text-text-main bg-sidebar rounded-lg truncate block">
-              {apiKey
-                ? `${apiKey.slice(0, 8)}${"•".repeat(Math.min(20, Math.max(0, apiKey.length - 8)))}`
-                : connectionCount > 0
-                  ? <span className="text-text-muted italic">Using stored key(s) · {connectionCount} connection{connectionCount > 1 ? "s" : ""}</span>
-                  : <span className="text-text-muted italic">No key configured</span>}
-            </span>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={connectionCount > 0
+                ? `Empty = local mode · ${connectionCount} stored connection${connectionCount > 1 ? "s" : ""} · paste RAW key if Require API Key is on`
+                : "Empty = local mode · paste RAW key if Require API Key is on"}
+              className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
+            />
           </Row>
 
           {/* Model selector — prefer PROVIDER_MODELS[kind=tts], else providerModels via modelKey */}

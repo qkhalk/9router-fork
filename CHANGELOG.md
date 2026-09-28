@@ -1,3 +1,16 @@
+# v0.6.52 (2026-09-28)
+
+Fork-polish release on top of the v0.5.91 sync: drops upstream's NEW badges and fixes the masked-API-key bug that broke every dashboard Example/Test "Run" button (surfaced by the new System One card).
+
+## Removed
+- **NEW badges from upstream v0.5.91**: sidebar Media Providers expander tag, per-kind (System One) tag, and the 9Remote tag — this fork doesn't ship promo badges.
+
+## Fixed — masked API keys never reach a credential slot (S7 follow-up)
+- All five dashboard example/test cards (**Generic** — image/video/music/imageToText/**System One**, **TTS**, **STT**, **Embedding**, **Combo detail**) prefilled their API-Key field from `/api/keys`, which since S7 returns the MASKED display value (`sk-{id}-••••{last4}`). The Run button built `Authorization: Bearer sk-…••••…` and the browser threw `Failed to read the 'headers' property from 'RequestInit': String contains non ISO-8859-1 code point` before any request was sent — every media-provider example page was affected, not just System One.
+  - The prefill is gone; the key field is now a **RAW-key input** (empty = local mode, no Authorization header — works with Require-API-Key off, exactly like the server-side model ping's documented behavior). With Require-API-Key on, paste the raw key shown once at creation.
+  - A guard rejects pasted masked values (`•`) with a clear message instead of the cryptic fetch crash.
+- Audited every other API-key flow that arrived with v0.5.91: the provider-page Test button and System One probe go through the server-side ping (`x-9r-cli-token`, S7-safe); Codex profiles take keys from `ApiKeySelect` (already S7-filtered); the new aggregator providers use per-connection credentials — all safe.
+
 # v0.6.51 (2026-09-28)
 
 Upstream-sync release: merges upstream **v0.5.91** (79 commits, v0.5.81 → v0.5.91 — includes the v0.5.85, v0.5.86, and v0.5.91 releases). All fork subsystems preserved (xray multi-subscription + binary updates, genspark-web/ds2api/gemini-web/orcarouter/totu-ai providers, masked-key S7 plumbing, strict-proxy pools, archive encryption, key portability). Upstream README changes were skipped per fork policy — this fork keeps its own README.
