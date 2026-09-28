@@ -1102,6 +1102,12 @@ export default function XrayProxyPage() {
           );
         })()}
 
+        {status?.modelFilter?.autoFilterSkipReason && (
+          <div className="text-xs text-amber-600 dark:text-amber-400">
+            {`Auto-filter skipped (${String(status.modelFilter.autoFilterSkipReason).replaceAll("_", " ")}) at ${formatDateTime(status.modelFilter.autoFilterSkipAt)} — it re-runs automatically once the running filter finishes`}
+          </div>
+        )}
+
         <div className="flex items-center justify-between rounded-lg border border-border p-3 text-sm">
           <div>
             <div className="font-medium">Auto-filter after subscription sync</div>

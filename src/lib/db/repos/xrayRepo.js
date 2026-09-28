@@ -114,10 +114,28 @@ export async function getXrayFacets(filter = {}) {
   return { countries, protocols };
 }
 
+// One upsert statement shared by upsertXrayConfig and bulkUpsertXrayConfigs —
+// the ON CONFLICT clause IS the cross-sub identity contract (first-namer
+// identity fields, see bulkUpsertXrayConfigs), and a single copy is what
+// guarantees the two sync paths cannot drift. Bindings differ per caller;
+// the statement does not.
+const UPSERT_XRAY_CONFIG_SQL = `INSERT INTO xrayConfigs(id, link, name, protocol, country, host, port,
+  isActive, lastLatencyMs, lastTestedAt, lastExitIp, isSelected,
+  addedAt, updatedAt)
+VALUES(?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  link=CASE WHEN COALESCE(xrayConfigs.name, '') = '' THEN excluded.link ELSE xrayConfigs.link END,
+  name=CASE WHEN COALESCE(xrayConfigs.name, '') = '' THEN excluded.name ELSE xrayConfigs.name END,
+  country=CASE WHEN COALESCE(xrayConfigs.country, '') = '' THEN excluded.country ELSE xrayConfigs.country END,
+  protocol=excluded.protocol, host=excluded.host, port=excluded.port,
+  isActive=1, staleDeleteAfter=NULL, updatedAt=excluded.updatedAt`;
+
 /**
  * Upsert a single config. The id is a stable hash of the link (caller supplies),
  * so re-syncing the same link updates in place rather than duplicating.
  * Sets isActive=1 (present in latest sync); caller marks the rest stale.
+ * Identity fields follow the same first-namer contract as
+ * bulkUpsertXrayConfigs so the two upserts cannot drift.
  */
 export async function upsertXrayConfig(data) {
   const db = await getAdapter();
@@ -125,14 +143,7 @@ export async function upsertXrayConfig(data) {
   const id = data.id || uuidv4();
   const existing = db.get(`SELECT addedAt FROM xrayConfigs WHERE id = ?`, [id]);
   db.run(
-    `INSERT INTO xrayConfigs(id, link, name, protocol, country, host, port,
-        isActive, lastLatencyMs, lastTestedAt, lastExitIp, isSelected,
-        addedAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       link=excluded.link, name=excluded.name, protocol=excluded.protocol,
-       country=excluded.country, host=excluded.host, port=excluded.port,
-       isActive=1, staleDeleteAfter=NULL, updatedAt=excluded.updatedAt`,
+    UPSERT_XRAY_CONFIG_SQL,
     [
       id, data.link, data.name, data.protocol, data.country, data.host, data.port,
       data.lastLatencyMs ?? null, data.lastTestedAt ?? null, data.lastExitIp ?? null,
@@ -146,6 +157,13 @@ export async function upsertXrayConfig(data) {
 /**
  * Bulk-upsert a set of configs in one transaction. Returns the count written.
  * Each entry must include at least { id, link }; other fields are optional.
+ *
+ * Cross-sub dedup contract: the id is a sha1 of the canonical link, so the
+ * same server carried by two subscriptions shares ONE row. Identity fields
+ * (link/name/country) stick to the FIRST subscription that named it — a later
+ * sub's cosmetic rename/re-fragment must not churn a server the user already
+ * knows. Empty existing identity fields still adopt the incoming values.
+ * Test state (latency/testedAt/exitIp/isSelected) is never touched here.
  */
 export async function bulkUpsertXrayConfigs(entries = []) {
   if (!entries.length) return 0;
@@ -157,14 +175,7 @@ export async function bulkUpsertXrayConfigs(entries = []) {
       const id = data.id || uuidv4();
       const existing = db.get(`SELECT addedAt, lastLatencyMs, lastTestedAt, lastExitIp, isSelected FROM xrayConfigs WHERE id = ?`, [id]);
       db.run(
-        `INSERT INTO xrayConfigs(id, link, name, protocol, country, host, port,
-            isActive, lastLatencyMs, lastTestedAt, lastExitIp, isSelected,
-            addedAt, updatedAt)
-         VALUES(?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           link=excluded.link, name=excluded.name, protocol=excluded.protocol,
-           country=excluded.country, host=excluded.host, port=excluded.port,
-           isActive=1, staleDeleteAfter=NULL, updatedAt=excluded.updatedAt`,
+        UPSERT_XRAY_CONFIG_SQL,
         [
           id, data.link, data.name, data.protocol, data.country, data.host, data.port,
           existing?.lastLatencyMs ?? data.lastLatencyMs ?? null,

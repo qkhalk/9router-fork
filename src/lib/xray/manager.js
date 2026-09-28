@@ -133,6 +133,8 @@ const modelFilterState = {
   cached: 0,
   trafficWaiters: 0,
   error: null,
+  autoFilterSkipReason: null,
+  autoFilterSkipAt: null,
 };
 
 // Mirror of getModelFilterCacheStats(), refreshed at job boundaries and on
@@ -160,6 +162,11 @@ export function isModelFilterRunning() {
 }
 
 let modelFilterRunning = null;
+// Coalesced re-run latch (auto-filter skip-on-conflict): auto triggers that
+// arrive while a filter job is running set this instead of being lost; the
+// running job's completion consumes it for exactly ONE follow-up run with the
+// latest saved settings. Never a queue — at most one pending re-run.
+let autoFilterRerunQueued = false;
 
 // Cooperative cancel flag for the running model-filter job. Set by
 // requestModelFilterCancel() (the /stop endpoint); the worker loop checks it
@@ -943,6 +950,22 @@ function normalizeModelFilterLimit({ limit = 50, all = false } = {}) {
   return { all: false, limit: Math.max(1, Math.min(Number(limit) || 50, 500)) };
 }
 
+/**
+ * Stable tier partition for the filter slice: lower rank first, and order
+ * inside each tier is preserved (selected first, latency asc from
+ * getXrayConfigs) — equal ranks reduce to the legacy slice. The caller owns
+ * the ranks: 0 = never filter-tested, 1 = due for a re-probe (stale cache or
+ * retry-due fail), 2 = fresh cache.
+ */
+export function orderConfigsForFilterSelection(configs, rankOf) {
+  const tiers = [[], [], []];
+  for (const config of configs) {
+    const rank = Math.min(2, Math.max(0, rankOf(config) | 0));
+    tiers[rank].push(config);
+  }
+  return [...tiers[0], ...tiers[1], ...tiers[2]];
+}
+
 function normalizeModelFilterConcurrency(concurrency = 2) {
   return Math.max(1, Math.min(Number(concurrency) || 2, 16));
 }
@@ -962,14 +985,24 @@ function makeApiProbeFn(apiHandle, modelInfo, modelStr, timeoutMs) {
     if (!modelInfo?.provider || !modelInfo?.model) {
       throw new Error(`Invalid model for api probe: ${modelStr}`);
     }
-    return probeConfigViaApi(apiHandle, config, workerIdx, {
+    const result = await probeConfigViaApi(apiHandle, config, workerIdx, {
       timeoutMs,
       probeExitIp: async ({ socksUri, timeoutMs: tm }) => testProxyExitIpWithUri(socksUri, tm),
       probeModel: async ({ socksUri, timeoutMs: tm }) =>
         probeModelViaChatCore(modelInfo, socksUri, tm),
     });
+    // Mirror spawn-mode bookkeeping (testSingleConfigWithModel): persist the
+    // measured latency/exit IP on success and the failure marker otherwise, so
+    // latency-sorted slices and the rotation pools see api-mode runs too.
+    try {
+      await updateXrayTestResult(config.id, result.ok
+        ? { latencyMs: result.latencyMs, exitIp: result.exitIp, ok: true }
+        : { ok: false });
+    } catch { /* bookkeeping is best-effort — the probe result still counts */ }
+    return result;
   };
 }
+export { makeApiProbeFn as _makeApiProbeFn }; // for tests
 
 /**
  * Probe the model endpoint through a given SOCKS URI by invoking handleChatCore
@@ -1048,7 +1081,6 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     ? (state.activeConfigId || settings.xraySelectedConfigId || null)
     : null;
   const normalized = normalizeModelFilterLimit({ limit, all });
-  const selected = normalized.all ? configs : configs.slice(0, normalized.limit);
 
   // Cache layer: configs with a fresh cached result for this model are reused
   // instead of re-probed. forceRetest bypasses the cache entirely (the caller
@@ -1061,7 +1093,6 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
   //  - xrayModelFilterCacheTtlH: a SUCCESS row older than this is re-tested.
   //  - xrayModelFilterRetryFailAfterH: a FAIL row older than this is retried,
   //    so a server that was temporarily down isn't blacklisted forever.
-  let toTest = selected;
   // Bypass the cache entirely when forceRetest or prune is on:
   //  - forceRetest: caller already cleared this model's cache; nothing to hit.
   //  - prune: destructive mode — always re-probe fresh so maybePruneConfig
@@ -1078,13 +1109,16 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
   // Build TWO maps: success-only (for reuse), and all-recent (for fail-retry gating).
   // For reuse we want successes that are still within the success TTL.
   // For fail-retry we need to know which fails are old enough to re-test.
+  // Maps are built over the FULL catalog, not the slice: the slice ranking
+  // below needs per-config freshness to rank probe-starved configs first.
+  const configIds = configs.map((c) => c.id);
   const reuseMap = useCache
-    ? await getModelFilterResultsByConfigIds(selected.map((c) => c.id), model, {
+    ? await getModelFilterResultsByConfigIds(configIds, model, {
         maxAgeMs: cacheTtlMs > 0 ? cacheTtlMs : 0,
       })
     : new Map();
   const failMap = useCache
-    ? await getModelFilterResultsByConfigIds(selected.map((c) => c.id), model, { maxAgeMs: 0 })
+    ? await getModelFilterResultsByConfigIds(configIds, model, { maxAgeMs: 0 })
     : new Map();
 
   const now = Date.now();
@@ -1096,6 +1130,32 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     if (!testedAt) return true; // unparseable/missing timestamp → re-test
     return now - testedAt >= retryFailMs;
   };
+
+  // True when this pass would actually probe the config: no fresh success
+  // cache, and fail rows only when their retry policy is due. Shared by the
+  // slice ranking and the toTest filter so the two can never drift.
+  const isDueForProbe = (config) => {
+    if (reuseMap.get(config.id)?.ok) return false; // reused
+    const anyRow = failMap.get(config.id);
+    if (!anyRow) return true; // never tested
+    if (anyRow.ok) return true; // success but expired past TTL
+    return isFailRetryDue(config.id); // fail: only when retry policy due
+  };
+
+  // Slice ranking (limit mode), three tiers: never-filter-tested configs come
+  // FIRST — a newly synced subscription's untested servers must not wait
+  // behind a backlog of stale-but-previously-measured entries (latency asc
+  // sinks untested to the bottom of the raw order), or they never enter the
+  // tested set and never reach the rotation pools. Stale/retry-due configs
+  // follow, fresh-cache last. Ties keep the getXrayConfigs order; with no
+  // backlog and nothing stale this reduces to the legacy slice.
+  const rankForSelection = (config) => {
+    if (!failMap.has(config.id)) return 0; // never filter-tested for this model
+    return isDueForProbe(config) ? 1 : 2;
+  };
+  const selected = normalized.all
+    ? configs
+    : orderConfigsForFilterSelection(configs, rankForSelection).slice(0, normalized.limit);
 
   const results = [];
   for (const config of selected) {
@@ -1119,15 +1179,8 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
     results.push(result);
     onProgress?.(result);
   }
-  // Re-test: configs with no reuse success AND (no row at all OR fail-retry due).
-  toTest = selected.filter((c) => {
-    if (reuseMap.has(c.id) && reuseMap.get(c.id).ok) return false; // reused
-    const anyRow = failMap.get(c.id);
-    if (!anyRow) return true; // never tested
-    // Has a row but not reused (fail, or success-expired). Re-test.
-    if (anyRow.ok) return true; // success but expired past TTL
-    return isFailRetryDue(c.id); // fail: only re-test if retry policy due
-  });
+  // Re-test: same predicate as the slice ranking, so the two never drift.
+  let toTest = selected.filter(isDueForProbe);
 
   // When every selected config is cached (toTest empty) the worker pool is a
   // no-op; keep at least 1 worker so the pool initializes harmlessly.
@@ -1284,8 +1337,18 @@ export async function filterConfigsByModel({ model, limit = 50, all = false, pru
   };
 }
 
-export async function runModelFilterJob({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 2, pauseOnTraffic = true, quietMs = 15000, source = "manual", forceRetest = false } = {}) {
+export async function runModelFilterJob({ model, limit = 50, all = false, prune = false, timeoutMs = 20000, concurrency = 2, pauseOnTraffic = true, quietMs = 15000, source = "manual", forceRetest = false, queueRerunIfBusy = false } = {}) {
   if (modelFilterRunning) {
+    if (queueRerunIfBusy) {
+      // Auto trigger lost the race: latch ONE coalesced follow-up (the running
+      // job re-runs from the latest saved settings when it settles) and record
+      // the skip for the dashboard instead of dropping it into the console.
+      autoFilterRerunQueued = true;
+      Object.assign(modelFilterState, {
+        autoFilterSkipReason: "already_running",
+        autoFilterSkipAt: new Date().toISOString(),
+      });
+    }
     return { skipped: true, reason: "already_running", ...getModelFilterStatus() };
   }
 
@@ -1312,6 +1375,8 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
       cached: 0,
       trafficWaiters: 0,
       error: null,
+      autoFilterSkipReason: null,
+      autoFilterSkipAt: null,
     });
 
     try {
@@ -1367,7 +1432,36 @@ export async function runModelFilterJob({ model, limit = 50, all = false, prune 
   })();
 
   modelFilterRunning = job;
+  // Consume the coalesced re-run latch when this job settles. A job may error
+  // (rejection) — the latch must still fire, hence the swallowing catch; the
+  // original caller still receives the rejection via `job` itself.
+  job
+    .catch(() => {})
+    .then(async () => {
+      if (!autoFilterRerunQueued || modelFilterRunning) return;
+      autoFilterRerunQueued = false;
+      // The dashboard line promises "re-runs once the running filter
+      // finishes" — clear it now. If the re-run itself re-latches (busy), the
+      // skip path re-stamps a fresh reason/at.
+      Object.assign(modelFilterState, { autoFilterSkipReason: null, autoFilterSkipAt: null });
+      try {
+        const rerun = await runModelFilterFromSettings("auto-sync-rerun");
+        if (rerun?.skipped) {
+          console.log(`[XrayFilter] auto rerun skipped: ${rerun.reason || "unknown"}`);
+        }
+      } catch (error) {
+        console.error("[XrayFilter] auto rerun failed:", error.message);
+      }
+    });
   return job;
+}
+
+export function _setModelFilterRunningForTests(jobPromise) {
+  modelFilterRunning = jobPromise;
+  autoFilterRerunQueued = false; // isolate tests from each other's latches
+}
+export function _getAutoFilterRerunQueuedForTests() {
+  return autoFilterRerunQueued;
 }
 
 export async function runModelFilterFromSettings(source = "auto-sync") {
@@ -1385,6 +1479,9 @@ export async function runModelFilterFromSettings(source = "auto-sync") {
     quietMs: Number(settings.xrayModelFilterQuietMs) || 15000,
     timeoutMs: Number(settings.xrayModelFilterTimeoutMs) || 20000,
     source,
+    // Sync-triggered runs coalesce instead of vanishing when a filter is
+    // already running (manual UI runs pass no flag and only report the skip).
+    queueRerunIfBusy: true,
   });
 }
 
