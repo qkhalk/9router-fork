@@ -19,6 +19,7 @@
 // same address to hex form ("::ffff:7f00:1") — a mismatch, not an oversight.
 
 import dns from "node:dns";
+import { Agent } from "undici";
 
 const BLOCKED_HOSTNAMES = new Set(["localhost", "ip6-localhost", "ip6-loopback"]);
 const BLOCKED_SUFFIXES = [".internal", ".local", ".localhost"];
@@ -218,6 +219,45 @@ function stripCredentialHeaders(init) {
   return { ...init, headers: filtered };
 }
 
+// Layer 4 — connect-time IP re-validation (DNS-rebinding). Layers 1-3 all
+// validate before fetch() runs, but the guard's DNS answer and the socket's
+// dial are separate lookups: a rebinding server can answer the guard with a
+// public address and the connector with 127.0.0.1. Validating inside the
+// dispatcher's lookup closes that window — the address the socket actually
+// dials is the one checked. Only applies to direct connections; when a caller
+// supplies its own dispatcher (e.g. an outbound proxy), DNS resolves at the
+// proxy and layers 1-3 remain the guard.
+let revalidatingAgent = null;
+function getRevalidatingAgent() {
+  if (!revalidatingAgent) {
+    revalidatingAgent = new Agent({
+      connect: {
+        lookup(hostname, opts, cb) {
+          dns.lookup(hostname, { ...opts, all: true, verbatim: true }, (err, addresses) => {
+            if (err) return cb(err);
+            const list = Array.isArray(addresses)
+              ? addresses
+              : [{ address: String(addresses), family: opts?.family || 4 }];
+            for (const { address, family } of list) {
+              const blocked = family === 4
+                ? isBlockedIpv4(address)
+                : isBlockedIpv6Groups(parseIPv6ToGroups(address) || []);
+              if (blocked) {
+                const e = new Error(`Blocked URL: ${hostname} re-resolved to an internal address at connect time`);
+                e.code = "ESSRF_BLOCKED";
+                return cb(e);
+              }
+            }
+            const first = list[0];
+            return cb(null, opts?.all ? list : first.address, first.family);
+          });
+        },
+      },
+    });
+  }
+  return revalidatingAgent;
+}
+
 // fetch() with SSRF-safe manual redirect handling: each hop's target is
 // re-validated through assertPublicUrlResolved before being followed, so a
 // validated public URL can't 30x its way to an internal target. Bounded to
@@ -235,7 +275,15 @@ export async function fetchPublic(url, init = {}, { maxRedirects = 20, allowPriv
   let currentOrigin = new URL(url).origin;
   let hopInit = init;
   for (let hop = 0; ; hop++) {
-    const res = await fetch(currentUrl, { ...hopInit, redirect: "manual" });
+    const res = await fetch(currentUrl, {
+      ...hopInit,
+      redirect: "manual",
+      // Direct connections dial through the re-validating agent (layer 4); a
+      // caller-provided dispatcher (outbound proxy) is respected as-is, since
+      // its DNS resolves at the proxy. allowPrivate paths keep the default
+      // global dispatcher so loopback/LAN targets stay reachable.
+      dispatcher: hopInit.dispatcher ?? (allowPrivate ? undefined : getRevalidatingAgent()),
+    });
     const isRedirect = res.status >= 300 && res.status < 400;
     const location = isRedirect ? res.headers.get("location") : null;
     if (!location) return res;

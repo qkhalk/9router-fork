@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const forge = require("node-forge");
 const { MITM_DIR } = require("../paths");
 
@@ -124,7 +125,13 @@ function generateLeafCert(domain, rootCA) {
   // Create leaf certificate
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
-  cert.serialNumber = Math.floor(Math.random() * 1000000).toString();
+  // RFC 5280 §4.1.2.2: serial must be a positive INTEGER. 16 random bytes
+  // (~128 bits) with the high bit masked keeps the DER encoding positive and
+  // avoids a leading-zero octet; Math.random serials were predictable and
+  // collision-prone across leaf certs.
+  const serial = crypto.randomBytes(16);
+  serial[0] = (serial[0] & 0x7f) || 0x01;
+  cert.serialNumber = serial.toString("hex");
   cert.validity.notBefore = new Date();
   cert.validity.notAfter = new Date();
   cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 1);

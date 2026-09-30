@@ -1,13 +1,55 @@
-// In-memory progressive lockout for dashboard login. Resets on process restart.
+// Progressive lockout for dashboard login. State lives in memory and is
+// persisted best-effort to DATA_DIR/login-lockout.json so a restart (or a
+// crash-loop) no longer resets every bucket — the audit 2026-09-30 finding:
+// internet-exposed installs had their brute-force window reopened by any
+// process restart. Persistence is a safety net, never a source of truth: an
+// unreadable or corrupt file falls back to an empty map and login keeps
+// working.
+import fs from "node:fs";
+import path from "node:path";
+import { DATA_DIR } from "@/lib/dataDir";
 import { hasTrustedPeerHeaders } from "./trustedPeer.js";
 
 const MAX_FAILS_BEFORE_LOCK = 5;
 const LOCK_STEPS_MS = [30_000, 120_000, 600_000, 1_800_000]; // 30s, 2m, 10m, 30m
 const FAIL_WINDOW_MS = 60 * 60 * 1000; // 1h since last fail → auto reset
 
+const LOCKOUT_FILE = path.join(DATA_DIR, "login-lockout.json");
+const PERSIST_DEBOUNCE_MS = 1_500;
+
 const attempts = new Map(); // ip → { fails, lockUntil, lockLevel, lastFailAt }
 
 function now() { return Date.now(); }
+
+function loadPersisted() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LOCKOUT_FILE, "utf8"));
+    for (const [ip, e] of Object.entries(raw || {})) {
+      if (e && typeof e === "object" && Number.isFinite(e.lastFailAt)) attempts.set(ip, e);
+    }
+  } catch { /* no state yet, or unreadable — start empty */ }
+}
+loadPersisted();
+
+let saveTimer = null;
+function persist() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try {
+      const cutoff = now() - FAIL_WINDOW_MS;
+      const entries = {};
+      for (const [ip, e] of attempts) {
+        if (e.lastFailAt >= cutoff || (e.lockUntil && e.lockUntil > now())) entries[ip] = e;
+      }
+      const tmp = `${LOCKOUT_FILE}.tmp`;
+      fs.mkdirSync(path.dirname(LOCKOUT_FILE), { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify(entries));
+      fs.renameSync(tmp, LOCKOUT_FILE);
+    } catch { /* best-effort only — lockout still works in-memory */ }
+  }, PERSIST_DEBOUNCE_MS);
+  if (typeof saveTimer.unref === "function") saveTimer.unref();
+}
 
 function getEntry(ip) {
   const e = attempts.get(ip);
@@ -39,11 +81,13 @@ export function recordFail(ip) {
     e.fails = 0;
   }
   attempts.set(ip, e);
+  persist();
   return { remainingBeforeLock: Math.max(0, MAX_FAILS_BEFORE_LOCK - e.fails) };
 }
 
 export function recordSuccess(ip) {
   attempts.delete(ip);
+  persist();
 }
 
 export function getClientIp(request) {

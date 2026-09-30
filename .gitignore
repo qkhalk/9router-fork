@@ -113,6 +113,7 @@ graphify-out/*
 
 # Local sensitive / temp files
 .engine-token.txt
+cookies.txt
 .tmp-prov.json
 .tmp-providers.json
 .oauth-session.json

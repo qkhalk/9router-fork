@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
+import DOMPurify from "dompurify";
 import { GITHUB_CONFIG } from "@/shared/constants/config";
 
 export default function ChangelogModal({ isOpen, onClose }) {
@@ -24,7 +25,11 @@ export default function ChangelogModal({ isOpen, onClose }) {
     ])
       .then(([md, { marked }]) => {
         marked.setOptions({ gfm: true, breaks: true });
-        setHtml(marked.parse(md));
+        // marked passes raw HTML embedded in the markdown straight through;
+        // the changelog is remote content fetched at runtime, so sanitize it
+        // before it reaches the dashboard DOM — this is an authenticated
+        // origin holding provider credentials.
+        setHtml(DOMPurify.sanitize(marked.parse(md)));
       })
       .catch((err) => setError(err.message || "Failed to load"))
       .finally(() => setLoading(false));

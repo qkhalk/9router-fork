@@ -52,60 +52,75 @@ function mkFormData(extra = {}) {
 
 // ── fake WebSocket ────────────────────────────────────────────────────────
 
-class FakeWS {
-  static instances = [];
-  static CONNECTING = 0;
-  static OPEN = 1;
-  static CLOSING = 2;
-  static CLOSED = 3;
+// Hoisted: the transport imports { WebSocket } from the npm undici package
+// (CVE-2026-85024 — Node's bundled undici 7.28.0 WebSocket crashes the process
+// on a malicious peer's malformed permessage-deflate frame), so the fake must
+// be in place at module-load time via vi.mock, not stubbed on globalThis
+// before each test.
+const { FakeWS } = vi.hoisted(() => {
+  class FakeWS {
+    static instances = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
 
-  constructor(url) {
-    this.url = url;
-    this.sent = []; // JSON.parsed frames, in send order
-    this.readyState = FakeWS.CONNECTING;
-    this.closed = false;
-    this.closeCalls = []; // {code, reason} recordings
-    this._listeners = {};
-    FakeWS.instances.push(this);
-    queueMicrotask(() => {
-      if (this.closed) return;
-      this.readyState = FakeWS.OPEN;
-      if (typeof this.onopen === "function") this.onopen({});
-      (this._listeners.open || []).forEach((f) => f({}));
-    });
-  }
+    constructor(url) {
+      this.url = url;
+      this.sent = []; // JSON.parsed frames, in send order
+      this.readyState = FakeWS.CONNECTING;
+      this.closed = false;
+      this.closeCalls = []; // {code, reason} recordings
+      this._listeners = {};
+      FakeWS.instances.push(this);
+      queueMicrotask(() => {
+        if (this.closed) return;
+        this.readyState = FakeWS.OPEN;
+        if (typeof this.onopen === "function") this.onopen({});
+        (this._listeners.open || []).forEach((f) => f({}));
+      });
+    }
 
-  addEventListener(type, fn) {
-    (this._listeners[type] = this._listeners[type] || []).push(fn);
-  }
+    addEventListener(type, fn) {
+      (this._listeners[type] = this._listeners[type] || []).push(fn);
+    }
 
-  send(data) {
-    this.sent.push(JSON.parse(data));
-  }
+    send(data) {
+      this.sent.push(JSON.parse(data));
+    }
 
-  // Fire a server frame through both supported binding styles.
-  emit(obj) {
-    const ev = { data: JSON.stringify(obj) };
-    if (typeof this.onmessage === "function") this.onmessage(ev);
-    (this._listeners.message || []).forEach((f) => f(ev));
-  }
+    // Fire a server frame through both supported binding styles.
+    emit(obj) {
+      const ev = { data: JSON.stringify(obj) };
+      if (typeof this.onmessage === "function") this.onmessage(ev);
+      (this._listeners.message || []).forEach((f) => f(ev));
+    }
 
-  // Fire a server-initiated close through both supported binding styles.
-  // Distinct from close(), which only records the client-side shutdown.
-  emitClose(code = 1000) {
-    this.closed = true;
-    this.readyState = FakeWS.CLOSED;
-    const ev = { code, reason: "" };
-    if (typeof this.onclose === "function") this.onclose(ev);
-    (this._listeners.close || []).forEach((f) => f(ev));
-  }
+    // Fire a server-initiated close through both supported binding styles.
+    // Distinct from close(), which only records the client-side shutdown.
+    emitClose(code = 1000) {
+      this.closed = true;
+      this.readyState = FakeWS.CLOSED;
+      const ev = { code, reason: "" };
+      if (typeof this.onclose === "function") this.onclose(ev);
+      (this._listeners.close || []).forEach((f) => f(ev));
+    }
 
-  close(code, reason) {
-    this.closed = true;
-    this.readyState = FakeWS.CLOSED;
-    this.closeCalls.push({ code: code ?? 1000, reason: reason ?? "" });
+    close(code, reason) {
+      this.closed = true;
+      this.readyState = FakeWS.CLOSED;
+      this.closeCalls.push({ code: code ?? 1000, reason: reason ?? "" });
+    }
   }
-}
+  return { FakeWS };
+});
+
+vi.mock("undici", async (importOriginal) => {
+  // Replace only the WebSocket export; everything else (fetch, Agent, …)
+  // stays real for the rest of the import graph.
+  const orig = await importOriginal();
+  return { ...orig, WebSocket: FakeWS };
+});
 
 function stubWs() {
   vi.stubGlobal("WebSocket", FakeWS);

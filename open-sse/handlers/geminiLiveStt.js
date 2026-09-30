@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { WebSocket as UndiciWebSocket } from "undici";
 
 // Gemini Live API realtime STT transport.
 //
@@ -14,7 +15,13 @@ import { Buffer } from "node:buffer";
 // transport string (custom models). Never keyed on a hardcoded model id here.
 //
 // Transport behavior:
-//   - Node >= 22 global WebSocket (undici). No new dependency.
+//   - WebSocket from the npm undici package (>=7.29.1), NOT globalThis.WebSocket:
+//     Node 24.18 bundles undici 7.28.0, whose WebSocket crashes the whole
+//     process when a malicious peer sends an oversized permessage-deflate
+//     message followed by a malformed DEFLATE block (CVE-2026-85024). Importing
+//     the patched npm copy pins the fix regardless of Node's patch cadence —
+//     the Live endpoint is provider-configured, and this app's users routinely
+//     add third-party provider endpoints.
 //   - Live API expects low-latency PCM; other containers are forwarded with
 //     their declared MIME unchanged (provider-side rejection is surfaced).
 //   - Text accumulation is append-only over inputTranscription segments and
@@ -92,8 +99,8 @@ function firstNumberField(formData, key, fallback) {
  * @throws {GeminiLiveError} with .status for the sttCore error envelope.
  */
 export async function transcribeGeminiLive({ cfg, file, model, token, formData, mimeType }) {
-  const WS = globalThis.WebSocket;
-  if (!WS) throw new GeminiLiveError("Gemini Live transport needs global WebSocket (Node >= 22)", 502);
+  const WS = UndiciWebSocket;
+  if (!WS) throw new GeminiLiveError("Gemini Live transport needs the undici WebSocket", 502);
 
   const buf = Buffer.from(await file.arrayBuffer());
   if (!buf.length) throw new GeminiLiveError("Empty audio file", 400);
