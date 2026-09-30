@@ -1,3 +1,30 @@
+# v0.6.56 (2026-09-30)
+
+Security release: remediates every finding from the 2026-09 security audit (`plans/reports/security-2026-09-29.md`) — one High, one Medium, plus dependency, SSRF-hardening and auth-hygiene fixes. `npm audit` goes from 6 high / 6 moderate to **zero** vulnerabilities. Behavior-visible changes: none for ordinary request flow; the changelog modal now sanitizes remote HTML, and web-fetch dials through a connect-time SSRF re-check.
+
+## Security — changelog XSS into the authenticated dashboard (High)
+- The Changelog modal fetched `CHANGELOG.md` from raw.githubusercontent.com and rendered it through `marked` straight into `dangerouslySetInnerHTML` — marked does not sanitize, so malicious markup in upstream changelog content (merged PR text, upstream account compromise) executed on every user's authenticated dashboard origin, where stored provider API keys are readable.
+- Markdown is now sanitized with DOMPurify (`dompurify` added as a direct dependency) before it reaches the DOM. Rendering output is unchanged for the current changelog.
+
+## Security — undici WebSocket process crash (CVE-2026-85024)
+- Node 24.18 bundles undici 7.28.0, whose WebSocket crashes the whole process when a malicious peer sends an oversized permessage-deflate message followed by a malformed DEFLATE block (unhandled `Z_DATA_ERROR`, CWE-248). The app's Gemini Live STT transport dialed provider-configured `:bidiGenerateContent` endpoints with exactly that global WebSocket — a hostile provider endpoint could kill the entire router.
+- undici is bumped to 7.30.0 (patched) and the Live transport now imports the npm package's WebSocket instead of `globalThis.WebSocket`, pinning the fix independently of Node's patch cadence.
+
+## Security — web-fetch DNS-rebinding (SSRF hardening)
+- `fetchPublic` validated the URL's DNS answer before fetching, but the guard's lookup and the socket's dial were separate resolutions — a rebinding server could pass the guard with a public address and answer the actual connect with an internal one.
+- Guarded fetches now dial through an undici Agent whose `connect.lookup` re-validates every resolved address at connect time, so the address the socket dials is the address that was checked. Caller-supplied dispatchers (outbound proxies) and the local-caller `allowPrivate` path are untouched; loopback/LAN self-hosted nodes remain reachable from the host.
+
+## Security — login lockout survives restarts; leaf-cert serial entropy
+- Dashboard login lockout was purely in-memory: any process restart (or crash-loop) reopened the brute-force window on internet-exposed installs. Buckets now persist best-effort to `DATA_DIR/login-lockout.json` (debounced, atomic rename, corrupt file degrades to empty state — login is never blocked by a persistence failure).
+- MITM leaf certificates switched from a ~20-bit `Math.random()` serial to 128-bit `crypto.randomBytes` serials (RFC 5280 positive INTEGER).
+
+## Dependencies
+- `undici` 7.30.0, `dompurify` (new direct dep), `monaco-editor` 0.57.0, plus `npm audit fix` — `npm audit` now reports zero vulnerabilities.
+- `.env.example` documents when `AUTH_COOKIE_SECURE=true` is actually needed behind reverse proxies/tunnels; `.gitignore` covers local `cookies.txt` dumps.
+
+## Tests
+- `gemini-live-stt.test.js` mock seam moved to `vi.hoisted` + `vi.mock("undici")` (the transport binds the WebSocket at module load now); 18/18 pass. Full-suite diff vs pre-fix baseline: zero new failures; production build green; `npm audit` clean.
+
 # v0.6.55 (2026-09-29)
 
 Five fixes that make the xray **Model Proxy Filter** and multi-subscription sync behave correctly when more than one subscription is configured. The headline bug: servers from newly added subscriptions could never enter the filter's tested set — and therefore never reached the proxy rotation pools at all.
