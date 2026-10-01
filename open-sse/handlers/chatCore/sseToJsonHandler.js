@@ -285,7 +285,10 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
       return { success: true, response: new Response(JSON.stringify(restoreToolNames(finalResp, toolNameMap)), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
     } catch (err) {
       console.error("[ChatCore] Responses API SSE→JSON failed:", err);
-      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Failed to convert streaming response to JSON");
+      // Keep the underlying cause in the message: connection-level failures
+      // (`terminated`, `fetch failed`) must stay classifiable by
+      // isConnectionFailure() downstream (managed-pool retry + flaky counter).
+      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `Failed to convert streaming response to JSON: ${err?.message || err}`);
     }
   }
 
@@ -363,6 +366,9 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
     return { success: true, response: new Response(JSON.stringify(restoreToolNames(finalBody, toolNameMap)), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
   } catch (err) {
     console.error("[ChatCore] Chat Completions SSE→JSON failed:", err);
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Failed to convert streaming response to JSON");
+    // Keep the underlying cause in the message: connection-level failures
+    // (`terminated`, `fetch failed`) must stay classifiable by
+    // isConnectionFailure() downstream (managed-pool retry + flaky counter).
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `Failed to convert streaming response to JSON: ${err?.message || err}`);
   }
 }

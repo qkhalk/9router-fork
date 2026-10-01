@@ -290,7 +290,17 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   let responseBody;
 
   if (contentType.includes("text/event-stream")) {
-    const sseText = await providerResponse.text();
+    let sseText;
+    try {
+      sseText = await providerResponse.text();
+    } catch (err) {
+      // Carry the underlying cause (e.g. `terminated`) so connection-level
+      // failures stay classifiable by isConnectionFailure() downstream;
+      // rejecting here would skip the chat loop's retry/rotation entirely.
+      appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
+      console.error(`[ChatCore] Failed to read SSE body from ${provider}:`, err?.message || err);
+      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `Failed to read streaming response: ${err?.message || err}`);
+    }
     const parsed = parseSSEToOpenAIResponse(sseText, model);
     if (!parsed) {
       appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });

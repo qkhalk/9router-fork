@@ -447,6 +447,25 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // Circuit breaker (phase 06): a success at first forwarded byte (N7
         // signal) closes any open/half-open breaker for this account.
         recordSuccess(credentials.connectionId);
+      },
+      onStreamError: (error) => {
+        // Mid-stream aborts (undici `TypeError: terminated`) surface ONLY
+        // here: handleChatCore already resolved success when the 200 went
+        // out, so the result-failure handling below never re-runs for them.
+        // Feed the same status-agnostic flaky-node counter so a node that
+        // drops LIVE streams gets rotated away too.
+        if (refreshedCredentials?.providerSpecificData?.connectionProxyPoolId !== MANAGED_POOL_ID) return;
+        const errText = error ? (error.message || String(error)) : "";
+        if (!isConnectionFailure(errText)) return;
+        const { flaky, countInWindow } = noteManagedPoolConnFailure();
+        if (flaky) {
+          log.warn("PROXY", `Managed-pool ${countInWindow} connection-level failures in the last 5min (mid-stream abort, flaky node); rotating to a healthy one`);
+          triggerManagedRotationOnProxyError({
+            status: null,
+            error: errText,
+            model: `${provider}/${model}`,
+          }).catch(() => {});
+        }
       }
     });
 
