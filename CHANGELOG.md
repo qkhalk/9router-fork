@@ -1,3 +1,19 @@
+# v0.6.57 (2026-10-01)
+
+Fix release: the managed xray pool no longer stays pinned to a node that drops live streams mid-flight (`TypeError: terminated`). Three mid-stream connection drops in a rolling 5-min window now rotate the outbound to a healthy node — previously these drops were invisible to every rotation signal, so every in-flight chat completion through a flaky node died while the pool kept the same SOCKS port for 30+ minutes (live logs) with zero rotations.
+
+## Fix — mid-stream aborts now feed the flaky-node rotation
+- Mid-stream aborts (undici `TypeError: terminated`) happen after `handleChatCore` already resolved success — the 200 + headers went out — so the chat loop's failure handling (managed-conn retry, flaky-node counter, rotation gates) never re-ran for them; the error surfaced only as a `✗ ERROR` log line in the stream controller.
+- New optional `onStreamError` callback on `handleChatCore` (same pattern as `onRequestSuccess`) wires the stream controller's error back into the chat loop. Connection-level mid-stream failures on the `v2go-xray-managed` pool now count into the existing rolling 5-min flaky-node counter; the third strike triggers a blue-green rotation to a healthy node, guarded by the existing 8s cooldown + in-flight single-flight.
+- A completion whose stream already died cannot be revived — the point of the fix is that the *next* requests land on a healthy node within seconds instead of never.
+
+## Fix — connection failures no longer masked on non-stream paths
+- SSE→JSON aggregation (`[ChatCore] Chat Completions SSE→JSON failed`), the Responses endpoint stream-to-JSON conversion, and the true non-streaming SSE body read replaced the underlying cause with generic messages ("Failed to convert streaming response to JSON"), which `isConnectionFailure()` could never classify — so those failures bypassed both the managed-pool retry and the flaky counter. Messages now carry the cause (e.g. `…: terminated`), and the previously-unhandled SSE body read returns a classified 502 instead of rejecting outright.
+
+## Tests
+- `chatcore-midstream-onstreamerror.test.js` pins the `onStreamError` contract against the real chatCore + streamHandler: success resolves at 200-headers time, the mid-body death is reported via the callback, and the client read still completes with terminal bytes.
+- `chat-midstream-flaky-rotation.test.js`: three mid-stream `terminated` strikes trigger exactly one rotation; non-connection errors and non-managed pools never rotate; un-masked messages stay classifiable as connection failures.
+
 # v0.6.56 (2026-09-30)
 
 Security release: remediates every finding from the 2026-09 security audit (`plans/reports/security-2026-09-29.md`) — one High, one Medium, plus dependency, SSRF-hardening and auth-hygiene fixes. `npm audit` goes from 6 high / 6 moderate to **zero** vulnerabilities. Behavior-visible changes: none for ordinary request flow; the changelog modal now sanitizes remote HTML, and web-fetch dials through a connect-time SSRF re-check.
