@@ -1,3 +1,49 @@
+# v0.6.58 (2026-10-03)
+
+Upstream sync: migrates everything from decolua/9router v0.5.92 → v0.5.95 (upstream range `57c04f00..a99cf572`, 40 commits) into the fork, preserving all fork features (xray/V2Ray integration, alerts, circuit breakers, key budgets, gemini-web/ds2api/genspark/orcarouter/totu-ai providers, GitHub-Releases distribution). Root README.md intentionally not taken.
+
+## New providers & models (upstream)
+- **Meta Muse** provider with OAuth login (device flow + LLM key minting), model catalog, official pricing, and header hook (`x-api-version` on subscription keys).
+- **v1m System One** provider.
+- **TinyFish** web search + fetch provider (one API-key connection, normalized results).
+- **GLM Coding dual-auth**: Z.ai OAuth login (ZCode CLI poll flow) alongside pasted API keys.
+- **Codex**: GPT-6.1 Sol; `[1m]` extended-context variants for GPT-6/GPT-5.6 (872k window); `gpt-daybreak-blue-latest`/`gpt-reserve`; ghost models removed (gpt-5.4/5.4-mini/5.3-codex-spark); bare `gpt-5.x`/`gpt-6.x`/`gpt-daybreak-*`/`gpt-reserve*` slugs route to codex when no OpenAI API key exists.
+- **Claude Sonnet 5.5** (+ thinkingOffType `between_tools`, forced-tool-choice downgrade) and **Kiro claude-opus-5.5** family (1M ctx, 2x credits).
+- Agnes 2.5/3.0 model seeds; `deepseek-v4-1-flash` vision alias; real GPT-6/GPT-5.4+ context windows (1.05M API floor, gateway truncations preserved); combo entries now publish true min window/output; `v1/models` combo limits resolve nested combos with cycle guard.
+- Fork fix for an upstream v0.5.95 bug: `gpt-6.1-sol` was missing from the codex capability table, so the new 1.05M `*gpt-6*` pattern overrode the intended 272k Codex-OAuth window (fails upstream's own test) — added the exact entry.
+
+## CLI
+- New `9router connect <server-url>` command: point local CLI tools at a remote 9router (interactive or `--tools claude,codex,...`, `--reset` to undo, `--model/--opus/--sonnet/--haiku/--fable`, `--api-key`, `--key-name`, `--print-env`). Logs in with the dashboard password, reuses/creates a `cli-<hostname>` API key, backs up each tool config once. `npx` exec skips the runtime warm-up postinstall. `confbox` added as a CLI dependency.
+- CLI tools settings routes now resolve the first active dashboard API key instead of the `sk_9router` placeholder.
+
+## Proxy & transport (merged onto the fork's strict-proxy/dispatcher architecture)
+- Self-signed corporate/antivirus MITM certs: automatic insecure-TLS retry (`STRICT_SSL=true|1` opts out), integrated into the fork's refcounted dispatcher cache (separate `::insecure` variants, SOCKS dispatcher now accepts TLS options); locked request bodies are never replayed.
+- Strict-proxy holds when a proxy was intended but none resolved (upstream #4333): the fork already failed closed for connection-scoped shapes (with alerts + `proxyInfra`); the upstream `proxyIntended` gate (covers bare `proxyPoolId` shapes, e.g. strictPoolFailure) is adopted and wired to the same alert/flag contract. The fork's explicit per-host noProxy direct exclusion remains honored under strictProxy.
+- Codex refresh-token reuse fix: `refreshLeadMs` 5d → 10min, latest-DB-token adoption before refresh, and unrecoverable-refresh detection — stops OpenAI session revocation (account logout) on auto-ping.
+- Grok CLI identity bumped to 1.0.44 (fixes HTTP 426); Codex CLI identity 0.155.0 → 0.159.0 shared between inference and model discovery.
+
+## Translator / chat pipeline
+- Claude: intentional assistant prefill preserved from non-`messages[]` source formats; trailing user turn restored when cleanup empties it; a tool loop's final tool results cached with the 4th breakpoint; Sonnet 5.x resolves to adaptive thinking (no forged placeholders); unsigned thinking placeholders for DeepSeek over opencode-go `/messages`; `container_upload`-only user turns kept.
+- Thinking: `xhigh` added to claude-adaptive levels (4.6 models clamp it to high, on Anthropic and Kiro).
+- Tool dedupe: same-name tools deduped for DeepSeek models (upstream rejects duplicates with 400); MCP-equivalent dedup stays Claude-only.
+- Gemini tool schemas: non-standard schema keywords (`errorMessage`, …) stripped.
+- Responses: `response.completed` waits for real usage, bounded by a 3s watchdog; `[DONE]` also flushes a pending completion — merged alongside the fork's C7/C9 sentinel finalization.
+- Per-provider custom header overrides from the registry (settings → `providerOverrides` → dispatch, blocked header names filtered at the API; new CustomConfigCard + overrides route).
+- Codex: per-connection `enabledModels` respected during account selection for `[1m]`-style slugs; "model is not supported" locks that account (provider-scoped rule, fork's `providers[]` convention); hosted web search preserved on GPT-6 Sol/Luna (never Responses-Lite).
+
+## Dashboard & usage
+- Quota page `?provider=` URL param syncs with the provider filter (bookmarkable deep links).
+- Usage stats exclude hidden providers; hidden noAuth providers no longer listed.
+- CodeBuddy: 6004 rate-limit error parsed with `resetsAtMs` extraction; `recurring` forwarded for codebuddy-intl quota packs; codebuddy-intl added to OAuth test config.
+- Sidebar: NEW badges dropped (already done in the fork), 9Remote marked HOT; zed added to live-catalog providers in the model picker; OAuth modal fatal-error surface + ZCode poll-token support.
+
+## Fork-specific merge notes
+- Registry: upstream's tinyfish/v1m/muse numbered p136-138 (fork keeps p131-135).
+- Baselines regenerated from the merged registry (alias + providers byte-for-byte verify ✅).
+- Stale test `provider-priority-insert-cost.test.js` removed (writes to the real user DB; removed upstream in 57c04f00).
+- Updated fork tests to upstream's intended behavior: codex `refreshLeadMs` (10min), muse-spark contributor pricing, Kiro `max` effort passthrough on 4.6.
+- Test parity vs pre-migration baseline: zero new failures (3898 pass; the 36 failing files are pre-existing environmental failures, identical on v0.6.57). Production build ✅.
+
 # v0.6.57 (2026-10-01)
 
 Fix release: the managed xray pool no longer stays pinned to a node that drops live streams mid-flight (`TypeError: terminated`). Three mid-stream connection drops in a rolling 5-min window now rotate the outbound to a healthy node — previously these drops were invisible to every rotation signal, so every in-flight chat completion through a flaky node died while the pool kept the same SOCKS port for 30+ minutes (live logs) with zero rotations.

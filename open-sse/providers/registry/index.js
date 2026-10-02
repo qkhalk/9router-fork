@@ -130,8 +130,13 @@ import p126 from "./dahl.js";
 import p127 from "./atria.js";
 import p129 from "./agnes.js";
 import p130 from "./bai.js";
-// Fork custom providers (appended after upstream p0–p130; renumbered from p124-128 to
-// p131-135 to avoid clashing with upstream's new p124 qoder-cn + p125-130 slots)
+// Upstream v0.5.95 providers (tinyfish/v1m/muse), numbered p136-138 because
+// the fork's custom providers already occupy p131-135 (see below).
+import p136 from "./tinyfish.js";
+import p137 from "./v1m.js";
+import p138 from "./muse.js";
+// Fork custom providers (appended after upstream; renumbered from p124-128 to
+// p131-135 to avoid clashing with upstream's qoder-cn + p125-130 slots)
 import p131 from "./gemini-web.js";
 import p132 from "./ds2api.js";
 import p133 from "./genspark-web.js";
@@ -268,6 +273,9 @@ export default [
   p127,
   p129,
   p130,
+  p136,
+  p137,
+  p138,
   // Fork custom providers
   p131,
   p132,

@@ -151,6 +151,8 @@ const DEFAULT_SETTINGS = {
   // by one filter instance. SOCKS accounts cannot be added dynamically (xray
   // Issue #6199), so this is fixed at boot of the filter xray.
   xrayFilterApiAccounts: 16,
+  // Per-provider user header overrides applied at dispatch: { [providerId]: { headers: {..} } }
+  providerOverrides: {},
 };
 
 async function readRaw() {

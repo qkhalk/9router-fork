@@ -37,9 +37,11 @@ const CONNECT_TIMEOUT_MS = 10_000;
  *
  * @param {string} proxyUrl - canonical socks(4|4a|5|5h)://[user:pass@]host:port
  * @param {object} [agentOptions] - extra options forwarded to undici's Agent
+ * @param {object} [tlsOptions] - extra options for the origin TLS handshake
+ *   (e.g. { rejectUnauthorized: false } for the insecure-TLS fallback path)
  * @returns {import("undici").Agent}
  */
-export function createSocksDispatcher(proxyUrl, agentOptions = {}) {
+export function createSocksDispatcher(proxyUrl, agentOptions = {}, tlsOptions = {}) {
   const parsed = new URL(proxyUrl);
   const type = parsed.protocol === "socks4:" || parsed.protocol === "socks4a:" ? 4 : 5;
   const proxy = {
@@ -90,6 +92,7 @@ export function createSocksDispatcher(proxyUrl, agentOptions = {}) {
           socket,
           servername: servername || hostname,
           ALPNProtocols: ["http/1.1"],
+          ...tlsOptions,
         });
         tlsSocket.once("secureConnect", () => once(null, tlsSocket));
         tlsSocket.once("error", (err) => once(err));

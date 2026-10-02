@@ -100,6 +100,20 @@ async function tryGotScrapingFetch(url, options) {
 
 // DNS cache — use Map to avoid prototype pollution via malformed hostnames
 const DNS_CACHE = new Map();
+const TLS_CERT_ERRORS = new Set([
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "CERT_HAS_EXPIRED",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+function isTlsCertError(err) {
+  const code = err?.cause?.code || err?.code;
+  return TLS_CERT_ERRORS.has(code);
+}
 const MITM_BYPASS_HOSTS = [
   "cloudcode-pa.googleapis.com",
   "daily-cloudcode-pa.googleapis.com",
@@ -222,13 +236,16 @@ function maybeCloseEntry(entry) {
   closeDispatcherEntry(entry.agent);
 }
 
-async function createDispatcherEntry(normalized) {
+async function createDispatcherEntry(normalized, insecure = false) {
   // ProxyAgent speaks HTTP CONNECT only — SOCKS proxies (e.g. the local
   // xray socks inbound) need a SOCKS-tunnelling connector instead.
   const { createSocksDispatcher, isSocksProxyUrl } = await import("@/lib/network/socksDispatcher.js");
   const agent = isSocksProxyUrl(normalized)
-    ? createSocksDispatcher(normalized)
-    : new (await import("undici")).ProxyAgent({ uri: normalized });
+    ? createSocksDispatcher(normalized, {}, insecure ? { rejectUnauthorized: false } : {})
+    : new (await import("undici")).ProxyAgent({
+        uri: normalized,
+        ...(insecure ? { requestTls: { rejectUnauthorized: false } } : {}),
+      });
   return { agent, refCount: 0, closeOnRelease: false };
 }
 
@@ -240,23 +257,24 @@ function evictOldestDispatcher() {
   if (evicted) maybeCloseEntry(evicted);
 }
 
-async function getDispatcherEntry(normalized) {
-  const cached = proxyDispatchers.get(normalized);
+async function getDispatcherEntry(normalized, insecure = false) {
+  const key = `${normalized || "direct"}::${insecure ? "insecure" : "secure"}`;
+  const cached = proxyDispatchers.get(key);
   if (cached) return cached;
-  let creating = dispatcherCreation.get(normalized);
+  let creating = dispatcherCreation.get(key);
   if (!creating) {
-    creating = createDispatcherEntry(normalized)
+    creating = createDispatcherEntry(normalized, insecure)
       .then((entry) => {
         evictOldestDispatcher();
-        proxyDispatchers.set(normalized, entry);
-        dispatcherCreation.delete(normalized);
+        proxyDispatchers.set(key, entry);
+        dispatcherCreation.delete(key);
         return entry;
       })
       .catch((err) => {
-        dispatcherCreation.delete(normalized);
+        dispatcherCreation.delete(key);
         throw err;
       });
-    dispatcherCreation.set(normalized, creating);
+    dispatcherCreation.set(key, creating);
   }
   return creating;
 }
@@ -264,10 +282,12 @@ async function getDispatcherEntry(normalized) {
 /**
  * Acquire a proxy dispatcher with usage tracking. The returned release() must
  * be called when the request finishes; it closes an evicted agent once idle.
+ * `insecure` selects the TLS-fallback variant (skips upstream cert
+ * verification) — cached separately under a `::insecure` key.
  */
-async function acquireDispatcher(proxyUrl) {
+async function acquireDispatcher(proxyUrl, insecure = false) {
   const normalized = normalizeProxyUrl(proxyUrl);
-  const entry = await getDispatcherEntry(normalized);
+  const entry = await getDispatcherEntry(normalized, insecure);
   entry.refCount += 1;
   return {
     agent: entry.agent,
@@ -279,6 +299,54 @@ async function acquireDispatcher(proxyUrl) {
       }
     },
   };
+}
+
+// One shared insecure dispatcher for direct (no-proxy) TLS fallbacks; never
+// closed, so it deliberately stays out of the refcounted eviction cache.
+let directInsecureAgent = null;
+async function getDirectInsecureDispatcher() {
+  if (!directInsecureAgent) {
+    const { Agent } = await import("undici");
+    directInsecureAgent = new Agent({ connect: { rejectUnauthorized: false } });
+  }
+  return directInsecureAgent;
+}
+
+/**
+ * originalFetch with an automatic insecure-TLS retry (upstream v0.5.95): a
+ * self-signed corporate/antivirus MITM cert fails the secure handshake; retry
+ * once through a dispatcher that skips cert verification. STRICT_SSL=true|1
+ * opts out. A locked request body cannot be replayed, so those errors rethrow.
+ * Uses the fork's refcounted dispatcher cache for both attempts.
+ */
+async function fetchWithTlsFallback(url, options, proxyUrl) {
+  const run = async (insecure) => {
+    if (!proxyUrl) {
+      if (!insecure) return originalFetch(url, options);
+      const dispatcher = await getDirectInsecureDispatcher();
+      return originalFetch(url, { ...options, dispatcher });
+    }
+    const { agent: dispatcher, release } = await acquireDispatcher(proxyUrl, insecure);
+    try {
+      return await originalFetch(url, { ...options, dispatcher });
+    } finally {
+      release();
+    }
+  };
+  try {
+    return await run(false);
+  } catch (err) {
+    const isStrictSsl = process.env.STRICT_SSL === "true" || process.env.STRICT_SSL === "1";
+    if (!isStrictSsl && isTlsCertError(err)) {
+      if (options.body && typeof options.body.getReader === "function" && options.body.locked) {
+        throw err;
+      }
+      // ponytail: in-memory insecure agent fallback for self-signed MITM corporate/antivirus certs
+      console.warn(`[ProxyFetch] TLS cert verification failed (${err.cause?.code || err.code}), retrying with insecure TLS: ${url}`);
+      return await run(true);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -408,12 +476,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     if (proxyUrl) {
       // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
       try {
-        const { agent: dispatcher, release } = await acquireDispatcher(proxyUrl);
-        try {
-          return await originalFetch(url, { ...options, dispatcher });
-        } finally {
-          release();
-        }
+        return await fetchWithTlsFallback(url, options, proxyUrl);
       } catch (proxyError) {
         if (strict) {
           const err = new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
@@ -435,12 +498,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
 
   if (proxyUrl) {
     try {
-      const { agent: dispatcher, release } = await acquireDispatcher(proxyUrl);
-      try {
-        return await originalFetch(url, { ...options, dispatcher });
-      } finally {
-        release();
-      }
+      return await fetchWithTlsFallback(url, options, proxyUrl);
     } catch (proxyError) {
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (strict) {
@@ -449,13 +507,42 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
         throw err;
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
-      return originalFetch(url, options);
+      return fetchWithTlsFallback(url, options, null);
     }
+  }
+
+  // Strict mode means "never leave over the direct IP". Reaching here with a
+  // proxy configured but unresolved is exactly that case — an inactive or
+  // empty pool, or every proxy removed — so refuse instead of silently
+  // exposing the real address (upstream #4333). The refusal above only fires
+  // for proxyEnabled shapes; this gate also covers intent signaled by a bare
+  // proxyPoolId (e.g. the strictPoolFailure shape from connectionProxy.js).
+  //
+  // Gate on a proxy being *intended*: callers like the Qoder executor set
+  // strictProxy to mean "do not replay this request directly if the proxy
+  // fails" (a replayed COSY signature returns 403), not "a proxy is required".
+  // With nothing configured they must keep working.
+  const proxyIntended = proxyOptions?.proxyPoolId
+    || proxyOptions?.enabled === true
+    || proxyOptions?.connectionProxyEnabled === true
+    || !!normalizeString(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl);
+  // noProxyBypassed is the fork's explicit per-host direct exclusion — an
+  // intentional direct hop, honored even under strictProxy (P1 contract).
+  if (strict && proxyIntended && !noProxyBypassed) {
+    emitAlert(EVENT_TYPES.STRICTPROXY_VIOLATION, {
+      severity: SEVERITY.CRITICAL,
+      dedupKey: String(proxyOptions?.proxyPoolId || "unknown"),
+      title: "strictProxy direct-fetch refused",
+      body: "strictProxy=true and a proxy was intended but none resolved; the direct fetch was refused.",
+    });
+    const err = new Error("[ProxyFetch] Proxy required but none resolved (strictProxy=true)");
+    err.proxyInfra = true; // proxy-side outage — never lock/feed the account (chat loop)
+    throw err;
   }
 
   // got-scraping disabled — use native fetch directly
   // (Re-enable per-host by wrapping with tryGotScrapingFetch when needed)
-  return originalFetch(url, options);
+  return fetchWithTlsFallback(url, options, null);
 }
 
 /**

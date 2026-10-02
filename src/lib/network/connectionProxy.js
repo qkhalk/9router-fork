@@ -127,6 +127,11 @@ export async function resolveConnectionProxyConfig(
 
     const legacy = normalizeLegacyProxy(providerSpecificData);
 
+    // (Upstream #4333) a strict pool must keep its guarantee even when the pool
+    // itself is not usable (inactive, or saved without a url): the legacy/none
+    // returns below carry the pool's real strict flag — the fork's earlier
+    // poolStrict hoist above already covers the error/catch path.
+
     /**
      * -----------------------------
      * Proxy Pool Resolution
@@ -265,6 +270,8 @@ export async function resolveConnectionProxyConfig(
         proxyPoolId: proxyPoolId || null,
         proxyPool: null,
 
+        strictProxy: poolStrict,
+
         ...legacy,
       };
     }
@@ -279,6 +286,8 @@ export async function resolveConnectionProxyConfig(
 
       proxyPoolId: proxyPoolId || null,
       proxyPool: null,
+
+      strictProxy: poolStrict,
 
       ...legacy,
     };
